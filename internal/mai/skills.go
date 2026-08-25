@@ -9,25 +9,30 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
 )
 
-const maxSkillFileBytes = 2 << 20
+const (
+	maxSkillFileBytes    = 2 << 20
+	maxSkillCatalogChars = 8_000
+)
+
+var explicitSkillPattern = regexp.MustCompile(`\$([a-z][a-z0-9-]*)`)
 
 type skillSummary struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Score       int    `json:"score,omitempty"`
+	ID            string
+	Name          string
+	Description   string
+	AllowImplicit bool
 }
 
-type skillSearchResult struct {
-	OK       bool           `json:"ok"`
-	Skills   []skillSummary `json:"skills"`
-	Warnings []string       `json:"warnings,omitempty"`
+type skillContext struct {
+	Instructions string
+	Warnings     []string
 }
 
 type skillFileResult struct {
@@ -47,17 +52,73 @@ func defaultSkillsRoot() (string, error) {
 	return filepath.Join(home, ".agents", "skills"), nil
 }
 
-func searchSkills(root, query string) (string, error) {
+func buildSkillContext(root, userPrompt string) (skillContext, error) {
+	skills, warnings, err := loadSkills(root)
+	if err != nil {
+		return skillContext{}, err
+	}
+	visible := make([]skillSummary, 0, len(skills))
+	for _, skill := range skills {
+		if skill.AllowImplicit {
+			visible = append(visible, skill)
+		}
+	}
+	catalog, truncated, omitted := renderSkillCatalog(visible)
+	if truncated {
+		warnings = append(warnings, "skill descriptions were shortened to fit the 8000-character catalog limit")
+	}
+	if omitted > 0 {
+		warnings = append(warnings, fmt.Sprintf("%d skills were omitted from the model-visible catalog because it exceeded 8000 characters", omitted))
+	}
+
+	var explicit strings.Builder
+	for _, mention := range explicitSkillMentions(userPrompt) {
+		matches := matchingSkills(skills, mention)
+		switch len(matches) {
+		case 0:
+			continue
+		case 1:
+			file, readErr := readSkill(root, matches[0].ID)
+			if readErr != nil {
+				warnings = append(warnings, fmt.Sprintf("explicit skill $%s could not be read: %v", mention, readErr))
+				continue
+			}
+			fmt.Fprintf(&explicit, "\n### Explicit skill: $%s (id: %s)\n%s\n", matches[0].Name, matches[0].ID, file.Content)
+		default:
+			warnings = append(warnings, fmt.Sprintf("explicit skill $%s is ambiguous", mention))
+		}
+	}
+
+	var instructions strings.Builder
+	instructions.WriteString(`Skills
+- Available skills are listed as name, description, and directory id.
+- If the request clearly matches an available skill description, you must call read_skill with its id and follow the complete SKILL.md before acting.
+- Catalog metadata is only for selection. Never use it as a substitute for reading a matching SKILL.md.
+- Use read_skill_file only for supporting files required by the selected SKILL.md.
+- A $name mention is explicit. Its complete instructions appear below when it resolves uniquely; do not call read_skill again for that explicit skill.
+`)
+	if catalog == "" {
+		instructions.WriteString("\nAvailable skills: none.\n")
+	} else {
+		instructions.WriteString("\nAvailable skills:\n")
+		instructions.WriteString(catalog)
+		instructions.WriteByte('\n')
+	}
+	instructions.WriteString(explicit.String())
+	return skillContext{Instructions: instructions.String(), Warnings: warnings}, nil
+}
+
+func loadSkills(root string) ([]skillSummary, []string, error) {
 	root, err := canonicalPath(root)
 	if err != nil {
-		return "", fmt.Errorf("resolve skills directory: %w", err)
+		return nil, nil, fmt.Errorf("resolve skills directory: %w", err)
 	}
 	entries, err := os.ReadDir(root)
 	if err != nil {
-		return "", fmt.Errorf("list skills: %w", err)
+		return nil, nil, fmt.Errorf("list skills: %w", err)
 	}
-	terms := strings.Fields(strings.ToLower(strings.TrimSpace(query)))
-	result := skillSearchResult{OK: true, Skills: []skillSummary{}}
+	var skills []skillSummary
+	var warnings []string
 	for _, entry := range entries {
 		if strings.HasPrefix(entry.Name(), ".") {
 			continue
@@ -67,23 +128,18 @@ func searchSkills(root, query string) (string, error) {
 			continue
 		}
 		if err != nil {
-			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %v", entry.Name(), err))
+			warnings = append(warnings, fmt.Sprintf("%s: %v", entry.Name(), err))
 			continue
 		}
-		score, matched := skillMatch(summary, terms)
-		if !matched {
-			continue
-		}
-		summary.Score = score
-		result.Skills = append(result.Skills, summary)
+		skills = append(skills, summary)
 	}
-	sort.Slice(result.Skills, func(i, j int) bool {
-		if result.Skills[i].Score != result.Skills[j].Score {
-			return result.Skills[i].Score > result.Skills[j].Score
+	sort.Slice(skills, func(i, j int) bool {
+		if skills[i].Name != skills[j].Name {
+			return skills[i].Name < skills[j].Name
 		}
-		return result.Skills[i].Name < result.Skills[j].Name
+		return skills[i].ID < skills[j].ID
 	})
-	return marshalToolResult(result), nil
+	return skills, warnings, nil
 }
 
 func loadSkillSummary(root, id string) (skillSummary, error) {
@@ -103,34 +159,161 @@ func loadSkillSummary(root, id string) (skillSummary, error) {
 	if err != nil {
 		return skillSummary{}, err
 	}
-	return skillSummary{ID: id, Name: name, Description: description}, nil
+	allowImplicit, err := loadImplicitPolicy(dir)
+	if err != nil {
+		return skillSummary{}, err
+	}
+	return skillSummary{ID: id, Name: name, Description: description, AllowImplicit: allowImplicit}, nil
 }
 
-func skillMatch(skill skillSummary, terms []string) (int, bool) {
-	if len(terms) == 0 {
-		return 0, true
+func loadImplicitPolicy(skillDir string) (bool, error) {
+	path, err := secureSkillPath(skillDir, filepath.Join("agents", "openai.yaml"))
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
 	}
-	name := strings.ToLower(skill.Name)
-	description := strings.ToLower(skill.Description)
-	score := 0
-	matched := false
-	for _, term := range terms {
-		switch {
-		case name == term:
-			score += 100
-			matched = true
-		case strings.HasPrefix(name, term):
-			score += 50
-			matched = true
-		case strings.Contains(name, term):
-			score += 25
-			matched = true
-		case strings.Contains(description, term):
-			score += 10
-			matched = true
+	if err != nil {
+		return false, err
+	}
+	b, err := readBoundedRegularFile(path)
+	if err != nil {
+		return false, err
+	}
+	return parseImplicitPolicy(string(b))
+}
+
+func parseImplicitPolicy(content string) (bool, error) {
+	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
+	policyIndent := -1
+	for lineNumber, line := range lines {
+		withoutComment, _, _ := strings.Cut(line, "#")
+		if strings.TrimSpace(withoutComment) == "" {
+			continue
+		}
+		leading := withoutComment[:len(withoutComment)-len(strings.TrimLeft(withoutComment, " \t"))]
+		if strings.Contains(leading, "\t") {
+			return false, fmt.Errorf("agents/openai.yaml line %d uses a tab for indentation", lineNumber+1)
+		}
+		indent := len(leading)
+		trimmed := strings.TrimSpace(withoutComment)
+		if policyIndent >= 0 && indent <= policyIndent {
+			policyIndent = -1
+		}
+		key, value, ok := strings.Cut(trimmed, ":")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if indent == 0 && key == "policy" && value == "" {
+			policyIndent = indent
+			continue
+		}
+		if policyIndent < 0 || indent <= policyIndent || key != "allow_implicit_invocation" {
+			continue
+		}
+		switch strings.ToLower(value) {
+		case "true":
+			return true, nil
+		case "false":
+			return false, nil
+		default:
+			return false, fmt.Errorf("agents/openai.yaml line %d has a non-boolean policy.allow_implicit_invocation", lineNumber+1)
 		}
 	}
-	return score, matched
+	return true, nil
+}
+
+func explicitSkillMentions(prompt string) []string {
+	seen := make(map[string]bool)
+	var mentions []string
+	for _, match := range explicitSkillPattern.FindAllStringSubmatch(prompt, -1) {
+		if !seen[match[1]] {
+			seen[match[1]] = true
+			mentions = append(mentions, match[1])
+		}
+	}
+	return mentions
+}
+
+func matchingSkills(skills []skillSummary, mention string) []skillSummary {
+	var byName []skillSummary
+	for _, skill := range skills {
+		if skill.Name == mention {
+			byName = append(byName, skill)
+		}
+	}
+	if len(byName) > 0 {
+		return byName
+	}
+	for _, skill := range skills {
+		if skill.ID == mention {
+			return []skillSummary{skill}
+		}
+	}
+	return nil
+}
+
+func renderSkillCatalog(skills []skillSummary) (catalog string, truncated bool, omitted int) {
+	if len(skills) == 0 {
+		return "", false, 0
+	}
+	if full := renderSkillLines(skills, -1); len([]rune(full)) <= maxSkillCatalogChars {
+		return full, false, 0
+	}
+
+	low, high := 0, 0
+	for _, skill := range skills {
+		high = max(high, len([]rune(skill.Description)))
+	}
+	if minimum := renderSkillLines(skills, 0); len([]rune(minimum)) <= maxSkillCatalogChars {
+		for low < high {
+			mid := low + (high-low+1)/2
+			if len([]rune(renderSkillLines(skills, mid))) <= maxSkillCatalogChars {
+				low = mid
+			} else {
+				high = mid - 1
+			}
+		}
+		return renderSkillLines(skills, low), true, 0
+	}
+
+	var lines []string
+	used := 0
+	for _, skill := range skills {
+		line := renderSkillLine(skill, 0)
+		cost := len([]rune(line))
+		if len(lines) > 0 {
+			cost++
+		}
+		if used+cost > maxSkillCatalogChars {
+			break
+		}
+		lines = append(lines, line)
+		used += cost
+	}
+	return strings.Join(lines, "\n"), true, len(skills) - len(lines)
+}
+
+func renderSkillLines(skills []skillSummary, descriptionLimit int) string {
+	lines := make([]string, 0, len(skills))
+	for _, skill := range skills {
+		lines = append(lines, renderSkillLine(skill, descriptionLimit))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func renderSkillLine(skill skillSummary, descriptionLimit int) string {
+	if descriptionLimit == 0 {
+		return fmt.Sprintf("- %s (id: %s)", skill.Name, skill.ID)
+	}
+	description := skill.Description
+	if descriptionLimit > 0 {
+		runes := []rune(description)
+		if len(runes) > descriptionLimit {
+			description = string(runes[:descriptionLimit]) + "…"
+		}
+	}
+	return fmt.Sprintf("- %s: %s (id: %s)", skill.Name, description, skill.ID)
 }
 
 func readSkill(root, id string) (skillFileResult, error) {

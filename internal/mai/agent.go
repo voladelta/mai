@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 )
 
@@ -39,9 +40,26 @@ func newAgent(stdout, stderr io.Writer, sessionPath string) *agent {
 	return a
 }
 
-func (a *agent) run(ctx context.Context, sess *session) error {
+func (a *agent) run(ctx context.Context, sess *session, userPrompt string) error {
+	skills := ""
+	if a.skillsError != nil {
+		fmt.Fprintf(a.stderr, "mai: skills unavailable: %v\n", a.skillsError)
+	} else {
+		skillContext, err := buildSkillContext(a.skillsRoot, userPrompt)
+		if err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				fmt.Fprintf(a.stderr, "mai: skills unavailable: %v\n", err)
+			}
+		} else {
+			skills = skillContext.Instructions
+			for _, warning := range skillContext.Warnings {
+				fmt.Fprintf(a.stderr, "mai: skill warning: %s\n", warning)
+			}
+		}
+	}
+	instructions := systemInstructions(sess, skills)
 	for turn := 0; turn < maxAgentTurns; turn++ {
-		result, err := a.client.stream(ctx, sess)
+		result, err := a.client.stream(ctx, sess, instructions)
 		if result.wrote {
 			fmt.Fprintln(a.stdout)
 		}
@@ -108,22 +126,6 @@ func extractFunctionCalls(items []json.RawMessage) ([]functionCall, error) {
 
 func (a *agent) executeTool(ctx context.Context, sess *session, call functionCall) json.RawMessage {
 	switch call.Name {
-	case "search_skills":
-		var args struct {
-			Query string `json:"query"`
-		}
-		if err := json.Unmarshal([]byte(call.Arguments), &args); err != nil {
-			return textToolOutput(toolError("invalid search_skills arguments", err))
-		}
-		if a.skillsError != nil {
-			return textToolOutput(toolError("find skills directory", a.skillsError))
-		}
-		fmt.Fprintf(a.stderr, "→ search_skills: %s\n", oneLine(args.Query, 100))
-		result, err := searchSkills(a.skillsRoot, args.Query)
-		if err != nil {
-			return textToolOutput(toolError("search_skills failed", err))
-		}
-		return textToolOutput(result)
 	case "read_skill":
 		var args struct {
 			Skill string `json:"skill"`

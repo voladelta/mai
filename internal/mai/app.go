@@ -105,7 +105,7 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	runner := newAgent(stdout, stderr, state.session)
-	if err := runner.run(ctx, sess); err != nil {
+	if err := runner.run(ctx, sess, opts.prompt); err != nil {
 		fmt.Fprintf(stderr, "mai: %v\n", err)
 		return 1
 	}

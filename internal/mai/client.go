@@ -52,12 +52,12 @@ func newCodexClient(stdout io.Writer) *codexClient {
 	}
 }
 
-func (c *codexClient) stream(ctx context.Context, sess *session) (streamResult, error) {
+func (c *codexClient) stream(ctx context.Context, sess *session, instructions string) (streamResult, error) {
 	first, err := loadCredentials()
 	if err != nil {
 		return streamResult{}, err
 	}
-	result, err := c.streamWithCredentials(ctx, sess, first)
+	result, err := c.streamWithCredentials(ctx, sess, instructions, first)
 	var statusErr *httpStatusError
 	if !errors.As(err, &statusErr) || statusErr.status != http.StatusUnauthorized {
 		return result, err
@@ -70,15 +70,15 @@ func (c *codexClient) stream(ctx context.Context, sess *session) (streamResult, 
 	if sha256.Sum256([]byte(first.AccessToken)) == sha256.Sum256([]byte(second.AccessToken)) {
 		return streamResult{}, loginError(second.Source)
 	}
-	return c.streamWithCredentials(ctx, sess, second)
+	return c.streamWithCredentials(ctx, sess, instructions, second)
 }
 
-func (c *codexClient) streamWithCredentials(ctx context.Context, sess *session, creds credentials) (streamResult, error) {
+func (c *codexClient) streamWithCredentials(ctx context.Context, sess *session, instructions string, creds credentials) (streamResult, error) {
 	body := map[string]any{
 		"model":               modelIDs[sess.Model],
 		"store":               false,
 		"stream":              true,
-		"instructions":        systemInstructions(sess),
+		"instructions":        instructions,
 		"input":               sess.History,
 		"tools":               toolDefinitions(),
 		"tool_choice":         "auto",
@@ -239,23 +239,12 @@ func compactJSON(raw json.RawMessage) string {
 func toolDefinitions() []map[string]any {
 	return []map[string]any{
 		{
-			"type": "function", "name": "search_skills",
-			"description": "Search all installed skill names and descriptions. Use an empty query to return the complete list. Skills are available only from ~/.agents/skills.",
-			"parameters": map[string]any{
-				"type": "object", "additionalProperties": false,
-				"properties": map[string]any{
-					"query": map[string]string{"type": "string", "description": "Words to match in the skill name and description. Use an empty string to list skills."},
-				},
-				"required": []string{"query"},
-			},
-		},
-		{
 			"type": "function", "name": "read_skill",
 			"description": "Read the complete SKILL.md for one installed skill. Read it before using that skill or loading its supporting files.",
 			"parameters": map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
-					"skill": map[string]string{"type": "string", "description": "The skill id returned by search_skills."},
+					"skill": map[string]string{"type": "string", "description": "The installed skill directory id shown in the instructions."},
 				},
 				"required": []string{"skill"},
 			},
@@ -266,7 +255,7 @@ func toolDefinitions() []map[string]any {
 			"parameters": map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
-					"skill": map[string]string{"type": "string", "description": "The skill id returned by search_skills."},
+					"skill": map[string]string{"type": "string", "description": "The installed skill directory id shown in the instructions."},
 					"path":  map[string]string{"type": "string", "description": "A relative path inside the selected skill, commonly below assets, references, or scripts."},
 				},
 				"required": []string{"skill", "path"},

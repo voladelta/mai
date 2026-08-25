@@ -11,37 +11,90 @@ import (
 	"testing"
 )
 
-func TestSearchSkillsRanksMetadataAndListsWithEmptyQuery(t *testing.T) {
+func TestBuildSkillContextListsImplicitSkillsAndLoadsExplicitOptOut(t *testing.T) {
 	root := testSkillRoot(t)
-	writeTestSkill(t, root, "layout", "layout-helper", "Build responsive page layouts.")
-	writeTestSkill(t, root, "writing", "plain-writing", "Write clear interface text.")
-	writeTestSkill(t, root, "review", "layout-review", "Review code structure.")
-	for i := 0; i < 12; i++ {
-		id := fmt.Sprintf("filler-%02d", i)
-		writeTestSkill(t, root, id, id, "A catalog entry.")
-	}
+	writeTestSkill(t, root, "layout-dir", "layout-helper", "Build responsive page layouts.")
+	writeTestSkill(t, root, "manual-dir", "manual-only", "Run only when explicitly requested.")
+	mustWrite(t, filepath.Join(root, "manual-dir", "agents", "openai.yaml"), "policy:\n  allow_implicit_invocation: false\n")
 
-	raw, err := searchSkills(root, "layout")
+	result, err := buildSkillContext(root, "Use $manual-only for this request. Mention $manual-only only once.")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var result skillSearchResult
-	if err := json.Unmarshal([]byte(raw), &result); err != nil {
-		t.Fatal(err)
+	available, explicit, ok := strings.Cut(result.Instructions, "### Explicit skill")
+	if !ok {
+		t.Fatalf("explicit skill was not loaded:\n%s", result.Instructions)
 	}
-	if len(result.Skills) != 2 || result.Skills[0].ID != "layout" || result.Skills[1].ID != "review" {
-		t.Fatalf("unexpected ranked skills: %#v", result.Skills)
+	if !strings.Contains(available, "layout-helper: Build responsive page layouts. (id: layout-dir)") {
+		t.Fatalf("implicit skill is missing from catalog:\n%s", available)
 	}
+	if strings.Contains(available, "manual-only") {
+		t.Fatalf("opt-out skill leaked into implicit catalog:\n%s", available)
+	}
+	if !strings.Contains(explicit, "$manual-only (id: manual-dir)") || !strings.Contains(explicit, "# manual-only instructions") {
+		t.Fatalf("explicit opt-out instructions are incomplete:\n%s", explicit)
+	}
+	if len(result.Warnings) != 0 {
+		t.Fatalf("unexpected warnings: %#v", result.Warnings)
+	}
+}
 
-	raw, err = searchSkills(root, "")
+func TestImplicitPolicyDefaultsTrueAndParsesFalse(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{name: "missing policy", content: "interface:\n  display_name: Demo\n", want: true},
+		{name: "true", content: "policy:\n  allow_implicit_invocation: true\n", want: true},
+		{name: "false", content: "policy:\n  allow_implicit_invocation: false # explicit only\n", want: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := parseImplicitPolicy(test.content)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != test.want {
+				t.Fatalf("got %v, want %v", got, test.want)
+			}
+		})
+	}
+	if _, err := parseImplicitPolicy("policy:\n  allow_implicit_invocation: sometimes\n"); err == nil {
+		t.Fatal("accepted a non-boolean implicit invocation policy")
+	}
+}
+
+func TestUnknownDollarNameIsNotTreatedAsMissingSkill(t *testing.T) {
+	root := testSkillRoot(t)
+	writeTestSkill(t, root, "demo", "demo", "A demonstration skill.")
+	result, err := buildSkillContext(root, "Print the value of $path, but do not use a skill.")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := json.Unmarshal([]byte(raw), &result); err != nil {
-		t.Fatal(err)
+	if len(result.Warnings) != 0 || strings.Contains(result.Instructions, "### Explicit skill") {
+		t.Fatalf("unknown dollar name affected skill loading: %#v\n%s", result.Warnings, result.Instructions)
 	}
-	if len(result.Skills) != 15 {
-		t.Fatalf("listed %d skills, want 15", len(result.Skills))
+}
+
+func TestSkillCatalogFitsBudgetByShorteningDescriptions(t *testing.T) {
+	var skills []skillSummary
+	for i := 0; i < 40; i++ {
+		skills = append(skills, skillSummary{
+			ID: fmt.Sprintf("skill-%02d", i), Name: fmt.Sprintf("skill-%02d", i),
+			Description: strings.Repeat("description ", 40), AllowImplicit: true,
+		})
+	}
+	catalog, truncated, omitted := renderSkillCatalog(skills)
+	if !truncated || omitted != 0 {
+		t.Fatalf("unexpected catalog result: truncated=%v omitted=%d", truncated, omitted)
+	}
+	if chars := len([]rune(catalog)); chars > maxSkillCatalogChars {
+		t.Fatalf("catalog has %d characters, limit is %d", chars, maxSkillCatalogChars)
+	}
+	for _, skill := range skills {
+		if !strings.Contains(catalog, "(id: "+skill.ID+")") {
+			t.Fatalf("catalog omitted %s despite enough minimum-line space", skill.ID)
+		}
 	}
 }
 
@@ -120,7 +173,6 @@ func TestAgentRoutesRegisteredSkillTools(t *testing.T) {
 	a := &agent{stderr: io.Discard, skillsRoot: root}
 
 	calls := []functionCall{
-		{Name: "search_skills", Arguments: `{"query":"demo"}`},
 		{Name: "read_skill", Arguments: `{"skill":"demo"}`},
 		{Name: "read_skill_file", Arguments: `{"skill":"demo","path":"references/guide.md"}`},
 	}
@@ -151,18 +203,13 @@ func TestAgentRoutesRegisteredSkillTools(t *testing.T) {
 	}
 
 	definitions := toolDefinitions()
-	if len(definitions) != 5 {
-		t.Fatalf("registered %d tools, want 5", len(definitions))
+	if len(definitions) != 4 {
+		t.Fatalf("registered %d tools, want 4", len(definitions))
 	}
-	for i, name := range []string{"search_skills", "read_skill", "read_skill_file"} {
+	for i, name := range []string{"read_skill", "read_skill_file"} {
 		if definitions[i]["name"] != name {
 			t.Fatalf("tool %d is %v, want %s", i, definitions[i]["name"], name)
 		}
-	}
-	searchParameters := definitions[0]["parameters"].(map[string]any)
-	properties := searchParameters["properties"].(map[string]any)
-	if _, ok := properties["limit"]; ok {
-		t.Fatal("search_skills still exposes partial-list limit state")
 	}
 }
 
