@@ -65,9 +65,11 @@ func (a *agent) run(ctx context.Context, sess *session) error {
 		}
 		for _, call := range calls {
 			output := a.executeTool(ctx, sess, call)
-			item, marshalErr := json.Marshal(map[string]any{
-				"type": "function_call_output", "call_id": call.CallID, "output": output,
-			})
+			item, marshalErr := json.Marshal(struct {
+				Type   string          `json:"type"`
+				CallID string          `json:"call_id"`
+				Output json.RawMessage `json:"output"`
+			}{Type: "function_call_output", CallID: call.CallID, Output: output})
 			if marshalErr != nil {
 				return fmt.Errorf("encode tool output: %w", marshalErr)
 			}
@@ -104,90 +106,106 @@ func extractFunctionCalls(items []json.RawMessage) ([]functionCall, error) {
 	return calls, nil
 }
 
-func (a *agent) executeTool(ctx context.Context, sess *session, call functionCall) string {
+func (a *agent) executeTool(ctx context.Context, sess *session, call functionCall) json.RawMessage {
 	switch call.Name {
 	case "search_skills":
 		var args struct {
 			Query string `json:"query"`
-			Limit int    `json:"limit"`
 		}
 		if err := json.Unmarshal([]byte(call.Arguments), &args); err != nil {
-			return toolError("invalid search_skills arguments", err)
+			return textToolOutput(toolError("invalid search_skills arguments", err))
 		}
 		if a.skillsError != nil {
-			return toolError("find skills directory", a.skillsError)
+			return textToolOutput(toolError("find skills directory", a.skillsError))
 		}
 		fmt.Fprintf(a.stderr, "→ search_skills: %s\n", oneLine(args.Query, 100))
-		result, err := searchSkills(a.skillsRoot, args.Query, args.Limit)
+		result, err := searchSkills(a.skillsRoot, args.Query)
 		if err != nil {
-			return toolError("search_skills failed", err)
+			return textToolOutput(toolError("search_skills failed", err))
 		}
-		return result
+		return textToolOutput(result)
 	case "read_skill":
 		var args struct {
 			Skill string `json:"skill"`
 		}
 		if err := json.Unmarshal([]byte(call.Arguments), &args); err != nil {
-			return toolError("invalid read_skill arguments", err)
+			return textToolOutput(toolError("invalid read_skill arguments", err))
 		}
 		if a.skillsError != nil {
-			return toolError("find skills directory", a.skillsError)
+			return textToolOutput(toolError("find skills directory", a.skillsError))
 		}
 		fmt.Fprintf(a.stderr, "→ read_skill: %s\n", args.Skill)
 		result, err := readSkill(a.skillsRoot, args.Skill)
 		if err != nil {
-			return toolError("read_skill failed", err)
+			return textToolOutput(toolError("read_skill failed", err))
 		}
-		return result
+		return skillFileToolOutput(result)
 	case "read_skill_file":
 		var args struct {
 			Skill string `json:"skill"`
 			Path  string `json:"path"`
 		}
 		if err := json.Unmarshal([]byte(call.Arguments), &args); err != nil {
-			return toolError("invalid read_skill_file arguments", err)
+			return textToolOutput(toolError("invalid read_skill_file arguments", err))
 		}
 		if a.skillsError != nil {
-			return toolError("find skills directory", a.skillsError)
+			return textToolOutput(toolError("find skills directory", a.skillsError))
 		}
 		fmt.Fprintf(a.stderr, "→ read_skill_file: %s/%s\n", args.Skill, args.Path)
 		result, err := readSkillFile(a.skillsRoot, args.Skill, args.Path)
 		if err != nil {
-			return toolError("read_skill_file failed", err)
+			return textToolOutput(toolError("read_skill_file failed", err))
 		}
-		return result
+		return skillFileToolOutput(result)
 	case "bash":
 		var args struct {
 			Command   string `json:"command"`
 			TimeoutMS int    `json:"timeout_ms"`
 		}
 		if err := json.Unmarshal([]byte(call.Arguments), &args); err != nil {
-			return toolError("invalid bash arguments", err)
+			return textToolOutput(toolError("invalid bash arguments", err))
 		}
 		if strings.TrimSpace(args.Command) == "" {
-			return toolError("invalid bash arguments", errors.New("command is empty"))
+			return textToolOutput(toolError("invalid bash arguments", errors.New("command is empty")))
 		}
 		fmt.Fprintf(a.stderr, "→ bash: %s\n", oneLine(args.Command, 180))
-		return runBash(ctx, bashRequest{
+		return textToolOutput(runBash(ctx, bashRequest{
 			Command: args.Command, TimeoutMS: args.TimeoutMS, CWD: sess.CWD,
 			RepoRoot: sess.RepoRoot, Approve: a.approve,
-		})
+		}))
 	case "apply_patch":
 		var args struct {
 			Patch string `json:"patch"`
 		}
 		if err := json.Unmarshal([]byte(call.Arguments), &args); err != nil {
-			return toolError("invalid apply_patch arguments", err)
+			return textToolOutput(toolError("invalid apply_patch arguments", err))
 		}
 		fmt.Fprintln(a.stderr, "→ apply_patch")
 		result, err := applyPatch(sess.RepoRoot, args.Patch)
 		if err != nil {
-			return toolError("apply_patch failed", err)
+			return textToolOutput(toolError("apply_patch failed", err))
 		}
-		return result
+		return textToolOutput(result)
 	default:
-		return toolError("unknown tool", fmt.Errorf("%s is not available", call.Name))
+		return textToolOutput(toolError("unknown tool", fmt.Errorf("%s is not available", call.Name)))
 	}
+}
+
+func textToolOutput(value string) json.RawMessage {
+	b, _ := json.Marshal(value)
+	return b
+}
+
+func skillFileToolOutput(file skillFileResult) json.RawMessage {
+	metadata := marshalToolResult(file)
+	if file.imageURL == "" {
+		return textToolOutput(metadata)
+	}
+	b, _ := json.Marshal([]map[string]string{
+		{"type": "input_text", "text": metadata},
+		{"type": "input_image", "image_url": file.imageURL, "detail": "auto"},
+	})
+	return b
 }
 
 func toolError(message string, err error) string {

@@ -2,8 +2,8 @@ package mai
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -16,8 +16,12 @@ func TestSearchSkillsRanksMetadataAndListsWithEmptyQuery(t *testing.T) {
 	writeTestSkill(t, root, "layout", "layout-helper", "Build responsive page layouts.")
 	writeTestSkill(t, root, "writing", "plain-writing", "Write clear interface text.")
 	writeTestSkill(t, root, "review", "layout-review", "Review code structure.")
+	for i := 0; i < 12; i++ {
+		id := fmt.Sprintf("filler-%02d", i)
+		writeTestSkill(t, root, id, id, "A catalog entry.")
+	}
 
-	raw, err := searchSkills(root, "layout", 2)
+	raw, err := searchSkills(root, "layout")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,15 +33,15 @@ func TestSearchSkillsRanksMetadataAndListsWithEmptyQuery(t *testing.T) {
 		t.Fatalf("unexpected ranked skills: %#v", result.Skills)
 	}
 
-	raw, err = searchSkills(root, "", 50)
+	raw, err = searchSkills(root, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := json.Unmarshal([]byte(raw), &result); err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Skills) != 3 {
-		t.Fatalf("listed %d skills, want 3", len(result.Skills))
+	if len(result.Skills) != 15 {
+		t.Fatalf("listed %d skills, want 15", len(result.Skills))
 	}
 }
 
@@ -54,41 +58,31 @@ func TestReadSkillReturnsCompleteFileAndSupportingFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	raw, err := readSkill(root, "demo")
+	result, err := readSkill(root, "demo")
 	if err != nil {
-		t.Fatal(err)
-	}
-	var result skillFileResult
-	if err := json.Unmarshal([]byte(raw), &result); err != nil {
 		t.Fatal(err)
 	}
 	if result.Path != "SKILL.md" || !strings.Contains(result.Content, "# demo instructions") {
 		t.Fatalf("unexpected skill result: %#v", result)
 	}
 
-	raw, err = readSkillFile(root, "demo", "references/guide.md")
+	result, err = readSkillFile(root, "demo", "references/guide.md")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := json.Unmarshal([]byte(raw), &result); err != nil {
-		t.Fatal(err)
-	}
-	if result.Encoding != "utf-8" || result.Content != "# Guide\nRead all of this.\n" {
+	if result.Content != "# Guide\nRead all of this.\n" {
 		t.Fatalf("unexpected reference result: %#v", result)
 	}
-	raw, err = readSkillFile(root, "demo", "root-note.md")
+	result, err = readSkillFile(root, "demo", "root-note.md")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	raw, err = readSkillFile(root, "demo", "assets/icon.png")
+	result, err = readSkillFile(root, "demo", "assets/icon.png")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := json.Unmarshal([]byte(raw), &result); err != nil {
-		t.Fatal(err)
-	}
-	if result.Encoding != "base64" || result.Content != base64.StdEncoding.EncodeToString(binary) {
+	if !strings.HasPrefix(result.imageURL, "data:image/png;base64,") || result.Content != "" {
 		t.Fatalf("unexpected asset result: %#v", result)
 	}
 }
@@ -113,6 +107,10 @@ func TestReadSkillFileRejectsEscapesAndUnscopedFiles(t *testing.T) {
 	if _, err := readSkillFile(root, "demo", "references/escape.txt"); err == nil {
 		t.Fatal("readSkillFile accepted a symlink escape")
 	}
+	mustWrite(t, filepath.Join(root, "demo", "assets", "data.bin"), string([]byte{0, 1, 2}))
+	if _, err := readSkillFile(root, "demo", "assets/data.bin"); err == nil || !strings.Contains(err.Error(), "unsupported media type") {
+		t.Fatalf("unexpected binary file error: %v", err)
+	}
 }
 
 func TestAgentRoutesRegisteredSkillTools(t *testing.T) {
@@ -122,15 +120,34 @@ func TestAgentRoutesRegisteredSkillTools(t *testing.T) {
 	a := &agent{stderr: io.Discard, skillsRoot: root}
 
 	calls := []functionCall{
-		{Name: "search_skills", Arguments: `{"query":"demo","limit":1}`},
+		{Name: "search_skills", Arguments: `{"query":"demo"}`},
 		{Name: "read_skill", Arguments: `{"skill":"demo"}`},
 		{Name: "read_skill_file", Arguments: `{"skill":"demo","path":"references/guide.md"}`},
 	}
 	for _, call := range calls {
-		result := a.executeTool(context.Background(), &session{}, call)
+		raw := a.executeTool(context.Background(), &session{}, call)
+		var result string
+		if err := json.Unmarshal(raw, &result); err != nil {
+			t.Fatalf("decode %s output: %v", call.Name, err)
+		}
 		if !strings.Contains(result, `"ok":true`) {
 			t.Fatalf("%s failed: %s", call.Name, result)
 		}
+	}
+
+	mustWrite(t, filepath.Join(root, "demo", "assets", "icon.png"), string([]byte{0x89, 'P', 'N', 'G', 0, 1}))
+	raw := a.executeTool(context.Background(), &session{}, functionCall{
+		Name: "read_skill_file", Arguments: `{"skill":"demo","path":"assets/icon.png"}`,
+	})
+	var content []map[string]string
+	if err := json.Unmarshal(raw, &content); err != nil {
+		t.Fatal(err)
+	}
+	if len(content) != 2 || content[1]["type"] != "input_image" || !strings.HasPrefix(content[1]["image_url"], "data:image/png;base64,") {
+		t.Fatalf("unexpected image output: %#v", content)
+	}
+	if strings.Contains(content[0]["text"], "base64") {
+		t.Fatalf("image bytes leaked into text output: %s", content[0]["text"])
 	}
 
 	definitions := toolDefinitions()
@@ -141,6 +158,11 @@ func TestAgentRoutesRegisteredSkillTools(t *testing.T) {
 		if definitions[i]["name"] != name {
 			t.Fatalf("tool %d is %v, want %s", i, definitions[i]["name"], name)
 		}
+	}
+	searchParameters := definitions[0]["parameters"].(map[string]any)
+	properties := searchParameters["properties"].(map[string]any)
+	if _, ok := properties["limit"]; ok {
+		t.Fatal("search_skills still exposes partial-list limit state")
 	}
 }
 

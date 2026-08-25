@@ -15,11 +15,7 @@ import (
 	"unicode/utf8"
 )
 
-const (
-	defaultSkillLimit = 10
-	maxSkillLimit     = 50
-	maxSkillFileBytes = 2 << 20
-)
+const maxSkillFileBytes = 2 << 20
 
 type skillSummary struct {
 	ID          string `json:"id"`
@@ -38,9 +34,9 @@ type skillFileResult struct {
 	OK        bool   `json:"ok"`
 	Skill     string `json:"skill"`
 	Path      string `json:"path"`
-	Encoding  string `json:"encoding"`
 	MediaType string `json:"media_type"`
-	Content   string `json:"content"`
+	Content   string `json:"content,omitempty"`
+	imageURL  string
 }
 
 func defaultSkillsRoot() (string, error) {
@@ -51,7 +47,7 @@ func defaultSkillsRoot() (string, error) {
 	return filepath.Join(home, ".agents", "skills"), nil
 }
 
-func searchSkills(root, query string, limit int) (string, error) {
+func searchSkills(root, query string) (string, error) {
 	root, err := canonicalPath(root)
 	if err != nil {
 		return "", fmt.Errorf("resolve skills directory: %w", err)
@@ -60,13 +56,6 @@ func searchSkills(root, query string, limit int) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("list skills: %w", err)
 	}
-	if limit == 0 {
-		limit = defaultSkillLimit
-	}
-	if limit < 1 || limit > maxSkillLimit {
-		return "", fmt.Errorf("limit must be from 1 through %d", maxSkillLimit)
-	}
-
 	terms := strings.Fields(strings.ToLower(strings.TrimSpace(query)))
 	result := skillSearchResult{OK: true, Skills: []skillSummary{}}
 	for _, entry := range entries {
@@ -94,9 +83,6 @@ func searchSkills(root, query string, limit int) (string, error) {
 		}
 		return result.Skills[i].Name < result.Skills[j].Name
 	})
-	if len(result.Skills) > limit {
-		result.Skills = result.Skills[:limit]
-	}
 	return marshalToolResult(result), nil
 }
 
@@ -127,66 +113,73 @@ func skillMatch(skill skillSummary, terms []string) (int, bool) {
 	name := strings.ToLower(skill.Name)
 	description := strings.ToLower(skill.Description)
 	score := 0
+	matched := false
 	for _, term := range terms {
 		switch {
 		case name == term:
 			score += 100
+			matched = true
 		case strings.HasPrefix(name, term):
 			score += 50
+			matched = true
 		case strings.Contains(name, term):
 			score += 25
+			matched = true
 		case strings.Contains(description, term):
 			score += 10
-		default:
-			return 0, false
+			matched = true
 		}
 	}
-	return score, true
+	return score, matched
 }
 
-func readSkill(root, id string) (string, error) {
+func readSkill(root, id string) (skillFileResult, error) {
 	dir, err := secureSkillDir(root, id)
 	if err != nil {
-		return "", err
+		return skillFileResult{}, err
 	}
 	return readSkillPath(id, dir, "SKILL.md")
 }
 
-func readSkillFile(root, id, path string) (string, error) {
+func readSkillFile(root, id, path string) (skillFileResult, error) {
 	dir, err := secureSkillDir(root, id)
 	if err != nil {
-		return "", err
+		return skillFileResult{}, err
 	}
 	clean := filepath.Clean(path)
 	if filepath.IsAbs(path) || clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return "", errors.New("skill file path must stay inside the selected skill")
+		return skillFileResult{}, errors.New("skill file path must stay inside the selected skill")
 	}
 	return readSkillPath(id, dir, clean)
 }
 
-func readSkillPath(id, dir, path string) (string, error) {
+func readSkillPath(id, dir, path string) (skillFileResult, error) {
 	resolved, err := secureSkillPath(dir, path)
 	if err != nil {
-		return "", err
+		return skillFileResult{}, err
 	}
 	b, err := readBoundedRegularFile(resolved)
 	if err != nil {
-		return "", err
+		return skillFileResult{}, err
 	}
 	mediaType := mime.TypeByExtension(filepath.Ext(resolved))
 	if mediaType == "" {
 		mediaType = http.DetectContentType(b)
 	}
-	encoding := "utf-8"
+	result := skillFileResult{
+		OK: true, Skill: id, Path: filepath.ToSlash(path), MediaType: mediaType,
+	}
+	if strings.HasPrefix(strings.ToLower(mediaType), "image/") {
+		contentType, _, _ := strings.Cut(mediaType, ";")
+		result.imageURL = "data:" + contentType + ";base64," + base64.StdEncoding.EncodeToString(b)
+		return result, nil
+	}
 	content := string(b)
 	if !utf8.Valid(b) || strings.IndexByte(content, 0) >= 0 {
-		encoding = "base64"
-		content = base64.StdEncoding.EncodeToString(b)
+		return skillFileResult{}, fmt.Errorf("%s is binary data with unsupported media type %s", path, mediaType)
 	}
-	return marshalToolResult(skillFileResult{
-		OK: true, Skill: id, Path: filepath.ToSlash(path), Encoding: encoding,
-		MediaType: mediaType, Content: content,
-	}), nil
+	result.Content = content
+	return result, nil
 }
 
 func secureSkillPath(dir, path string) (string, error) {

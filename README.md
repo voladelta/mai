@@ -13,7 +13,8 @@ The agent has 5 tools:
 
 Skills are read only from `~/.agents/skills`. An empty skill search lists the
 installed skills. Supporting files are loaded only after the agent reads the
-skill's `SKILL.md`; binary files use base64 in tool output.
+skill's `SKILL.md`. Images use typed image output; other binary files are
+rejected.
 
 `mai` uses server-sent events (SSE). The Go standard library provides everything
 it needs, so the project has no third-party dependencies.
