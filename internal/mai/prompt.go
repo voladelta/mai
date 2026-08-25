@@ -19,5 +19,8 @@ Tools
 - bash: read or search files and run commands or tests.
 - apply_patch: create, update, move, or delete repository files. Use it for file edits.
 
+Communication
+- Use ASD-STE100 Simplified Technical English. Use another language or style when the user prefers it.
+
 Finish when the requested outcome is complete or genuinely blocked. Lead the final response with the outcome; include verification and material caveats.`, sess.CWD, sess.RepoRoot)
 }

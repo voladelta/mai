@@ -13,6 +13,8 @@ func TestSystemInstructionsAreLeanAndComplete(t *testing.T) {
 		"complete the in-scope local work",
 		"bash:",
 		"apply_patch:",
+		"ASD-STE100 Simplified Technical English",
+		"when the user prefers it",
 		"requested outcome is complete or genuinely blocked",
 	} {
 		if !strings.Contains(prompt, required) {
