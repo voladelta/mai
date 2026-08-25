@@ -3,22 +3,31 @@ package mai
 import "testing"
 
 func TestParseOptionsInterspersed(t *testing.T) {
-	opts, err := parseOptions([]string{"fix", "the", "test", "--last", "-m", "sol", "-e=h"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if opts.prompt != "fix the test" || !opts.last || opts.model != "sol" || opts.effort != "h" {
-		t.Fatalf("unexpected options: %#v", opts)
-	}
-}
-
-func TestParseOptionsLongNames(t *testing.T) {
-	opts, err := parseOptions([]string{"--model=terra", "hello", "--effort", "xhigh"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if opts.model != "terra" || opts.effort != "x" || opts.prompt != "hello" {
-		t.Fatalf("unexpected options: %#v", opts)
+	for _, test := range []struct {
+		name string
+		args []string
+		want options
+	}{
+		{
+			name: "short forms after prompt",
+			args: []string{"fix", "the", "test", "--last", "-m", "sol", "-e=h"},
+			want: options{prompt: "fix the test", last: true, model: "sol", effort: "h", modelExplicit: true, effortExplicit: true},
+		},
+		{
+			name: "long forms around prompt",
+			args: []string{"--model=terra", "hello", "--effort", "xhigh"},
+			want: options{prompt: "hello", model: "terra", effort: "x", modelExplicit: true, effortExplicit: true},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := parseOptions(test.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != test.want {
+				t.Fatalf("options = %#v, want %#v", got, test.want)
+			}
+		})
 	}
 }
 

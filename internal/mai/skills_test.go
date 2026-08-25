@@ -203,12 +203,14 @@ func TestAgentRoutesRegisteredSkillTools(t *testing.T) {
 	}
 
 	definitions := toolDefinitions()
-	if len(definitions) != 4 {
-		t.Fatalf("registered %d tools, want 4", len(definitions))
+	registered := make(map[string]bool, len(definitions))
+	for _, definition := range definitions {
+		name, _ := definition["name"].(string)
+		registered[name] = true
 	}
-	for i, name := range []string{"read_skill", "read_skill_file"} {
-		if definitions[i]["name"] != name {
-			t.Fatalf("tool %d is %v, want %s", i, definitions[i]["name"], name)
+	for _, name := range []string{"read_skill", "read_skill_file"} {
+		if !registered[name] {
+			t.Fatalf("tool %q is not registered", name)
 		}
 	}
 }

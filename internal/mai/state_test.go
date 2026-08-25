@@ -7,29 +7,24 @@ import (
 	"testing"
 )
 
-func TestStatePathsOverride(t *testing.T) {
-	dir := t.TempDir()
+func TestSaveJSONUsesStatePermissions(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "state")
 	t.Setenv("MAI_STATE_DIR", dir)
-	got, err := statePaths()
+	paths, err := statePaths()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.config != filepath.Join(dir, "config.json") || got.session != filepath.Join(dir, "session.json") {
-		t.Fatalf("unexpected paths: %#v", got)
+	if paths.config != filepath.Join(dir, "config.json") || paths.session != filepath.Join(dir, "session.json") {
+		t.Fatalf("unexpected paths: %#v", paths)
 	}
-}
-
-func TestSaveJSONUsesStatePermissions(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "state")
-	path := filepath.Join(dir, "config.json")
-	if err := saveJSON(path, config{Model: "luna", Effort: "max"}); err != nil {
+	if err := saveJSON(paths.config, config{Model: "luna", Effort: "max"}); err != nil {
 		t.Fatal(err)
 	}
 	dirInfo, err := os.Stat(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fileInfo, err := os.Stat(path)
+	fileInfo, err := os.Stat(paths.config)
 	if err != nil {
 		t.Fatal(err)
 	}
