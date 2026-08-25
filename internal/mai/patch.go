@@ -33,7 +33,6 @@ type pendingFile struct {
 	mode           os.FileMode
 	originalExists bool
 	deleted        bool
-	dirty          bool
 }
 
 func applyPatch(repoRoot, patch string) (string, error) {
@@ -97,7 +96,7 @@ func applyPatch(repoRoot, patch string) (string, error) {
 			} else if !errors.Is(err, os.ErrNotExist) {
 				return "", fmt.Errorf("inspect %s: %w", op.path, err)
 			}
-			files[abs] = &pendingFile{path: abs, content: op.contents, mode: 0o644, dirty: true}
+			files[abs] = &pendingFile{path: abs, content: op.contents, mode: 0o644}
 			changed = append(changed, "add "+op.path)
 		case "delete":
 			file, err := load(op.path)
@@ -105,7 +104,6 @@ func applyPatch(repoRoot, patch string) (string, error) {
 				return "", err
 			}
 			file.deleted = true
-			file.dirty = true
 			changed = append(changed, "delete "+op.path)
 		case "update":
 			file, err := load(op.path)
@@ -117,7 +115,6 @@ func applyPatch(repoRoot, patch string) (string, error) {
 				return "", fmt.Errorf("update %s: %w", op.path, err)
 			}
 			file.content = updated
-			file.dirty = true
 			if op.movePath == "" {
 				changed = append(changed, "update "+op.path)
 				continue
@@ -137,7 +134,7 @@ func applyPatch(repoRoot, patch string) (string, error) {
 			} else if !errors.Is(err, os.ErrNotExist) {
 				return "", fmt.Errorf("inspect %s: %w", op.movePath, err)
 			}
-			files[dest] = &pendingFile{path: dest, content: updated, mode: file.mode, dirty: true}
+			files[dest] = &pendingFile{path: dest, content: updated, mode: file.mode}
 			file.deleted = true
 			changed = append(changed, "move "+op.path+" -> "+op.movePath)
 		default:
@@ -147,9 +144,6 @@ func applyPatch(repoRoot, patch string) (string, error) {
 
 	var writes, deletes []*pendingFile
 	for _, file := range files {
-		if !file.dirty {
-			continue
-		}
 		if file.deleted {
 			if file.originalExists {
 				deletes = append(deletes, file)
@@ -403,7 +397,7 @@ func atomicWriteFile(path string, content []byte, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create directory for %s: %w", path, err)
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".mai-patch-*")
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".mai-*")
 	if err != nil {
 		return fmt.Errorf("create temporary file for %s: %w", path, err)
 	}

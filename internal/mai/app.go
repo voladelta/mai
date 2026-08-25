@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
-	"time"
 )
 
 const usage = `mai - a small coding agent
@@ -28,7 +27,7 @@ Defaults start at luna/max. Explicit -m and -e values become future defaults.
 --last resumes the single task saved in ~/.mai/session.json.
 `
 
-func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+func Main(args []string, stdout, stderr io.Writer) int {
 	opts, err := parseOptions(args)
 	if err != nil {
 		fmt.Fprintf(stderr, "mai: %v\n\n%s", err, usage)
@@ -98,7 +97,6 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 	sess.History = append(sess.History, userItem)
-	sess.UpdatedAt = time.Now().UTC()
 	if err := saveJSON(state.session, sess); err != nil {
 		fmt.Fprintf(stderr, "mai: save task: %v\n", err)
 		return 1
@@ -106,7 +104,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	runner := newAgent(stdout, stderr, stdin, state.session)
+	runner := newAgent(stdout, stderr, state.session)
 	if err := runner.run(ctx, sess); err != nil {
 		fmt.Fprintf(stderr, "mai: %v\n", err)
 		return 1
@@ -128,10 +126,9 @@ func createSession(cfg config) (*session, error) {
 	if err != nil {
 		return nil, err
 	}
-	now := time.Now().UTC()
 	return &session{
 		Version: stateVersion, ID: id, CWD: cwd, RepoRoot: root,
-		Model: cfg.Model, Effort: cfg.Effort, CreatedAt: now, UpdatedAt: now,
+		Model: cfg.Model, Effort: cfg.Effort,
 	}, nil
 }
 

@@ -8,27 +8,23 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 )
 
 const stateVersion = 1
 
 type config struct {
-	Version int    `json:"version"`
-	Model   string `json:"model"`
-	Effort  string `json:"effort"`
+	Model  string `json:"model"`
+	Effort string `json:"effort"`
 }
 
 type session struct {
-	Version   int               `json:"version"`
-	ID        string            `json:"id"`
-	CWD       string            `json:"cwd"`
-	RepoRoot  string            `json:"repo_root"`
-	Model     string            `json:"model"`
-	Effort    string            `json:"effort"`
-	History   []json.RawMessage `json:"history"`
-	CreatedAt time.Time         `json:"created_at"`
-	UpdatedAt time.Time         `json:"updated_at"`
+	Version  int               `json:"version"`
+	ID       string            `json:"id"`
+	CWD      string            `json:"cwd"`
+	RepoRoot string            `json:"repo_root"`
+	Model    string            `json:"model"`
+	Effort   string            `json:"effort"`
+	History  []json.RawMessage `json:"history"`
 }
 
 type paths struct {
@@ -56,7 +52,7 @@ func statePaths() (paths, error) {
 }
 
 func loadConfig(path string) (config, error) {
-	out := config{Version: stateVersion, Model: "luna", Effort: "max"}
+	out := config{Model: "luna", Effort: "max"}
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return out, nil
@@ -112,34 +108,9 @@ func saveJSON(path string, value any) error {
 		return fmt.Errorf("encode state: %w", err)
 	}
 	b = append(b, '\n')
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".mai-state-*")
-	if err != nil {
-		return fmt.Errorf("create temporary state: %w", err)
+	if err := atomicWriteFile(path, b, 0o600); err != nil {
+		return fmt.Errorf("save state: %w", err)
 	}
-	tmpPath := tmp.Name()
-	keep := false
-	defer func() {
-		_ = tmp.Close()
-		if !keep {
-			_ = os.Remove(tmpPath)
-		}
-	}()
-	if err := tmp.Chmod(0o600); err != nil {
-		return fmt.Errorf("secure temporary state: %w", err)
-	}
-	if _, err := tmp.Write(b); err != nil {
-		return fmt.Errorf("write temporary state: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		return fmt.Errorf("sync temporary state: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temporary state: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("replace state: %w", err)
-	}
-	keep = true
 	return os.Chmod(path, 0o600)
 }
 

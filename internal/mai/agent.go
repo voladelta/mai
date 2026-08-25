@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
 )
 
 const maxAgentTurns = 64
@@ -16,7 +15,6 @@ type agent struct {
 	client      *codexClient
 	stdout      io.Writer
 	stderr      io.Writer
-	stdin       io.Reader
 	sessionPath string
 	approve     approvalFunc
 }
@@ -28,8 +26,8 @@ type functionCall struct {
 	Arguments string `json:"arguments"`
 }
 
-func newAgent(stdout, stderr io.Writer, stdin io.Reader, sessionPath string) *agent {
-	a := &agent{stdout: stdout, stderr: stderr, stdin: stdin, sessionPath: sessionPath}
+func newAgent(stdout, stderr io.Writer, sessionPath string) *agent {
+	a := &agent{stdout: stdout, stderr: stderr, sessionPath: sessionPath}
 	a.client = newCodexClient(stdout)
 	a.approve = a.terminalApproval
 	return a
@@ -48,7 +46,6 @@ func (a *agent) run(ctx context.Context, sess *session) error {
 			return errors.New("Codex response contained no output items")
 		}
 		sess.History = append(sess.History, result.items...)
-		sess.UpdatedAt = time.Now().UTC()
 		if err := saveJSON(a.sessionPath, sess); err != nil {
 			return fmt.Errorf("save assistant response: %w", err)
 		}
@@ -69,7 +66,6 @@ func (a *agent) run(ctx context.Context, sess *session) error {
 				return fmt.Errorf("encode tool output: %w", marshalErr)
 			}
 			sess.History = append(sess.History, item)
-			sess.UpdatedAt = time.Now().UTC()
 			if err := saveJSON(a.sessionPath, sess); err != nil {
 				return fmt.Errorf("save tool output: %w", err)
 			}
