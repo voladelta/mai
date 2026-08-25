@@ -13,9 +13,13 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 )
 
-const defaultCodexURL = "https://chatgpt.com/backend-api/codex/responses"
+const (
+	defaultCodexURL    = "https://chatgpt.com/backend-api/codex/responses"
+	defaultHTTPTimeout = 10 * time.Minute
+)
 
 type codexClient struct {
 	httpClient *http.Client
@@ -40,13 +44,13 @@ func (e *httpStatusError) Error() string {
 	return fmt.Sprintf("Codex backend returned HTTP %d: %s", e.status, e.body)
 }
 
-func newCodexClient(stdout io.Writer) *codexClient {
+func newCodexClient(stdout io.Writer, timeout time.Duration) *codexClient {
 	endpoint := os.Getenv("MAI_CODEX_URL")
 	if endpoint == "" {
 		endpoint = defaultCodexURL
 	}
 	return &codexClient{
-		httpClient: &http.Client{},
+		httpClient: &http.Client{Timeout: timeout},
 		endpoint:   endpoint,
 		stdout:     stdout,
 	}
@@ -102,7 +106,7 @@ func (c *codexClient) streamWithCredentials(ctx context.Context, sess *session, 
 	req.Header.Set("Authorization", "Bearer "+creds.AccessToken)
 	req.Header.Set("chatgpt-account-id", creds.AccountID)
 	req.Header.Set("originator", "mai")
-	req.Header.Set("User-Agent", "mai/0.1")
+	req.Header.Set("User-Agent", "mai/"+version)
 	req.Header.Set("OpenAI-Beta", "responses=experimental")
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Content-Type", "application/json")
@@ -111,6 +115,9 @@ func (c *codexClient) streamWithCredentials(ctx context.Context, sess *session, 
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return streamResult{}, fmt.Errorf("Codex request timed out after %s; use --timeout to change the limit", c.httpClient.Timeout)
+		}
 		return streamResult{}, fmt.Errorf("call Codex backend: %w", err)
 	}
 	defer resp.Body.Close()
@@ -118,7 +125,11 @@ func (c *codexClient) streamWithCredentials(ctx context.Context, sess *session, 
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 		return streamResult{}, &httpStatusError{status: resp.StatusCode, body: strings.TrimSpace(string(b))}
 	}
-	return c.readSSE(resp.Body)
+	result, err := c.readSSE(resp.Body)
+	if errors.Is(err, context.DeadlineExceeded) {
+		return streamResult{}, fmt.Errorf("Codex request timed out after %s; use --timeout to change the limit", c.httpClient.Timeout)
+	}
+	return result, err
 }
 
 func (c *codexClient) readSSE(r io.Reader) (streamResult, error) {

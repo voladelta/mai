@@ -33,6 +33,77 @@ func TestSaveJSONUsesStatePermissions(t *testing.T) {
 	}
 }
 
+func TestStatePathsFollowXDG(t *testing.T) {
+	home := t.TempDir()
+	configHome := filepath.Join(home, "configuration")
+	stateHome := filepath.Join(home, "state")
+	t.Setenv("HOME", home)
+	t.Setenv("MAI_STATE_DIR", "")
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	paths, err := statePaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if paths.config != filepath.Join(configHome, "mai", "config.json") {
+		t.Fatalf("config path = %q", paths.config)
+	}
+	if paths.session != filepath.Join(stateHome, "mai", "session.json") {
+		t.Fatalf("session path = %q", paths.session)
+	}
+}
+
+func TestMigrateLegacyStateDoesNotOverwriteXDGFiles(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MAI_STATE_DIR", "")
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, ".state"))
+	paths, err := statePaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saveJSON(paths.legacyConfig, config{Model: "sol", Effort: "h"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveJSON(paths.legacySession, session{
+		Version: stateVersion, ID: "session", CWD: home, RepoRoot: home,
+		Model: "luna", Effort: "max",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateLegacyState(paths); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadConfig(paths.config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Model != "sol" || cfg.Effort != "h" {
+		t.Fatalf("migrated config = %#v", cfg)
+	}
+	sess, err := loadSession(paths.session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.ID != "session" || sess.CWD != home {
+		t.Fatalf("migrated session = %#v", sess)
+	}
+	if err := saveJSON(paths.config, config{Model: "terra", Effort: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateLegacyState(paths); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = loadConfig(paths.config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Model != "terra" || cfg.Effort != "m" {
+		t.Fatalf("migration overwrote XDG config: %#v", cfg)
+	}
+}
+
 func TestRepairInterruptedToolCalls(t *testing.T) {
 	sess := &session{History: []json.RawMessage{
 		json.RawMessage(`{"type":"function_call","call_id":"done","name":"bash","arguments":"{}"}`),

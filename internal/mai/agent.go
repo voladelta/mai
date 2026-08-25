@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 )
 
 const maxAgentTurns = 64
@@ -29,18 +30,24 @@ type functionCall struct {
 	Arguments string `json:"arguments"`
 }
 
-func newAgent(stdout, stderr io.Writer, sessionPath string) *agent {
+func newAgent(stdout, stderr io.Writer, sessionPath string, timeout time.Duration, inputAllowed bool) *agent {
 	root, err := defaultSkillsRoot()
 	a := &agent{
 		stdout: stdout, stderr: stderr, sessionPath: sessionPath,
 		skillsRoot: root, skillsError: err,
 	}
-	a.client = newCodexClient(stdout)
-	a.approve = a.terminalApproval
+	a.client = newCodexClient(stdout, timeout)
+	if inputAllowed {
+		a.approve = a.terminalApproval
+	}
 	return a
 }
 
 func (a *agent) run(ctx context.Context, sess *session, userPrompt string) error {
+	interactive := isTerminalWriter(a.stderr)
+	if interactive {
+		fmt.Fprintln(a.stderr, "→ thinking")
+	}
 	skills := ""
 	if a.skillsError != nil {
 		fmt.Fprintf(a.stderr, "mai: skills unavailable: %v\n", a.skillsError)
@@ -59,6 +66,9 @@ func (a *agent) run(ctx context.Context, sess *session, userPrompt string) error
 	}
 	instructions := systemInstructions(sess, skills)
 	for turn := 0; turn < maxAgentTurns; turn++ {
+		if interactive && turn > 0 {
+			fmt.Fprintln(a.stderr, "→ thinking")
+		}
 		result, err := a.client.stream(ctx, sess, instructions)
 		if result.wrote {
 			fmt.Fprintln(a.stdout)
@@ -98,6 +108,16 @@ func (a *agent) run(ctx context.Context, sess *session, userPrompt string) error
 		}
 	}
 	return fmt.Errorf("agent stopped after %d model turns", maxAgentTurns)
+}
+
+func isTerminal(file *os.File) bool {
+	info, err := file.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
+func isTerminalWriter(w io.Writer) bool {
+	file, ok := w.(*os.File)
+	return ok && isTerminal(file)
 }
 
 func extractFunctionCalls(items []json.RawMessage) ([]functionCall, error) {

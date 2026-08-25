@@ -63,6 +63,9 @@ mai "now fix the failing test" --last
 `--last` restores the original working directory, model, effort and conversation
 history.
 
+Run `mai` without a prompt to show concise usage text and the current model and
+effort defaults. Run `mai --help` for all options.
+
 ## Choose a model and effort
 
 Use `-m` to choose a model:
@@ -79,8 +82,8 @@ Use `-e` to choose the reasoning effort:
 - `x` means extra high
 - `max` means maximum
 
-The first run uses `luna` with `max` effort. An explicit `-m` or `-e` value
-becomes the new default for later tasks.
+The first run uses `luna` with `max` effort. An explicit `-m` or `-e` value only
+applies to that task. The saved task keeps those values when you use `--last`.
 
 You can use these options with a new or saved task:
 
@@ -89,13 +92,32 @@ mai "refactor this package" -m sol -e h
 mai "continue the refactor" --last -m terra -e max
 ```
 
+Add `--save-defaults` to save an explicit model or effort for future tasks:
+
+```bash
+mai -m sol -e h --save-defaults
+mai "refactor this package" -m sol -e h --save-defaults
+```
+
+## Timeouts and interactive input
+
+Each Codex request has a 10-minute timeout. Set a different positive Go-style
+duration when necessary:
+
+```bash
+mai "investigate the failure" --timeout 20m
+```
+
+Use `--no-input` in scripts and other non-interactive environments. If a command
+needs approval, `mai` rejects it instead of opening a terminal prompt.
+
 ## Authentication
 
 `mai` reads `$CODEX_HOME/auth.json`. It reads `~/.codex/auth.json` when
 `CODEX_HOME` is not set.
 
 `mai` does not read `OPENAI_API_KEY`. It does not copy your Codex credentials
-into `~/.mai`.
+into its configuration or state files.
 
 If Codex stores credentials only in the system keychain, set this option in your
 Codex configuration:
@@ -108,12 +130,16 @@ Run `codex login` again after you change the option.
 
 ## Saved settings and tasks
 
-`mai` stores its own data in 2 files:
+`mai` follows the XDG Base Directory Specification. It stores its own data in 2
+files by default:
 
-- `~/.mai/config.json` stores the default model and effort
-- `~/.mai/session.json` stores the single saved task and its conversation history
+- `~/.config/mai/config.json` stores the default model and effort
+- `~/.local/state/mai/session.json` stores the single saved task and its conversation history
 
-The `~/.mai` directory uses permission mode `0700`. Both files use mode `0600`.
+`XDG_CONFIG_HOME` and `XDG_STATE_HOME` change these base directories. If the XDG
+files do not exist, `mai` copies existing files from `~/.mai` and leaves the old
+files in place. State directories use permission mode `0700`. Both files use
+mode `0600`.
 
 The saved history includes completed model output and encrypted reasoning state.
 `mai` sends a stable cache key for each task so compatible requests can reuse
@@ -128,6 +154,9 @@ symbolic links that lead outside the repository.
 
 `mai` checks recognisable `rm` commands before it runs them. It asks for approval
 when a target is outside the repository or cannot be resolved safely.
+
+Approval is only interactive when standard input is a terminal and `--no-input`
+is not set.
 
 This check only covers `rm`. Other shell commands can still delete or overwrite
 data.

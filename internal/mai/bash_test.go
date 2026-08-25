@@ -3,6 +3,7 @@ package mai
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -16,6 +17,17 @@ func TestRunBashCapturesResult(t *testing.T) {
 	}
 	if result.OK || result.Stdout != "out" || result.Stderr != "err" || result.ExitCode != 7 {
 		t.Fatalf("unexpected result: %#v", result)
+	}
+}
+
+func TestRunBashRejectsApprovalWhenInputIsUnavailable(t *testing.T) {
+	root := t.TempDir()
+	raw := runBash(context.Background(), bashRequest{
+		Command: "rm /tmp/mai-outside-repository",
+		CWD:     root, RepoRoot: root,
+	})
+	if !strings.Contains(raw, "rm approval required") {
+		t.Fatalf("unexpected result: %s", raw)
 	}
 }
 

@@ -28,8 +28,10 @@ type session struct {
 }
 
 type paths struct {
-	config  string
-	session string
+	config        string
+	session       string
+	legacyConfig  string
+	legacySession string
 }
 
 func statePaths() (paths, error) {
@@ -44,11 +46,85 @@ func statePaths() (paths, error) {
 	if err != nil {
 		return paths{}, fmt.Errorf("find home directory: %w", err)
 	}
-	dir := filepath.Join(home, ".mai")
+	configHome := os.Getenv("XDG_CONFIG_HOME")
+	if configHome == "" {
+		configHome = filepath.Join(home, ".config")
+	} else if !filepath.IsAbs(configHome) {
+		return paths{}, errors.New("XDG_CONFIG_HOME must be an absolute path")
+	}
+	stateHome := os.Getenv("XDG_STATE_HOME")
+	if stateHome == "" {
+		stateHome = filepath.Join(home, ".local", "state")
+	} else if !filepath.IsAbs(stateHome) {
+		return paths{}, errors.New("XDG_STATE_HOME must be an absolute path")
+	}
+	legacyDir := filepath.Join(home, ".mai")
 	return paths{
-		config:  filepath.Join(dir, "config.json"),
-		session: filepath.Join(dir, "session.json"),
+		config:        filepath.Join(configHome, "mai", "config.json"),
+		session:       filepath.Join(stateHome, "mai", "session.json"),
+		legacyConfig:  filepath.Join(legacyDir, "config.json"),
+		legacySession: filepath.Join(legacyDir, "session.json"),
 	}, nil
+}
+
+func migrateLegacyState(state paths) error {
+	if state.legacyConfig == "" {
+		return nil
+	}
+	if err := migrateFile(state.legacyConfig, state.config); err != nil {
+		return fmt.Errorf("migrate %s: %w", state.legacyConfig, err)
+	}
+	if err := migrateFile(state.legacySession, state.session); err != nil {
+		return fmt.Errorf("migrate %s: %w", state.legacySession, err)
+	}
+	return nil
+}
+
+func migrateFile(source, destination string) error {
+	if _, err := os.Stat(destination); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	b, err := os.ReadFile(source)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(destination)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return err
+	}
+	temp, err := os.CreateTemp(dir, ".mai-migrate-*")
+	if err != nil {
+		return err
+	}
+	tempName := temp.Name()
+	defer os.Remove(tempName)
+	if err := temp.Chmod(0o600); err != nil {
+		temp.Close()
+		return err
+	}
+	if _, err := temp.Write(b); err != nil {
+		temp.Close()
+		return err
+	}
+	if err := temp.Sync(); err != nil {
+		temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := os.Link(tempName, destination); err != nil && !errors.Is(err, os.ErrExist) {
+		return err
+	}
+	return nil
 }
 
 func loadConfig(path string) (config, error) {

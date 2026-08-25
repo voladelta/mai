@@ -3,6 +3,7 @@ package mai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,50 +14,100 @@ import (
 	"syscall"
 )
 
-const usage = `mai - a small coding agent
+const version = "0.1.0"
+
+const fullHelp = `mai - a small coding agent
 
 Usage:
-  mai "prompt" [--last] [-m sol|luna|terra] [-e l|m|h|x|max]
+  mai "prompt" [options]
+  mai -m MODEL [-e EFFORT] --save-defaults
 
 Examples:
   mai "add tests for the parser"
   mai "now fix the failing test" --last
   mai "refactor this" -m sol -e h
 
-Defaults start at luna/max. Explicit -m and -e values become future defaults.
---last resumes the single task saved in ~/.mai/session.json.
+Options:
+  -h, --help             Show this help text.
+  --version              Show the mai version.
+  --last                 Resume the saved task.
+  -m, --model MODEL      Use sol, luna, or terra for this task.
+  -e, --effort EFFORT    Use l, m, h, x, or max for this task.
+  --save-defaults        Save an explicit model or effort for future tasks.
+  --timeout DURATION     Set the request timeout (default: 10m).
+  --no-input             Do not ask for interactive approval.
+
+The saved task keeps its model and effort when you use --last.
+Current defaults: %s.
+
+Documentation and support: https://github.com/voladelta/mai
 `
 
 func Main(args []string, stdout, stderr io.Writer) int {
 	opts, err := parseOptions(args)
 	if err != nil {
-		fmt.Fprintf(stderr, "mai: %v\n\n%s", err, usage)
+		fmt.Fprintf(stderr, "mai: %v\nRun 'mai --help' for usage.\n", err)
 		return 2
 	}
-	if opts.help {
-		fmt.Fprint(stdout, usage)
+	if opts.version {
+		fmt.Fprintf(stdout, "mai %s\n", version)
 		return 0
 	}
 
-	state, err := statePaths()
+	if opts.help {
+		cfg, stateErr := loadDisplayConfig()
+		defaults := "unavailable"
+		if stateErr == nil {
+			defaults = formatDefaults(cfg)
+		} else {
+			fmt.Fprintf(stderr, "mai: cannot read current defaults: %v\n", stateErr)
+		}
+		fmt.Fprintf(stdout, fullHelp, defaults)
+		return 0
+	}
+	if len(args) == 0 {
+		cfg, err := loadDisplayConfig()
+		if err != nil {
+			fmt.Fprintf(stderr, "mai: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(stdout, `mai - a small coding agent
+
+Usage:
+  mai "prompt" [options]
+
+Example:
+  mai "add tests for the parser"
+
+Current defaults: %s.
+Run 'mai --help' for more information.
+`, formatDefaults(cfg))
+		return 0
+	}
+
+	state, cfg, err := loadStateConfig()
 	if err != nil {
 		fmt.Fprintf(stderr, "mai: %v\n", err)
 		return 1
 	}
-	cfg, err := loadConfig(state.config)
-	if err != nil {
-		fmt.Fprintf(stderr, "mai: %v\n", err)
-		return 1
-	}
+
+	taskCfg := cfg
 	if opts.modelExplicit {
-		cfg.Model = opts.model
+		taskCfg.Model = opts.model
 	}
 	if opts.effortExplicit {
-		cfg.Effort = opts.effort
+		taskCfg.Effort = opts.effort
 	}
-	if err := saveJSON(state.config, cfg); err != nil {
-		fmt.Fprintf(stderr, "mai: %v\n", err)
-		return 1
+	if opts.saveDefaults {
+		if err := saveJSON(state.config, taskCfg); err != nil {
+			fmt.Fprintf(stderr, "mai: %v\n", err)
+			return 1
+		}
+		if opts.prompt == "" {
+			fmt.Fprintf(stdout, "Saved defaults: %s.\n", formatDefaults(taskCfg))
+			return 0
+		}
+		fmt.Fprintf(stderr, "mai: saved defaults: %s\n", formatDefaults(taskCfg))
 	}
 
 	var sess *session
@@ -77,7 +128,7 @@ func Main(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 	} else {
-		sess, err = createSession(cfg)
+		sess, err = createSession(taskCfg)
 		if err != nil {
 			fmt.Fprintf(stderr, "mai: %v\n", err)
 			return 1
@@ -104,12 +155,51 @@ func Main(args []string, stdout, stderr io.Writer) int {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	runner := newAgent(stdout, stderr, state.session)
+	runner := newAgent(stdout, stderr, state.session, opts.timeout, !opts.noInput && isTerminal(os.Stdin))
 	if err := runner.run(ctx, sess, opts.prompt); err != nil {
+		if ctx.Err() != nil {
+			fmt.Fprintln(stderr, "mai: interrupted")
+			return 130
+		}
 		fmt.Fprintf(stderr, "mai: %v\n", err)
 		return 1
 	}
 	return 0
+}
+
+func loadStateConfig() (paths, config, error) {
+	state, err := statePaths()
+	if err != nil {
+		return paths{}, config{}, err
+	}
+	if err := migrateLegacyState(state); err != nil {
+		return paths{}, config{}, err
+	}
+	cfg, err := loadConfig(state.config)
+	if err != nil {
+		return paths{}, config{}, err
+	}
+	return state, cfg, nil
+}
+
+func loadDisplayConfig() (config, error) {
+	state, err := statePaths()
+	if err != nil {
+		return config{}, err
+	}
+	if state.legacyConfig == "" {
+		return loadConfig(state.config)
+	}
+	if _, err := os.Stat(state.config); err == nil {
+		return loadConfig(state.config)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return config{}, fmt.Errorf("read config: %w", err)
+	}
+	return loadConfig(state.legacyConfig)
+}
+
+func formatDefaults(cfg config) string {
+	return cfg.Model + "/" + effortIDs[cfg.Effort]
 }
 
 func createSession(cfg config) (*session, error) {

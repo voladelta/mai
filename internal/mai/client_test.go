@@ -2,8 +2,12 @@ package mai
 
 import (
 	"bytes"
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestReadSSEStreamsTextAndCollectsItems(t *testing.T) {
@@ -28,5 +32,20 @@ func TestReadSSEStreamsTextAndCollectsItems(t *testing.T) {
 	}
 	if !bytes.Contains(result.items[0], []byte(`"type":"reasoning"`)) {
 		t.Fatalf("items were not sorted by output index: %s", result.items[0])
+	}
+}
+
+func TestCodexClientReportsTimeoutWithNextStep(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+	}))
+	defer server.Close()
+	client := newCodexClient(&bytes.Buffer{}, 10*time.Millisecond)
+	client.endpoint = server.URL
+	_, err := client.streamWithCredentials(context.Background(), &session{
+		ID: "session", Model: "luna", Effort: "max",
+	}, "instructions", credentials{AccessToken: "token", AccountID: "account"})
+	if err == nil || !strings.Contains(err.Error(), "use --timeout") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
