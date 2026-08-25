@@ -239,6 +239,41 @@ func compactJSON(raw json.RawMessage) string {
 func toolDefinitions() []map[string]any {
 	return []map[string]any{
 		{
+			"type": "function", "name": "search_skills",
+			"description": "Search installed skill names and descriptions. Use an empty query to list skills. Skills are available only from ~/.agents/skills.",
+			"parameters": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"query": map[string]string{"type": "string", "description": "Words to match in the skill name and description. Use an empty string to list skills."},
+					"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": maxSkillLimit},
+				},
+				"required": []string{"query"},
+			},
+		},
+		{
+			"type": "function", "name": "read_skill",
+			"description": "Read the complete SKILL.md for one installed skill. Read it before using that skill or loading its supporting files.",
+			"parameters": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"skill": map[string]string{"type": "string", "description": "The skill id returned by search_skills."},
+				},
+				"required": []string{"skill"},
+			},
+		},
+		{
+			"type": "function", "name": "read_skill_file",
+			"description": "Read one supporting file from a selected skill. Read only files required by SKILL.md. Binary content is base64 encoded.",
+			"parameters": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"skill": map[string]string{"type": "string", "description": "The skill id returned by search_skills."},
+					"path":  map[string]string{"type": "string", "description": "A relative path inside the selected skill, commonly below assets, references, or scripts."},
+				},
+				"required": []string{"skill", "path"},
+			},
+		},
+		{
 			"type": "function", "name": "bash",
 			"description": "Run Bash in the task working directory. Returns stdout, stderr, exit code, timeout, and truncation state.",
 			"parameters": map[string]any{

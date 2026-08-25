@@ -13,6 +13,9 @@ func TestSystemInstructionsAreLeanAndComplete(t *testing.T) {
 		"complete the in-scope local work",
 		"bash:",
 		"apply_patch:",
+		"search_skills:",
+		"read_skill:",
+		"read_skill_file:",
 		"ASD-STE100 Simplified Technical English",
 		"when the user prefers it",
 		"requested outcome is complete or genuinely blocked",
@@ -21,8 +24,8 @@ func TestSystemInstructionsAreLeanAndComplete(t *testing.T) {
 			t.Fatalf("prompt is missing %q:\n%s", required, prompt)
 		}
 	}
-	if words := len(strings.Fields(prompt)); words > 150 {
-		t.Fatalf("prompt grew beyond the 150-word budget: %d words", words)
+	if words := len(strings.Fields(prompt)); words > 180 {
+		t.Fatalf("prompt grew beyond the 180-word budget: %d words", words)
 	}
 }
 

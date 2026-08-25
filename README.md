@@ -3,10 +3,17 @@
 `mai` is a small coding agent for macOS and Linux. It uses your existing Codex
 ChatGPT login, so you do not need an OpenAI API key.
 
-The agent has 2 tools:
+The agent has 5 tools:
 
 - `bash` reads files, searches code and runs commands
 - `apply_patch` creates, changes, moves and deletes files
+- `search_skills` searches installed skill names and descriptions
+- `read_skill` loads the complete instructions for one skill
+- `read_skill_file` loads a required supporting file from that skill
+
+Skills are read only from `~/.agents/skills`. An empty skill search lists the
+installed skills. Supporting files are loaded only after the agent reads the
+skill's `SKILL.md`; binary files use base64 in tool output.
 
 `mai` uses server-sent events (SSE). The Go standard library provides everything
 it needs, so the project has no third-party dependencies.

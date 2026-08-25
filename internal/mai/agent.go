@@ -17,6 +17,8 @@ type agent struct {
 	stderr      io.Writer
 	sessionPath string
 	approve     approvalFunc
+	skillsRoot  string
+	skillsError error
 }
 
 type functionCall struct {
@@ -27,7 +29,11 @@ type functionCall struct {
 }
 
 func newAgent(stdout, stderr io.Writer, sessionPath string) *agent {
-	a := &agent{stdout: stdout, stderr: stderr, sessionPath: sessionPath}
+	root, err := defaultSkillsRoot()
+	a := &agent{
+		stdout: stdout, stderr: stderr, sessionPath: sessionPath,
+		skillsRoot: root, skillsError: err,
+	}
 	a.client = newCodexClient(stdout)
 	a.approve = a.terminalApproval
 	return a
@@ -100,6 +106,56 @@ func extractFunctionCalls(items []json.RawMessage) ([]functionCall, error) {
 
 func (a *agent) executeTool(ctx context.Context, sess *session, call functionCall) string {
 	switch call.Name {
+	case "search_skills":
+		var args struct {
+			Query string `json:"query"`
+			Limit int    `json:"limit"`
+		}
+		if err := json.Unmarshal([]byte(call.Arguments), &args); err != nil {
+			return toolError("invalid search_skills arguments", err)
+		}
+		if a.skillsError != nil {
+			return toolError("find skills directory", a.skillsError)
+		}
+		fmt.Fprintf(a.stderr, "→ search_skills: %s\n", oneLine(args.Query, 100))
+		result, err := searchSkills(a.skillsRoot, args.Query, args.Limit)
+		if err != nil {
+			return toolError("search_skills failed", err)
+		}
+		return result
+	case "read_skill":
+		var args struct {
+			Skill string `json:"skill"`
+		}
+		if err := json.Unmarshal([]byte(call.Arguments), &args); err != nil {
+			return toolError("invalid read_skill arguments", err)
+		}
+		if a.skillsError != nil {
+			return toolError("find skills directory", a.skillsError)
+		}
+		fmt.Fprintf(a.stderr, "→ read_skill: %s\n", args.Skill)
+		result, err := readSkill(a.skillsRoot, args.Skill)
+		if err != nil {
+			return toolError("read_skill failed", err)
+		}
+		return result
+	case "read_skill_file":
+		var args struct {
+			Skill string `json:"skill"`
+			Path  string `json:"path"`
+		}
+		if err := json.Unmarshal([]byte(call.Arguments), &args); err != nil {
+			return toolError("invalid read_skill_file arguments", err)
+		}
+		if a.skillsError != nil {
+			return toolError("find skills directory", a.skillsError)
+		}
+		fmt.Fprintf(a.stderr, "→ read_skill_file: %s/%s\n", args.Skill, args.Path)
+		result, err := readSkillFile(a.skillsRoot, args.Skill, args.Path)
+		if err != nil {
+			return toolError("read_skill_file failed", err)
+		}
+		return result
 	case "bash":
 		var args struct {
 			Command   string `json:"command"`
