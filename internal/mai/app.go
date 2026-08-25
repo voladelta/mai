@@ -139,12 +139,14 @@ func findRepoRoot(cwd string) string {
 	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
 	cmd.Dir = cwd
 	out, err := cmd.Output()
-	if err == nil {
-		if root, resolveErr := canonicalPath(strings.TrimSpace(string(out))); resolveErr == nil {
-			return root
-		}
+	if err != nil {
+		return cwd
 	}
-	return cwd
+	root, err := canonicalPath(strings.TrimSpace(string(out)))
+	if err != nil {
+		return cwd
+	}
+	return root
 }
 
 func canonicalPath(path string) (string, error) {

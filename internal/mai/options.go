@@ -87,7 +87,8 @@ func normalizeModel(value string) string {
 }
 
 func normalizeEffort(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	switch value {
 	case "low":
 		return "l"
 	case "medium":
@@ -97,7 +98,7 @@ func normalizeEffort(value string) string {
 	case "xhigh":
 		return "x"
 	default:
-		return strings.ToLower(strings.TrimSpace(value))
+		return value
 	}
 }
 

@@ -46,7 +46,7 @@ func newCodexClient(stdout io.Writer) *codexClient {
 		endpoint = defaultCodexURL
 	}
 	return &codexClient{
-		httpClient: &http.Client{Timeout: 0},
+		httpClient: &http.Client{},
 		endpoint:   endpoint,
 		stdout:     stdout,
 	}

@@ -32,7 +32,6 @@ type session struct {
 }
 
 type paths struct {
-	dir     string
 	config  string
 	session string
 }
@@ -41,7 +40,6 @@ func statePaths() (paths, error) {
 	if dir := os.Getenv("MAI_STATE_DIR"); dir != "" {
 		dir = filepath.Clean(dir)
 		return paths{
-			dir:     dir,
 			config:  filepath.Join(dir, "config.json"),
 			session: filepath.Join(dir, "session.json"),
 		}, nil
@@ -52,7 +50,6 @@ func statePaths() (paths, error) {
 	}
 	dir := filepath.Join(home, ".mai")
 	return paths{
-		dir:     dir,
 		config:  filepath.Join(dir, "config.json"),
 		session: filepath.Join(dir, "session.json"),
 	}, nil

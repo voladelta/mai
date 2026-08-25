@@ -124,7 +124,6 @@ func lexShell(input string) ([]shellToken, bool) {
 	var out []shellToken
 	var b strings.Builder
 	dynamic := false
-	quoted := false
 	flush := func() {
 		if b.Len() > 0 {
 			out = append(out, shellToken{text: b.String(), dynamic: dynamic})
@@ -142,7 +141,6 @@ func lexShell(input string) ([]shellToken, bool) {
 			i++
 			b.WriteByte(input[i])
 		case '\'':
-			quoted = true
 			i++
 			for i < len(input) && input[i] != '\'' {
 				b.WriteByte(input[i])
@@ -152,7 +150,6 @@ func lexShell(input string) ([]shellToken, bool) {
 				return out, true
 			}
 		case '"':
-			quoted = true
 			i++
 			for i < len(input) && input[i] != '"' {
 				if input[i] == '$' || input[i] == '`' {
@@ -180,6 +177,5 @@ func lexShell(input string) ([]shellToken, bool) {
 		}
 	}
 	flush()
-	_ = quoted
 	return out, false
 }
