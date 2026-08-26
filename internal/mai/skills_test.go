@@ -48,6 +48,7 @@ func TestImplicitPolicyDefaultsTrueAndParsesFalse(t *testing.T) {
 		{name: "missing policy", content: "interface:\n  display_name: Demo\n", want: true},
 		{name: "true", content: "policy:\n  allow_implicit_invocation: true\n", want: true},
 		{name: "false", content: "policy:\n  allow_implicit_invocation: false # explicit only\n", want: false},
+		{name: "top-level content ends policy", content: "policy:\nother content\n  allow_implicit_invocation: false\n", want: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got, err := parseImplicitPolicy(test.content)

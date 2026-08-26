@@ -1,6 +1,10 @@
 package mai
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestRMInsideRepositoryDoesNotNeedApproval(t *testing.T) {
 	root := t.TempDir()
@@ -32,5 +36,31 @@ func TestMentioningRMIsNotACommand(t *testing.T) {
 	root := t.TempDir()
 	if required, reason := requiresRMApproval(`printf '%s\n' rm`, root, root); required {
 		t.Fatalf("unexpected approval: %s", reason)
+	}
+}
+
+func TestWrappedRMInsideRepositoryDoesNotNeedApproval(t *testing.T) {
+	root := t.TempDir()
+	commands := []string{
+		"sudo -n rm -rf build",
+		"env MODE=test command rm -- ./tmp",
+		"printf done && rm 'quoted path'",
+	}
+	for _, command := range commands {
+		if required, reason := requiresRMApproval(command, root, root); required {
+			t.Fatalf("%q unexpectedly needs approval: %s", command, reason)
+		}
+	}
+}
+
+func TestRMSymlinkOutsideRepositoryNeedsApproval(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	link := filepath.Join(root, "outside-link")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	if required, _ := requiresRMApproval("rm outside-link", root, root); !required {
+		t.Fatal("expected approval for a symlink that resolves outside the repository")
 	}
 }

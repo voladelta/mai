@@ -32,6 +32,28 @@ type streamResult struct {
 	wrote bool
 }
 
+type sseEvent struct {
+	Type        string          `json:"type"`
+	Delta       string          `json:"delta"`
+	OutputIndex int             `json:"output_index"`
+	Item        json.RawMessage `json:"item"`
+	Response    *sseResponse    `json:"response"`
+	Error       json.RawMessage `json:"error"`
+}
+
+type sseResponse struct {
+	Status string            `json:"status"`
+	Error  json.RawMessage   `json:"error"`
+	Output []json.RawMessage `json:"output"`
+}
+
+type sseCollector struct {
+	stdout   io.Writer
+	items    map[int]json.RawMessage
+	wrote    bool
+	terminal bool
+}
+
 type httpStatusError struct {
 	status int
 	body   string
@@ -134,69 +156,8 @@ func (c *codexClient) streamWithCredentials(ctx context.Context, sess *session, 
 
 func (c *codexClient) readSSE(r io.Reader) (streamResult, error) {
 	reader := bufio.NewReaderSize(r, 64<<10)
-	items := make(map[int]json.RawMessage)
+	collector := sseCollector{stdout: c.stdout, items: make(map[int]json.RawMessage)}
 	var dataLines []string
-	var wrote bool
-	var terminal bool
-
-	dispatch := func() error {
-		if len(dataLines) == 0 {
-			return nil
-		}
-		data := strings.Join(dataLines, "\n")
-		dataLines = dataLines[:0]
-		if data == "[DONE]" {
-			terminal = true
-			return nil
-		}
-		var event struct {
-			Type        string          `json:"type"`
-			Delta       string          `json:"delta"`
-			OutputIndex int             `json:"output_index"`
-			Item        json.RawMessage `json:"item"`
-			Response    *struct {
-				Status string            `json:"status"`
-				Error  json.RawMessage   `json:"error"`
-				Output []json.RawMessage `json:"output"`
-			} `json:"response"`
-			Error json.RawMessage `json:"error"`
-		}
-		if err := json.Unmarshal([]byte(data), &event); err != nil {
-			return fmt.Errorf("parse Codex stream event: %w", err)
-		}
-		switch event.Type {
-		case "response.output_text.delta":
-			if event.Delta != "" {
-				if _, err := io.WriteString(c.stdout, event.Delta); err != nil {
-					return err
-				}
-				wrote = true
-			}
-		case "response.output_item.done":
-			if len(event.Item) > 0 {
-				items[event.OutputIndex] = append(json.RawMessage(nil), event.Item...)
-			}
-		case "response.completed":
-			terminal = true
-			if event.Response != nil {
-				if len(items) == 0 {
-					for i, item := range event.Response.Output {
-						items[i] = append(json.RawMessage(nil), item...)
-					}
-				}
-				if event.Response.Status != "completed" {
-					return fmt.Errorf("Codex response ended with status %q: %s", event.Response.Status, compactJSON(event.Response.Error))
-				}
-			}
-		case "response.failed", "error":
-			terminal = true
-			if event.Response != nil {
-				return fmt.Errorf("Codex response failed: %s", compactJSON(event.Response.Error))
-			}
-			return fmt.Errorf("Codex stream failed: %s", compactJSON(event.Error))
-		}
-		return nil
-	}
 
 	for {
 		line, err := reader.ReadString('\n')
@@ -204,7 +165,7 @@ func (c *codexClient) readSSE(r io.Reader) (streamResult, error) {
 			line = strings.TrimSuffix(line, "\n")
 			line = strings.TrimSuffix(line, "\r")
 			if line == "" {
-				if dispatchErr := dispatch(); dispatchErr != nil {
+				if dispatchErr := collector.dispatch(&dataLines); dispatchErr != nil {
 					return streamResult{}, dispatchErr
 				}
 			} else if strings.HasPrefix(line, "data:") {
@@ -215,25 +176,101 @@ func (c *codexClient) readSSE(r io.Reader) (streamResult, error) {
 			if !errors.Is(err, io.EOF) {
 				return streamResult{}, fmt.Errorf("read Codex stream: %w", err)
 			}
-			if dispatchErr := dispatch(); dispatchErr != nil {
+			if dispatchErr := collector.dispatch(&dataLines); dispatchErr != nil {
 				return streamResult{}, dispatchErr
 			}
 			break
 		}
 	}
-	if !terminal {
+	if !collector.terminal {
 		return streamResult{}, errors.New("Codex stream ended before response.completed")
 	}
-	indexes := make([]int, 0, len(items))
-	for index := range items {
+	return collector.result(), nil
+}
+
+func (collector *sseCollector) dispatch(dataLines *[]string) error {
+	if len(*dataLines) == 0 {
+		return nil
+	}
+	data := strings.Join(*dataLines, "\n")
+	*dataLines = (*dataLines)[:0]
+	return collector.consume(data)
+}
+
+func (collector *sseCollector) consume(data string) error {
+	if data == "[DONE]" {
+		collector.terminal = true
+		return nil
+	}
+	var event sseEvent
+	if err := json.Unmarshal([]byte(data), &event); err != nil {
+		return fmt.Errorf("parse Codex stream event: %w", err)
+	}
+	switch event.Type {
+	case "response.output_text.delta":
+		return collector.writeDelta(event.Delta)
+	case "response.output_item.done":
+		collector.collectItem(event.OutputIndex, event.Item)
+	case "response.completed":
+		return collector.complete(event.Response)
+	case "response.failed", "error":
+		return collector.fail(event)
+	}
+	return nil
+}
+
+func (collector *sseCollector) writeDelta(delta string) error {
+	if delta == "" {
+		return nil
+	}
+	if _, err := io.WriteString(collector.stdout, delta); err != nil {
+		return err
+	}
+	collector.wrote = true
+	return nil
+}
+
+func (collector *sseCollector) collectItem(index int, item json.RawMessage) {
+	if len(item) > 0 {
+		collector.items[index] = append(json.RawMessage(nil), item...)
+	}
+}
+
+func (collector *sseCollector) complete(response *sseResponse) error {
+	collector.terminal = true
+	if response == nil {
+		return nil
+	}
+	if len(collector.items) == 0 {
+		for i, item := range response.Output {
+			collector.collectItem(i, item)
+		}
+	}
+	if response.Status != "completed" {
+		return fmt.Errorf("Codex response ended with status %q: %s", response.Status, compactJSON(response.Error))
+	}
+	return nil
+}
+
+func (collector *sseCollector) fail(event sseEvent) error {
+	collector.terminal = true
+	if event.Response != nil {
+		return fmt.Errorf("Codex response failed: %s", compactJSON(event.Response.Error))
+	}
+	return fmt.Errorf("Codex stream failed: %s", compactJSON(event.Error))
+}
+
+func (collector *sseCollector) result() streamResult {
+	indexes := make([]int, 0, len(collector.items))
+	for index := range collector.items {
 		indexes = append(indexes, index)
 	}
 	sort.Ints(indexes)
 	ordered := make([]json.RawMessage, 0, len(indexes))
 	for _, index := range indexes {
-		ordered = append(ordered, items[index])
+		ordered = append(ordered, collector.items[index])
 	}
-	return streamResult{items: ordered, wrote: wrote}, nil
+	return streamResult{items: ordered, wrote: collector.wrote}
 }
 
 func compactJSON(raw json.RawMessage) string {

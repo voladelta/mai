@@ -44,6 +44,18 @@ type skillFileResult struct {
 	imageURL  string
 }
 
+type yamlEntry struct {
+	line   int
+	indent int
+	key    string
+	value  string
+}
+
+type skillFrontMatter struct {
+	name        string
+	description string
+}
+
 func defaultSkillsRoot() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -185,42 +197,52 @@ func parseImplicitPolicy(content string) (bool, error) {
 	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
 	policyIndent := -1
 	for lineNumber, line := range lines {
-		withoutComment, _, _ := strings.Cut(line, "#")
-		if strings.TrimSpace(withoutComment) == "" {
-			continue
+		entry, ok, err := parseYAMLEntry(lineNumber+1, line)
+		if err != nil {
+			return false, err
 		}
-		leading := withoutComment[:len(withoutComment)-len(strings.TrimLeft(withoutComment, " \t"))]
-		if strings.Contains(leading, "\t") {
-			return false, fmt.Errorf("agents/openai.yaml line %d uses a tab for indentation", lineNumber+1)
-		}
-		indent := len(leading)
-		trimmed := strings.TrimSpace(withoutComment)
-		if policyIndent >= 0 && indent <= policyIndent {
-			policyIndent = -1
-		}
-		key, value, ok := strings.Cut(trimmed, ":")
 		if !ok {
 			continue
 		}
-		key = strings.TrimSpace(key)
-		value = strings.TrimSpace(value)
-		if indent == 0 && key == "policy" && value == "" {
-			policyIndent = indent
+		if policyIndent >= 0 && entry.indent <= policyIndent {
+			policyIndent = -1
+		}
+		if entry.indent == 0 && entry.key == "policy" && entry.value == "" {
+			policyIndent = entry.indent
 			continue
 		}
-		if policyIndent < 0 || indent <= policyIndent || key != "allow_implicit_invocation" {
+		if policyIndent < 0 || entry.indent <= policyIndent || entry.key != "allow_implicit_invocation" {
 			continue
 		}
-		switch strings.ToLower(value) {
+		switch strings.ToLower(entry.value) {
 		case "true":
 			return true, nil
 		case "false":
 			return false, nil
 		default:
-			return false, fmt.Errorf("agents/openai.yaml line %d has a non-boolean policy.allow_implicit_invocation", lineNumber+1)
+			return false, fmt.Errorf("agents/openai.yaml line %d has a non-boolean policy.allow_implicit_invocation", entry.line)
 		}
 	}
 	return true, nil
+}
+
+func parseYAMLEntry(lineNumber int, line string) (yamlEntry, bool, error) {
+	withoutComment, _, _ := strings.Cut(line, "#")
+	if strings.TrimSpace(withoutComment) == "" {
+		return yamlEntry{}, false, nil
+	}
+	leading := withoutComment[:len(withoutComment)-len(strings.TrimLeft(withoutComment, " \t"))]
+	if strings.Contains(leading, "\t") {
+		return yamlEntry{}, false, fmt.Errorf("agents/openai.yaml line %d uses a tab for indentation", lineNumber)
+	}
+	key, value, ok := strings.Cut(strings.TrimSpace(withoutComment), ":")
+	if !ok {
+		return yamlEntry{line: lineNumber, indent: len(leading)}, true, nil
+	}
+	return yamlEntry{
+		line: lineNumber, indent: len(leading),
+		key: strings.TrimSpace(key), value: strings.TrimSpace(value),
+	}, true, nil
 }
 
 func explicitSkillMentions(prompt string) []string {
@@ -424,40 +446,70 @@ func parseSkillFrontMatter(content string) (string, string, error) {
 	if len(lines) < 3 || strings.TrimSpace(lines[0]) != "---" {
 		return "", "", errors.New("SKILL.md has no YAML front matter")
 	}
-	values := make(map[string]string)
+	var matter skillFrontMatter
 	for i := 1; i < len(lines); i++ {
 		line := lines[i]
 		if strings.TrimSpace(line) == "---" {
-			name := strings.TrimSpace(values["name"])
-			description := strings.TrimSpace(values["description"])
-			if name == "" || description == "" {
-				return "", "", errors.New("SKILL.md front matter requires name and description")
-			}
-			return name, description, nil
+			return matter.values()
 		}
-		key, value, ok := strings.Cut(line, ":")
-		if !ok || strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
-			continue
-		}
-		key = strings.TrimSpace(key)
-		value = strings.TrimSpace(value)
-		if key != "name" && key != "description" {
+		key, value, ok := skillFrontMatterField(line)
+		if !ok {
 			continue
 		}
 		if key == "description" && (strings.HasPrefix(value, ">") || strings.HasPrefix(value, "|")) {
-			var parts []string
-			for i+1 < len(lines) && (strings.HasPrefix(lines[i+1], " ") || strings.TrimSpace(lines[i+1]) == "") {
-				i++
-				if part := strings.TrimSpace(lines[i]); part != "" {
-					parts = append(parts, part)
-				}
-			}
-			values[key] = strings.Join(parts, " ")
+			matter.description = readFrontMatterBlock(lines, &i)
 			continue
 		}
-		values[key] = yamlScalar(value)
+		matter.set(key, yamlScalar(value))
 	}
 	return "", "", errors.New("SKILL.md front matter is not closed")
+}
+
+func skillFrontMatterField(line string) (string, string, bool) {
+	if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+		return "", "", false
+	}
+	key, value, ok := strings.Cut(line, ":")
+	if !ok {
+		return "", "", false
+	}
+	key = strings.TrimSpace(key)
+	if key != "name" && key != "description" {
+		return "", "", false
+	}
+	return key, strings.TrimSpace(value), true
+}
+
+func readFrontMatterBlock(lines []string, index *int) string {
+	var parts []string
+	for *index+1 < len(lines) && frontMatterContinuation(lines[*index+1]) {
+		(*index)++
+		if part := strings.TrimSpace(lines[*index]); part != "" {
+			parts = append(parts, part)
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+func frontMatterContinuation(line string) bool {
+	return strings.HasPrefix(line, " ") || strings.TrimSpace(line) == ""
+}
+
+func (matter *skillFrontMatter) set(key, value string) {
+	if key == "name" {
+		matter.name = value
+	} else {
+		matter.description = value
+	}
+}
+
+func (matter skillFrontMatter) values() (string, string, error) {
+	name := strings.TrimSpace(matter.name)
+	description := strings.TrimSpace(matter.description)
+	if name == "" || description == "" {
+		return "", "", errors.New("SKILL.md front matter requires name and description")
+	}
+	return name, description, nil
 }
 
 func yamlScalar(value string) string {

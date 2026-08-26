@@ -35,115 +35,151 @@ type pendingFile struct {
 	deleted        bool
 }
 
+type patchPlan struct {
+	root    string
+	files   map[string]*pendingFile
+	changed []string
+}
+
 func applyPatch(repoRoot, patch string) (string, error) {
 	resolvedRoot, err := canonicalPath(repoRoot)
 	if err != nil {
 		return "", fmt.Errorf("resolve repository root: %w", err)
 	}
-	repoRoot = resolvedRoot
 	ops, err := parsePatch(patch)
 	if err != nil {
 		return "", err
 	}
-	files := make(map[string]*pendingFile)
-	var changed []string
+	plan := patchPlan{root: resolvedRoot, files: make(map[string]*pendingFile)}
+	for _, op := range ops {
+		if err := plan.addOperation(op); err != nil {
+			return "", err
+		}
+	}
+	if err := plan.commit(); err != nil {
+		return "", err
+	}
 
-	load := func(rel string) (*pendingFile, error) {
-		abs, err := securePatchPath(repoRoot, rel)
-		if err != nil {
-			return nil, err
+	b, _ := json.Marshal(map[string]any{"ok": true, "changed": plan.changed})
+	return string(b), nil
+}
+
+func (plan *patchPlan) addOperation(op patchOperation) error {
+	switch op.kind {
+	case "add":
+		return plan.addFile(op)
+	case "delete":
+		return plan.deleteFile(op.path)
+	case "update":
+		return plan.updateFile(op)
+	default:
+		return fmt.Errorf("unsupported patch operation %q", op.kind)
+	}
+}
+
+func (plan *patchPlan) addFile(op patchOperation) error {
+	abs, err := securePatchPath(plan.root, op.path)
+	if err != nil {
+		return err
+	}
+	if _, ok := plan.files[abs]; ok {
+		return fmt.Errorf("duplicate patch target %s", op.path)
+	}
+	if _, err := os.Lstat(abs); err == nil {
+		return fmt.Errorf("cannot add %s: file already exists", op.path)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect %s: %w", op.path, err)
+	}
+	plan.files[abs] = &pendingFile{path: abs, content: op.contents, mode: 0o644}
+	plan.changed = append(plan.changed, "add "+op.path)
+	return nil
+}
+
+func (plan *patchPlan) deleteFile(path string) error {
+	file, err := plan.loadFile(path)
+	if err != nil {
+		return err
+	}
+	file.deleted = true
+	plan.changed = append(plan.changed, "delete "+path)
+	return nil
+}
+
+func (plan *patchPlan) updateFile(op patchOperation) error {
+	file, err := plan.loadFile(op.path)
+	if err != nil {
+		return err
+	}
+	updated, err := applyChunks(file.content, op.chunks)
+	if err != nil {
+		return fmt.Errorf("update %s: %w", op.path, err)
+	}
+	file.content = updated
+	if op.movePath == "" {
+		plan.changed = append(plan.changed, "update "+op.path)
+		return nil
+	}
+	return plan.moveFile(file, op.path, op.movePath)
+}
+
+func (plan *patchPlan) moveFile(file *pendingFile, source, destination string) error {
+	dest, err := securePatchPath(plan.root, destination)
+	if err != nil {
+		return err
+	}
+	if dest == file.path {
+		return fmt.Errorf("move destination equals source for %s", source)
+	}
+	if _, ok := plan.files[dest]; ok {
+		return fmt.Errorf("duplicate patch target %s", destination)
+	}
+	if _, err := os.Lstat(dest); err == nil {
+		return fmt.Errorf("cannot move to %s: file already exists", destination)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect %s: %w", destination, err)
+	}
+	plan.files[dest] = &pendingFile{path: dest, content: file.content, mode: file.mode}
+	file.deleted = true
+	plan.changed = append(plan.changed, "move "+source+" -> "+destination)
+	return nil
+}
+
+func (plan *patchPlan) loadFile(rel string) (*pendingFile, error) {
+	abs, err := securePatchPath(plan.root, rel)
+	if err != nil {
+		return nil, err
+	}
+	if file, ok := plan.files[abs]; ok {
+		if file.deleted {
+			return nil, fmt.Errorf("%s was already deleted in this patch", rel)
 		}
-		if file, ok := files[abs]; ok {
-			if file.deleted {
-				return nil, fmt.Errorf("%s was already deleted in this patch", rel)
-			}
-			return file, nil
-		}
-		info, err := os.Lstat(abs)
-		if err != nil {
-			return nil, fmt.Errorf("read %s: %w", rel, err)
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return nil, fmt.Errorf("refusing to patch symlink %s", rel)
-		}
-		if !info.Mode().IsRegular() {
-			return nil, fmt.Errorf("%s is not a regular file", rel)
-		}
-		if info.Size() > maxPatchFileBytes {
-			return nil, fmt.Errorf("%s exceeds the %d byte patch limit", rel, maxPatchFileBytes)
-		}
-		content, err := os.ReadFile(abs)
-		if err != nil {
-			return nil, fmt.Errorf("read %s: %w", rel, err)
-		}
-		file := &pendingFile{path: abs, content: string(content), mode: info.Mode().Perm(), originalExists: true}
-		files[abs] = file
 		return file, nil
 	}
-
-	for _, op := range ops {
-		switch op.kind {
-		case "add":
-			abs, err := securePatchPath(repoRoot, op.path)
-			if err != nil {
-				return "", err
-			}
-			if _, ok := files[abs]; ok {
-				return "", fmt.Errorf("duplicate patch target %s", op.path)
-			}
-			if _, err := os.Lstat(abs); err == nil {
-				return "", fmt.Errorf("cannot add %s: file already exists", op.path)
-			} else if !errors.Is(err, os.ErrNotExist) {
-				return "", fmt.Errorf("inspect %s: %w", op.path, err)
-			}
-			files[abs] = &pendingFile{path: abs, content: op.contents, mode: 0o644}
-			changed = append(changed, "add "+op.path)
-		case "delete":
-			file, err := load(op.path)
-			if err != nil {
-				return "", err
-			}
-			file.deleted = true
-			changed = append(changed, "delete "+op.path)
-		case "update":
-			file, err := load(op.path)
-			if err != nil {
-				return "", err
-			}
-			updated, err := applyChunks(file.content, op.chunks)
-			if err != nil {
-				return "", fmt.Errorf("update %s: %w", op.path, err)
-			}
-			file.content = updated
-			if op.movePath == "" {
-				changed = append(changed, "update "+op.path)
-				continue
-			}
-			dest, err := securePatchPath(repoRoot, op.movePath)
-			if err != nil {
-				return "", err
-			}
-			if dest == file.path {
-				return "", fmt.Errorf("move destination equals source for %s", op.path)
-			}
-			if _, ok := files[dest]; ok {
-				return "", fmt.Errorf("duplicate patch target %s", op.movePath)
-			}
-			if _, err := os.Lstat(dest); err == nil {
-				return "", fmt.Errorf("cannot move to %s: file already exists", op.movePath)
-			} else if !errors.Is(err, os.ErrNotExist) {
-				return "", fmt.Errorf("inspect %s: %w", op.movePath, err)
-			}
-			files[dest] = &pendingFile{path: dest, content: updated, mode: file.mode}
-			file.deleted = true
-			changed = append(changed, "move "+op.path+" -> "+op.movePath)
-		default:
-			return "", fmt.Errorf("unsupported patch operation %q", op.kind)
-		}
+	info, err := os.Lstat(abs)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", rel, err)
 	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("refusing to patch symlink %s", rel)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", rel)
+	}
+	if info.Size() > maxPatchFileBytes {
+		return nil, fmt.Errorf("%s exceeds the %d byte patch limit", rel, maxPatchFileBytes)
+	}
+	content, err := os.ReadFile(abs)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", rel, err)
+	}
+	file := &pendingFile{path: abs, content: string(content), mode: info.Mode().Perm(), originalExists: true}
+	plan.files[abs] = file
+	return file, nil
+}
 
+func (plan *patchPlan) commit() error {
 	var writes, deletes []*pendingFile
-	for _, file := range files {
+	for _, file := range plan.files {
 		if file.deleted {
 			if file.originalExists {
 				deletes = append(deletes, file)
@@ -156,17 +192,21 @@ func applyPatch(repoRoot, patch string) (string, error) {
 	sort.Slice(deletes, func(i, j int) bool { return deletes[i].path < deletes[j].path })
 	for _, file := range writes {
 		if err := atomicWriteFile(file.path, []byte(file.content), file.mode); err != nil {
-			return "", err
+			return err
 		}
 	}
 	for _, file := range deletes {
 		if err := os.Remove(file.path); err != nil {
-			return "", fmt.Errorf("delete %s: %w", file.path, err)
+			return fmt.Errorf("delete %s: %w", file.path, err)
 		}
 	}
+	return nil
+}
 
-	b, _ := json.Marshal(map[string]any{"ok": true, "changed": changed})
-	return string(b), nil
+type patchParser struct {
+	lines []string
+	index int
+	end   int
 }
 
 func parsePatch(patch string) ([]patchOperation, error) {
@@ -178,62 +218,83 @@ func parsePatch(patch string) ([]patchOperation, error) {
 	if strings.TrimSpace(lines[len(lines)-1]) != "*** End Patch" {
 		return nil, errors.New("patch must end with *** End Patch")
 	}
+	parser := patchParser{lines: lines, index: 1, end: len(lines) - 1}
 	var ops []patchOperation
-	for i := 1; i < len(lines)-1; {
-		line := strings.TrimSpace(lines[i])
+	for parser.index < parser.end {
+		line := strings.TrimSpace(lines[parser.index])
 		if line == "" {
-			i++
+			parser.index++
 			continue
 		}
-		switch {
-		case strings.HasPrefix(line, "*** Add File: "):
-			path := strings.TrimSpace(strings.TrimPrefix(line, "*** Add File: "))
-			i++
-			var content []string
-			for i < len(lines)-1 && !isFileMarker(lines[i]) {
-				if !strings.HasPrefix(lines[i], "+") {
-					return nil, fmt.Errorf("add file %s: line %d must start with +", path, i+1)
-				}
-				content = append(content, strings.TrimPrefix(lines[i], "+"))
-				i++
-			}
-			if len(content) == 0 {
-				return nil, fmt.Errorf("add file %s has no content", path)
-			}
-			ops = append(ops, patchOperation{kind: "add", path: path, contents: strings.Join(content, "\n") + "\n"})
-		case strings.HasPrefix(line, "*** Delete File: "):
-			path := strings.TrimSpace(strings.TrimPrefix(line, "*** Delete File: "))
-			ops = append(ops, patchOperation{kind: "delete", path: path})
-			i++
-		case strings.HasPrefix(line, "*** Update File: "):
-			op := patchOperation{kind: "update", path: strings.TrimSpace(strings.TrimPrefix(line, "*** Update File: "))}
-			i++
-			if i < len(lines)-1 && strings.HasPrefix(strings.TrimSpace(lines[i]), "*** Move to: ") {
-				op.movePath = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(lines[i]), "*** Move to: "))
-				i++
-			}
-			var segment []string
-			for i < len(lines)-1 && !isFileMarker(lines[i]) {
-				segment = append(segment, lines[i])
-				i++
-			}
-			chunks, err := parseChunks(segment)
-			if err != nil {
-				return nil, fmt.Errorf("update file %s: %w", op.path, err)
-			}
-			if len(chunks) == 0 && op.movePath == "" {
-				return nil, fmt.Errorf("update file %s is empty", op.path)
-			}
-			op.chunks = chunks
-			ops = append(ops, op)
-		default:
-			return nil, fmt.Errorf("invalid patch marker on line %d: %s", i+1, lines[i])
+		op, err := parser.parseOperation(line)
+		if err != nil {
+			return nil, err
 		}
+		ops = append(ops, op)
 	}
 	if len(ops) == 0 {
 		return nil, errors.New("patch contains no operations")
 	}
 	return ops, nil
+}
+
+func (parser *patchParser) parseOperation(marker string) (patchOperation, error) {
+	switch {
+	case strings.HasPrefix(marker, "*** Add File: "):
+		return parser.parseAdd(strings.TrimSpace(strings.TrimPrefix(marker, "*** Add File: ")))
+	case strings.HasPrefix(marker, "*** Delete File: "):
+		parser.index++
+		return patchOperation{kind: "delete", path: strings.TrimSpace(strings.TrimPrefix(marker, "*** Delete File: "))}, nil
+	case strings.HasPrefix(marker, "*** Update File: "):
+		return parser.parseUpdate(strings.TrimSpace(strings.TrimPrefix(marker, "*** Update File: ")))
+	default:
+		return patchOperation{}, fmt.Errorf("invalid patch marker on line %d: %s", parser.index+1, parser.lines[parser.index])
+	}
+}
+
+func (parser *patchParser) parseAdd(path string) (patchOperation, error) {
+	parser.index++
+	var content []string
+	for parser.index < parser.end && !isFileMarker(parser.lines[parser.index]) {
+		line := parser.lines[parser.index]
+		if !strings.HasPrefix(line, "+") {
+			return patchOperation{}, fmt.Errorf("add file %s: line %d must start with +", path, parser.index+1)
+		}
+		content = append(content, strings.TrimPrefix(line, "+"))
+		parser.index++
+	}
+	if len(content) == 0 {
+		return patchOperation{}, fmt.Errorf("add file %s has no content", path)
+	}
+	return patchOperation{kind: "add", path: path, contents: strings.Join(content, "\n") + "\n"}, nil
+}
+
+func (parser *patchParser) parseUpdate(path string) (patchOperation, error) {
+	op := patchOperation{kind: "update", path: path}
+	parser.index++
+	if parser.index < parser.end && strings.HasPrefix(strings.TrimSpace(parser.lines[parser.index]), "*** Move to: ") {
+		op.movePath = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(parser.lines[parser.index]), "*** Move to: "))
+		parser.index++
+	}
+	segment := parser.readSegment()
+	chunks, err := parseChunks(segment)
+	if err != nil {
+		return patchOperation{}, fmt.Errorf("update file %s: %w", op.path, err)
+	}
+	if len(chunks) == 0 && op.movePath == "" {
+		return patchOperation{}, fmt.Errorf("update file %s is empty", op.path)
+	}
+	op.chunks = chunks
+	return op, nil
+}
+
+func (parser *patchParser) readSegment() []string {
+	var segment []string
+	for parser.index < parser.end && !isFileMarker(parser.lines[parser.index]) {
+		segment = append(segment, parser.lines[parser.index])
+		parser.index++
+	}
+	return segment
 }
 
 func isFileMarker(line string) bool {

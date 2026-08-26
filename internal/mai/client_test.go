@@ -35,6 +35,29 @@ func TestReadSSEStreamsTextAndCollectsItems(t *testing.T) {
 	}
 }
 
+func TestReadSSEUsesCompletedResponseOutputAsFallback(t *testing.T) {
+	stream := "data: " + `{"type":"response.completed","response":{"status":"completed","output":[{"type":"message"}]}}` + "\n\n"
+	client := &codexClient{stdout: &bytes.Buffer{}}
+	result, err := client.readSSE(strings.NewReader(stream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.items) != 1 || !bytes.Contains(result.items[0], []byte(`"type":"message"`)) {
+		t.Fatalf("unexpected fallback output: %#v", result.items)
+	}
+}
+
+func TestReadSSERejectsIncompleteAndFailedStreams(t *testing.T) {
+	client := &codexClient{stdout: &bytes.Buffer{}}
+	if _, err := client.readSSE(strings.NewReader("data: {}\n\n")); err == nil || !strings.Contains(err.Error(), "before response.completed") {
+		t.Fatalf("unexpected incomplete-stream error: %v", err)
+	}
+	failed := "data: " + `{"type":"response.failed","response":{"status":"failed","error":{"message":"bad"}}}` + "\n\n"
+	if _, err := client.readSSE(strings.NewReader(failed)); err == nil || !strings.Contains(err.Error(), "response failed") {
+		t.Fatalf("unexpected failed-stream error: %v", err)
+	}
+}
+
 func TestCodexClientReportsTimeoutWithNextStep(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		time.Sleep(100 * time.Millisecond)

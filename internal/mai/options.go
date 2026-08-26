@@ -22,118 +22,167 @@ type options struct {
 	timeoutExplicit bool
 }
 
+type optionKind int
+
+const (
+	optionHelp optionKind = iota
+	optionVersion
+	optionLast
+	optionSaveDefaults
+	optionNoInput
+	optionModel
+	optionEffort
+	optionTimeout
+)
+
+var optionKinds = map[string]optionKind{
+	"-h": optionHelp, "--help": optionHelp,
+	"--version":       optionVersion,
+	"--last":          optionLast,
+	"--save-defaults": optionSaveDefaults,
+	"--no-input":      optionNoInput,
+	"-m":              optionModel, "--model": optionModel,
+	"-e": optionEffort, "--effort": optionEffort,
+	"--timeout": optionTimeout,
+}
+
 func parseOptions(args []string) (options, error) {
 	out := options{timeout: defaultHTTPTimeout}
-	var promptParts []string
-	optionsEnded := false
-
-	for _, arg := range args {
-		if arg == "-h" || arg == "--help" {
-			out.help = true
-			return out, nil
-		}
+	if helpRequested(args) {
+		out.help = true
+		return out, nil
 	}
-
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		if optionsEnded {
-			promptParts = append(promptParts, arg)
-			continue
-		}
-		switch {
-		case arg == "--":
-			optionsEnded = true
-		case arg == "--version":
-			out.version = true
-		case arg == "--last":
-			out.last = true
-		case arg == "--save-defaults":
-			out.saveDefaults = true
-		case arg == "--no-input":
-			out.noInput = true
-		case arg == "-m" || arg == "--model":
-			if i+1 >= len(args) {
-				return out, fmt.Errorf("%s requires a value", arg)
-			}
-			i++
-			out.model = args[i]
-			out.modelExplicit = true
-		case strings.HasPrefix(arg, "-m="):
-			out.model = strings.TrimPrefix(arg, "-m=")
-			out.modelExplicit = true
-		case strings.HasPrefix(arg, "--model="):
-			out.model = strings.TrimPrefix(arg, "--model=")
-			out.modelExplicit = true
-		case arg == "-e" || arg == "--effort":
-			if i+1 >= len(args) {
-				return out, fmt.Errorf("%s requires a value", arg)
-			}
-			i++
-			out.effort = args[i]
-			out.effortExplicit = true
-		case strings.HasPrefix(arg, "-e="):
-			out.effort = strings.TrimPrefix(arg, "-e=")
-			out.effortExplicit = true
-		case strings.HasPrefix(arg, "--effort="):
-			out.effort = strings.TrimPrefix(arg, "--effort=")
-			out.effortExplicit = true
-		case arg == "--timeout":
-			if i+1 >= len(args) {
-				return out, errors.New("--timeout requires a value")
-			}
-			i++
-			var err error
-			out.timeout, err = parseTimeout(args[i])
-			if err != nil {
-				return out, err
-			}
-			out.timeoutExplicit = true
-		case strings.HasPrefix(arg, "--timeout="):
-			var err error
-			out.timeout, err = parseTimeout(strings.TrimPrefix(arg, "--timeout="))
-			if err != nil {
-				return out, err
-			}
-			out.timeoutExplicit = true
-		case strings.HasPrefix(arg, "-"):
-			return out, fmt.Errorf("unknown option %q", arg)
-		default:
-			promptParts = append(promptParts, arg)
-		}
+	promptParts, err := parseOptionTokens(args, &out)
+	if err != nil {
+		return out, err
 	}
-
 	out.prompt = strings.TrimSpace(strings.Join(promptParts, " "))
 	if out.version {
 		return out, nil
 	}
+	if err := out.normalizeAndValidate(len(args)); err != nil {
+		return out, err
+	}
+	return out, nil
+}
+
+func helpRequested(args []string) bool {
+	for _, arg := range args {
+		if kind, ok := optionKinds[arg]; ok && kind == optionHelp {
+			return true
+		}
+	}
+	return false
+}
+
+func parseOptionTokens(args []string, out *options) ([]string, error) {
+	var prompt []string
+	optionsEnded := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if optionsEnded || !strings.HasPrefix(arg, "-") {
+			prompt = append(prompt, arg)
+			continue
+		}
+		if arg == "--" {
+			optionsEnded = true
+			continue
+		}
+
+		name, value, inline := strings.Cut(arg, "=")
+		kind, ok := optionKinds[name]
+		if !ok || (inline && !kind.takesValue()) {
+			return nil, fmt.Errorf("unknown option %q", arg)
+		}
+		if kind.takesValue() && !inline {
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("%s requires a value", arg)
+			}
+			i++
+			value = args[i]
+		}
+		if err := out.setOption(kind, value); err != nil {
+			return nil, err
+		}
+	}
+	return prompt, nil
+}
+
+func (kind optionKind) takesValue() bool {
+	return kind == optionModel || kind == optionEffort || kind == optionTimeout
+}
+
+func (out *options) setOption(kind optionKind, value string) error {
+	switch kind {
+	case optionVersion:
+		out.version = true
+	case optionLast:
+		out.last = true
+	case optionSaveDefaults:
+		out.saveDefaults = true
+	case optionNoInput:
+		out.noInput = true
+	case optionModel:
+		out.model, out.modelExplicit = value, true
+	case optionEffort:
+		out.effort, out.effortExplicit = value, true
+	case optionTimeout:
+		timeout, err := parseTimeout(value)
+		if err != nil {
+			return err
+		}
+		out.timeout, out.timeoutExplicit = timeout, true
+	}
+	return nil
+}
+
+func (out *options) normalizeAndValidate(argCount int) error {
+	if err := out.normalizeSelections(); err != nil {
+		return err
+	}
+	return out.validateMode(argCount)
+}
+
+func (out *options) normalizeSelections() error {
 	if out.modelExplicit {
 		out.model = normalizeModel(out.model)
 		if _, ok := modelIDs[out.model]; !ok {
-			return out, fmt.Errorf("invalid model %q (use sol, luna, or terra)", out.model)
+			return fmt.Errorf("invalid model %q (use sol, luna, or terra)", out.model)
 		}
 	}
 	if out.effortExplicit {
 		out.effort = normalizeEffort(out.effort)
 		if _, ok := effortIDs[out.effort]; !ok {
-			return out, fmt.Errorf("invalid effort %q (use l, m, h, x, or max)", out.effort)
+			return fmt.Errorf("invalid effort %q (use l, m, h, x, or max)", out.effort)
 		}
 	}
+	return nil
+}
+
+func (out options) validateMode(argCount int) error {
 	if out.saveDefaults && !out.modelExplicit && !out.effortExplicit {
-		return out, errors.New("--save-defaults requires --model or --effort")
+		return errors.New("--save-defaults requires --model or --effort")
 	}
-	if out.prompt == "" && out.saveDefaults && out.last {
-		return out, errors.New("--last requires a prompt")
+	if out.prompt == "" && out.saveDefaults {
+		return out.validateSaveOnly()
 	}
-	if out.prompt == "" && out.saveDefaults && out.noInput {
-		return out, errors.New("--no-input requires a prompt")
+	if out.prompt == "" && !out.saveDefaults && argCount > 0 {
+		return errors.New("prompt is required")
 	}
-	if out.prompt == "" && out.saveDefaults && out.timeoutExplicit {
-		return out, errors.New("--timeout requires a prompt")
+	return nil
+}
+
+func (out options) validateSaveOnly() error {
+	if out.last {
+		return errors.New("--last requires a prompt")
 	}
-	if out.prompt == "" && !out.saveDefaults && len(args) > 0 {
-		return out, errors.New("prompt is required")
+	if out.noInput {
+		return errors.New("--no-input requires a prompt")
 	}
-	return out, nil
+	if out.timeoutExplicit {
+		return errors.New("--timeout requires a prompt")
+	}
+	return nil
 }
 
 func parseTimeout(value string) (time.Duration, error) {

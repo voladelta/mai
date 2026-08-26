@@ -53,25 +53,34 @@ func Main(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "mai %s\n", version)
 		return 0
 	}
-
 	if opts.help {
-		cfg, stateErr := loadDisplayConfig()
-		defaults := "unavailable"
-		if stateErr == nil {
-			defaults = formatDefaults(cfg)
-		} else {
-			fmt.Fprintf(stderr, "mai: cannot read current defaults: %v\n", stateErr)
-		}
-		fmt.Fprintf(stdout, fullHelp, defaults)
-		return 0
+		return showHelp(stdout, stderr)
 	}
 	if len(args) == 0 {
-		cfg, err := loadDisplayConfig()
-		if err != nil {
-			fmt.Fprintf(stderr, "mai: %v\n", err)
-			return 1
-		}
-		fmt.Fprintf(stdout, `mai - a small coding agent
+		return showUsage(stdout, stderr)
+	}
+	return runTask(opts, stdout, stderr)
+}
+
+func showHelp(stdout, stderr io.Writer) int {
+	cfg, err := loadDisplayConfig()
+	defaults := "unavailable"
+	if err == nil {
+		defaults = formatDefaults(cfg)
+	} else {
+		fmt.Fprintf(stderr, "mai: cannot read current defaults: %v\n", err)
+	}
+	fmt.Fprintf(stdout, fullHelp, defaults)
+	return 0
+}
+
+func showUsage(stdout, stderr io.Writer) int {
+	cfg, err := loadDisplayConfig()
+	if err != nil {
+		fmt.Fprintf(stderr, "mai: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, `mai - a small coding agent
 
 Usage:
   mai "prompt" [options]
@@ -82,22 +91,17 @@ Example:
 Current defaults: %s.
 Run 'mai --help' for more information.
 `, formatDefaults(cfg))
-		return 0
-	}
+	return 0
+}
 
+func runTask(opts options, stdout, stderr io.Writer) int {
 	state, cfg, err := loadStateConfig()
 	if err != nil {
 		fmt.Fprintf(stderr, "mai: %v\n", err)
 		return 1
 	}
 
-	taskCfg := cfg
-	if opts.modelExplicit {
-		taskCfg.Model = opts.model
-	}
-	if opts.effortExplicit {
-		taskCfg.Effort = opts.effort
-	}
+	taskCfg := configForTask(cfg, opts)
 	if opts.saveDefaults {
 		if err := saveJSON(state.config, taskCfg); err != nil {
 			fmt.Fprintf(stderr, "mai: %v\n", err)
@@ -110,45 +114,17 @@ Run 'mai --help' for more information.
 		fmt.Fprintf(stderr, "mai: saved defaults: %s\n", formatDefaults(taskCfg))
 	}
 
-	var sess *session
-	if opts.last {
-		sess, err = loadSession(state.session)
-		if err != nil {
-			fmt.Fprintf(stderr, "mai: %v\n", err)
-			return 1
-		}
-		if opts.modelExplicit {
-			sess.Model = opts.model
-		}
-		if opts.effortExplicit {
-			sess.Effort = opts.effort
-		}
-		if err := os.Chdir(sess.CWD); err != nil {
-			fmt.Fprintf(stderr, "mai: resume task directory %s: %v\n", sess.CWD, err)
-			return 1
-		}
-	} else {
-		sess, err = createSession(taskCfg)
-		if err != nil {
-			fmt.Fprintf(stderr, "mai: %v\n", err)
-			return 1
-		}
+	sess, err := startSession(state.session, taskCfg, opts)
+	if err != nil {
+		fmt.Fprintf(stderr, "mai: %v\n", err)
+		return 1
 	}
 	if err := repairInterruptedToolCalls(sess); err != nil {
 		fmt.Fprintf(stderr, "mai: repair interrupted task: %v\n", err)
 		return 1
 	}
 
-	userItem, err := json.Marshal(map[string]any{
-		"role":    "user",
-		"content": []map[string]string{{"type": "input_text", "text": opts.prompt}},
-	})
-	if err != nil {
-		fmt.Fprintf(stderr, "mai: encode prompt: %v\n", err)
-		return 1
-	}
-	sess.History = append(sess.History, userItem)
-	if err := saveJSON(state.session, sess); err != nil {
+	if err := appendUserPrompt(state.session, sess, opts.prompt); err != nil {
 		fmt.Fprintf(stderr, "mai: save task: %v\n", err)
 		return 1
 	}
@@ -165,6 +141,48 @@ Run 'mai --help' for more information.
 		return 1
 	}
 	return 0
+}
+
+func configForTask(saved config, opts options) config {
+	if opts.modelExplicit {
+		saved.Model = opts.model
+	}
+	if opts.effortExplicit {
+		saved.Effort = opts.effort
+	}
+	return saved
+}
+
+func startSession(path string, cfg config, opts options) (*session, error) {
+	if !opts.last {
+		return createSession(cfg)
+	}
+	sess, err := loadSession(path)
+	if err != nil {
+		return nil, err
+	}
+	if opts.modelExplicit {
+		sess.Model = opts.model
+	}
+	if opts.effortExplicit {
+		sess.Effort = opts.effort
+	}
+	if err := os.Chdir(sess.CWD); err != nil {
+		return nil, fmt.Errorf("resume task directory %s: %w", sess.CWD, err)
+	}
+	return sess, nil
+}
+
+func appendUserPrompt(path string, sess *session, prompt string) error {
+	userItem, err := json.Marshal(map[string]any{
+		"role":    "user",
+		"content": []map[string]string{{"type": "input_text", "text": prompt}},
+	})
+	if err != nil {
+		return fmt.Errorf("encode prompt: %w", err)
+	}
+	sess.History = append(sess.History, userItem)
+	return saveJSON(path, sess)
 }
 
 func loadStateConfig() (paths, config, error) {

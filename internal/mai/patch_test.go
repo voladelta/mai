@@ -57,6 +57,26 @@ func TestApplyPatchRequiresExactContext(t *testing.T) {
 	}
 }
 
+func TestApplyPatchValidatesWholePlanBeforeWriting(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "existing.txt"), "one\n")
+	patch := `*** Begin Patch
+*** Add File: new.txt
++new
+*** Update File: existing.txt
+@@
+-missing
++changed
+*** End Patch`
+	if _, err := applyPatch(root, patch); err == nil {
+		t.Fatal("expected invalid update error")
+	}
+	if _, err := os.Stat(filepath.Join(root, "new.txt")); !os.IsNotExist(err) {
+		t.Fatalf("new.txt was written before the full plan was valid: %v", err)
+	}
+	assertContent(t, filepath.Join(root, "existing.txt"), "one\n")
+}
+
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
