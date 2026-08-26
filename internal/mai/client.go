@@ -274,7 +274,7 @@ func toolDefinitions() []map[string]any {
 		},
 		{
 			"type": "function", "name": "bash",
-			"description": "Run Bash in the task working directory. Returns stdout, stderr, exit code, timeout, and truncation state.",
+			"description": "Run Bash in the task working directory. Returns bounded head-and-tail output, exit code, timeout, duration, original byte counts, and truncation state.",
 			"parameters": map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{

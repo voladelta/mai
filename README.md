@@ -108,6 +108,10 @@ duration when necessary:
 mai "investigate the failure" --timeout 20m
 ```
 
+Each `bash` result reports its duration and original output byte counts. Mai
+keeps at most 64 KiB from each stream. For longer output, it preserves the
+beginning and end and reports the omitted byte count.
+
 Use `--no-input` in scripts and other non-interactive environments. If a command
 needs approval, `mai` rejects it instead of opening a terminal prompt.
 

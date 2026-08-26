@@ -2,7 +2,6 @@ package mai
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -17,7 +17,7 @@ import (
 const (
 	defaultBashTimeout = 120 * time.Second
 	maxBashTimeout     = 10 * time.Minute
-	maxToolStreamBytes = 1 << 20
+	maxToolStreamBytes = 64 << 10
 )
 
 type approvalFunc func(command, reason string) (bool, error)
@@ -31,12 +31,16 @@ type bashRequest struct {
 }
 
 type bashResult struct {
-	OK        bool   `json:"ok"`
-	Stdout    string `json:"stdout"`
-	Stderr    string `json:"stderr"`
-	ExitCode  int    `json:"exit_code"`
-	TimedOut  bool   `json:"timed_out"`
-	Truncated bool   `json:"truncated"`
+	OK           bool   `json:"ok"`
+	Stdout       string `json:"stdout"`
+	Stderr       string `json:"stderr"`
+	ExitCode     int    `json:"exit_code"`
+	TimedOut     bool   `json:"timed_out"`
+	Truncated    bool   `json:"truncated"`
+	DurationMS   int64  `json:"duration_ms"`
+	StdoutBytes  int64  `json:"stdout_bytes"`
+	StderrBytes  int64  `json:"stderr_bytes"`
+	OmittedBytes int64  `json:"omitted_bytes"`
 }
 
 func runBash(parent context.Context, req bashRequest) string {
@@ -79,12 +83,16 @@ func runBash(parent context.Context, req bashRequest) string {
 	stderr.max = maxToolStreamBytes
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	started := time.Now()
 	err := cmd.Run()
 
 	result := bashResult{
 		OK: err == nil, Stdout: stdout.String(), Stderr: stderr.String(),
 		ExitCode: 0, TimedOut: errors.Is(ctx.Err(), context.DeadlineExceeded),
-		Truncated: stdout.truncated || stderr.truncated,
+		Truncated:   stdout.Truncated() || stderr.Truncated(),
+		DurationMS:  time.Since(started).Milliseconds(),
+		StdoutBytes: stdout.TotalBytes(), StderrBytes: stderr.TotalBytes(),
+		OmittedBytes: stdout.OmittedBytes() + stderr.OmittedBytes(),
 	}
 	if err != nil {
 		var exitErr *exec.ExitError
@@ -105,24 +113,71 @@ func runBash(parent context.Context, req bashRequest) string {
 }
 
 type cappedBuffer struct {
-	bytes.Buffer
-	max       int
-	truncated bool
+	mu    sync.Mutex
+	head  []byte
+	tail  []byte
+	max   int
+	total int64
 }
 
 func (b *cappedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	original := len(p)
-	remaining := b.max - b.Len()
-	if remaining <= 0 {
-		b.truncated = true
+	b.total += int64(original)
+	if b.max <= 0 {
 		return original, nil
 	}
-	if len(p) > remaining {
-		p = p[:remaining]
-		b.truncated = true
+	headLimit := b.max / 2
+	if len(b.head) < headLimit {
+		kept := min(len(p), headLimit-len(b.head))
+		b.head = append(b.head, p[:kept]...)
+		p = p[kept:]
 	}
-	_, _ = b.Buffer.Write(p)
+	tailLimit := b.max - headLimit
+	if len(p) == 0 || tailLimit == 0 {
+		return original, nil
+	}
+	if len(p) >= tailLimit {
+		b.tail = append(b.tail[:0], p[len(p)-tailLimit:]...)
+		return original, nil
+	}
+	overflow := len(b.tail) + len(p) - tailLimit
+	if overflow > 0 {
+		copy(b.tail, b.tail[overflow:])
+		b.tail = b.tail[:len(b.tail)-overflow]
+	}
+	b.tail = append(b.tail, p...)
 	return original, nil
+}
+
+func (b *cappedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if omitted := b.omittedBytes(); omitted > 0 {
+		return string(b.head) + fmt.Sprintf("\n... %d bytes omitted ...\n", omitted) + string(b.tail)
+	}
+	return string(b.head) + string(b.tail)
+}
+
+func (b *cappedBuffer) TotalBytes() int64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.total
+}
+
+func (b *cappedBuffer) OmittedBytes() int64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.omittedBytes()
+}
+
+func (b *cappedBuffer) Truncated() bool {
+	return b.OmittedBytes() > 0
+}
+
+func (b *cappedBuffer) omittedBytes() int64 {
+	return max(0, b.total-int64(len(b.head)+len(b.tail)))
 }
 
 func cleanShellEnv(env []string) []string {
