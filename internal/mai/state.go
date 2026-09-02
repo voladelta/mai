@@ -287,6 +287,8 @@ func interruptedToolInstruction(name string) string {
 		return "Inspect the repository and reconcile the requested patch with the current files before you retry apply_patch."
 	case "bash":
 		return "Inspect the command effects. Do not repeat a command that can have non-idempotent effects without user confirmation."
+	case "spawn_subagent":
+		return "Inspect the repository and relevant external state. Do not spawn the subagent again until you know whether its work completed."
 	default:
 		return "Inspect the relevant state before you retry the tool."
 	}

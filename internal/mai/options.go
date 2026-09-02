@@ -18,6 +18,7 @@ type options struct {
 	help           bool
 	version        bool
 	noInput        bool
+	subagent       string
 	timeout        time.Duration
 }
 
@@ -29,6 +30,7 @@ const (
 	optionLast
 	optionPersist
 	optionNoInput
+	optionSubagent
 	optionModel
 	optionEffort
 	optionTimeout
@@ -40,6 +42,7 @@ var optionKinds = map[string]optionKind{
 	"--last":     optionLast,
 	"--persist":  optionPersist,
 	"--no-input": optionNoInput,
+	"--subagent": optionSubagent,
 	"-m":         optionModel, "--model": optionModel,
 	"-e": optionEffort, "--effort": optionEffort,
 	"--timeout": optionTimeout,
@@ -108,7 +111,7 @@ func parseOptionTokens(args []string, out *options) ([]string, error) {
 }
 
 func (kind optionKind) takesValue() bool {
-	return kind == optionModel || kind == optionEffort || kind == optionTimeout
+	return kind == optionSubagent || kind == optionModel || kind == optionEffort || kind == optionTimeout
 }
 
 func (out *options) setOption(kind optionKind, value string) error {
@@ -121,6 +124,8 @@ func (out *options) setOption(kind optionKind, value string) error {
 		out.persist = true
 	case optionNoInput:
 		out.noInput = true
+	case optionSubagent:
+		out.subagent = value
 	case optionModel:
 		out.model, out.modelExplicit = value, true
 	case optionEffort:
@@ -143,6 +148,13 @@ func (out *options) normalizeAndValidate(argCount int) error {
 }
 
 func (out *options) normalizeSelections() error {
+	out.subagent = strings.TrimSpace(out.subagent)
+	if out.subagent != "" {
+		if err := validateSubagentName(out.subagent); err != nil {
+			return err
+		}
+		out.noInput = true
+	}
 	if out.modelExplicit {
 		out.model = normalizeModel(out.model)
 		if _, ok := modelIDs[out.model]; !ok {
@@ -161,6 +173,16 @@ func (out *options) normalizeSelections() error {
 func (out options) validateMode(argCount int) error {
 	if out.last && out.persist {
 		return errors.New("--last and --persist cannot be used together")
+	}
+	if out.subagent != "" {
+		switch {
+		case out.last || out.persist:
+			return errors.New("--subagent cannot be used with --last or --persist")
+		case out.modelExplicit || out.effortExplicit:
+			return errors.New("--subagent cannot be used with --model or --effort")
+		case len(out.prompt) > maxSubagentPromptBytes:
+			return fmt.Errorf("subagent prompt exceeds %d bytes", maxSubagentPromptBytes)
+		}
 	}
 	if out.prompt == "" && argCount > 0 {
 		return errors.New("prompt is required")

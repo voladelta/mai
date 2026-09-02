@@ -34,4 +34,8 @@ func TestSystemInstructionsAreLeanAndComplete(t *testing.T) {
 	if !strings.Contains(withSkills, "demo: A demonstration skill") {
 		t.Fatalf("skill instructions were not appended: %s", withSkills)
 	}
+	withRoleAndSkills := systemInstructions(sess, "Custom role", "Skills")
+	if !strings.Contains(withRoleAndSkills, "Custom role\n\nSkills") {
+		t.Fatalf("multiple instruction sections were not appended in order: %s", withRoleAndSkills)
+	}
 }

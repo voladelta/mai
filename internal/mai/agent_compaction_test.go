@@ -45,7 +45,7 @@ func TestRunTurnCompactsBeforeSamplingAndSavesReplacement(t *testing.T) {
 	if err := saveJSON(path, sess); err != nil {
 		t.Fatal(err)
 	}
-	a := newAgent(&bytes.Buffer{}, &bytes.Buffer{}, path, time.Second, false)
+	a := newAgent(&bytes.Buffer{}, &bytes.Buffer{}, path, time.Second, false, nil)
 	a.client.endpoint = server.URL
 	done, err := a.runTurn(context.Background(), sess, "instructions")
 	if err != nil {
@@ -79,7 +79,7 @@ func TestFailedCompactionLeavesHistoryUnchanged(t *testing.T) {
 
 	before := []json.RawMessage{json.RawMessage(`{"role":"user","content":"keep"}`)}
 	sess := &session{ID: "session", Model: "luna", Effort: "m", ContextTokens: 244_800, History: append([]json.RawMessage(nil), before...)}
-	a := newAgent(&bytes.Buffer{}, &bytes.Buffer{}, "", time.Second, false)
+	a := newAgent(&bytes.Buffer{}, &bytes.Buffer{}, "", time.Second, false, nil)
 	a.client.endpoint = server.URL
 	if err := a.compactIfNeeded(context.Background(), sess, "instructions"); err == nil {
 		t.Fatal("invalid compaction response was accepted")

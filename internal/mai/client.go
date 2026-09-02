@@ -22,9 +22,10 @@ const (
 )
 
 type codexClient struct {
-	httpClient *http.Client
-	endpoint   string
-	stdout     io.Writer
+	httpClient     *http.Client
+	endpoint       string
+	stdout         io.Writer
+	allowSubagents bool
 }
 
 type streamResult struct {
@@ -156,7 +157,7 @@ func (c *codexClient) requestWithCredentials(ctx context.Context, sess *session,
 		"stream":              true,
 		"instructions":        instructions,
 		"input":               sess.History,
-		"tools":               toolDefinitions(),
+		"tools":               toolDefinitions(c.allowSubagents),
 		"tool_choice":         "auto",
 		"parallel_tool_calls": false,
 		"reasoning": map[string]any{
@@ -353,8 +354,8 @@ func compactJSON(raw json.RawMessage) string {
 	return b.String()
 }
 
-func toolDefinitions() []map[string]any {
-	return []map[string]any{
+func toolDefinitions(allowSubagents ...bool) []map[string]any {
+	definitions := []map[string]any{
 		{
 			"type": "function", "name": "read_skill",
 			"description": "Read the complete SKILL.md for one installed skill. Read it before using that skill or loading its supporting files.",
@@ -402,4 +403,19 @@ func toolDefinitions() []map[string]any {
 			},
 		},
 	}
+	if len(allowSubagents) > 0 && allowSubagents[0] {
+		definitions = append(definitions, map[string]any{
+			"type": "function", "name": "spawn_subagent",
+			"description": "Run one installed custom agent synchronously in a stateless mai subprocess. The call returns after the child completes.",
+			"parameters": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"name":   map[string]string{"type": "string", "description": "The custom agent name shown in the instructions."},
+					"prompt": map[string]string{"type": "string", "description": "The complete task for the child agent."},
+				},
+				"required": []string{"name", "prompt"},
+			},
+		})
+	}
+	return definitions
 }

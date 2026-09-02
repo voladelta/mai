@@ -5,12 +5,13 @@
 `mai` is a small coding agent for macOS and Linux. It uses your existing Codex
 ChatGPT login, so you do not need an OpenAI API key.
 
-The agent has 4 tools:
+The agent has 5 tools:
 
 - `bash` reads files, searches code and runs commands
 - `apply_patch` creates, changes, moves and deletes files
 - `read_skill` loads the complete instructions for one skill
 - `read_skill_file` loads a required supporting file from that skill
+- `spawn_subagent` runs one installed custom agent and returns its final output
 
 Skills are read only from `~/.agents/skills`. Each request includes eligible
 skill names and descriptions in an 8,000-character catalog, then loads a complete
@@ -18,6 +19,22 @@ skill names and descriptions in an 8,000-character catalog, then loads a complet
 Set `policy.allow_implicit_invocation` to `false` in `agents/openai.yaml` to hide
 a skill from automatic selection; an explicit `$skill-name` still loads it.
 Images use typed image output; other binary files are rejected.
+
+Custom agents are read from `$CODEX_HOME/agents`, or `~/.codex/agents` when
+`CODEX_HOME` is not set. Each `<name>.toml` file must define matching `name`,
+`description`, `developer_instructions`, `model`, and `model_reasoning_effort`
+fields. Mai supports the same model names and reasoning efforts as its command
+line options.
+
+Run a custom agent directly with:
+
+```bash
+mai --subagent repo_scout "map the parser"
+```
+
+This mode uses the model, effort, and developer instructions from
+`repo_scout.toml`. It implies `--no-input` and cannot be combined with
+`--persist`, `--last`, `--model`, or `--effort`.
 
 `mai` uses server-sent events (SSE). The Go standard library provides everything
 it needs, so the project has no third-party dependencies.
@@ -111,6 +128,12 @@ duration when necessary:
 mai "investigate the failure" --timeout 20m
 ```
 
+The same timeout limits the full lifetime of a spawned child process. A parent
+runs one child at a time. The child uses the parent's working directory, starts
+with new in-memory history, and cannot spawn another child. The parent receives
+the child's final standard output. Failed calls also include the child's
+standard error.
+
 Each `bash` result reports its duration and original output byte counts. Mai
 keeps at most 64 KiB from each stream. For longer output, it preserves the
 beginning and end and reports the omitted byte count.
@@ -156,6 +179,9 @@ The saved history includes completed model output and encrypted reasoning state.
 `mai` sends a stable cache key for each task so compatible requests can reuse
 cached input.
 
+Children never create their own saved tasks. A persisted parent saves the
+`spawn_subagent` call and its returned result in the parent task history.
+
 Mai tracks the active context size reported by the Codex backend. At 90% of the
 model context window, it sends a Codex V2 compaction request before the next
 model request. The compacted history keeps recent user messages and the encrypted
@@ -168,6 +194,10 @@ continue.
 symbolic links that lead outside the repository.
 
 `bash` can run any command available to your shell. It is not sandboxed.
+
+A custom agent runs as a new `mai` process with the same file and command access
+as its parent. Agent configuration fields such as `sandbox_mode` do not reduce
+that access.
 
 `mai` checks recognisable `rm` commands before it runs them. It asks for approval
 when a target is outside the repository or cannot be resolved safely.

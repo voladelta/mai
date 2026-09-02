@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-func systemInstructions(sess *session, skills string) string {
+func systemInstructions(sess *session, additions ...string) string {
 	base := fmt.Sprintf(`You are mai, an autonomous coding agent.
 
 Workspace
@@ -31,8 +31,10 @@ Communication
 - Use ASD-STE100 Simplified Technical English. Use another language or style when the user prefers it.
 
 Finish when the requested outcome is complete or genuinely blocked. Lead the final response with the outcome; include verification and material caveats.`, sess.CWD, sess.RepoRoot)
-	if strings.TrimSpace(skills) == "" {
-		return base
+	for _, addition := range additions {
+		if strings.TrimSpace(addition) != "" {
+			base += "\n\n" + strings.TrimSpace(addition)
+		}
 	}
-	return base + "\n\n" + strings.TrimSpace(skills)
+	return base
 }

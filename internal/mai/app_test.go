@@ -143,7 +143,7 @@ func TestMainHelpDocumentsPersistenceOptions(t *testing.T) {
 	if code := Main([]string{"--unknown", "--help"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
-	for _, text := range []string{"--model", "--effort", "--persist", "--last", "--timeout", "--no-input", "Documentation and support"} {
+	for _, text := range []string{"--model", "--effort", "--persist", "--last", "--timeout", "--no-input", "--subagent", "Documentation and support"} {
 		if !strings.Contains(stdout.String(), text) {
 			t.Fatalf("help is missing %q:\n%s", text, stdout.String())
 		}

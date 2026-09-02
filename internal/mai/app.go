@@ -23,6 +23,7 @@ Usage:
 
 Examples:
   mai "add tests for the parser"
+  mai --subagent repo_scout "map the affected code"
   mai "start a saved task" --persist
   mai "now fix the failing test" --last
   mai "refactor this" -m sol -e h
@@ -36,6 +37,7 @@ Options:
   -e, --effort EFFORT    Use l, m, h, x, or max for this task.
   --timeout DURATION     Set the request timeout (default: 10m).
   --no-input             Do not ask for interactive approval.
+  --subagent NAME        Run with an installed custom agent.
 
 Tasks are stateless unless you use --persist or --last.
 The built-in default is luna/medium.
@@ -84,6 +86,22 @@ Run 'mai --help' for more information.
 
 func runTask(opts options, stdout, stderr io.Writer) int {
 	taskCfg := configForTask(opts)
+	var selectedAgent *customAgent
+	if opts.subagent != "" {
+		root, err := defaultAgentsRoot()
+		if err != nil {
+			fmt.Fprintf(stderr, "mai: %v\n", err)
+			return 1
+		}
+		loaded, err := loadCustomAgent(root, opts.subagent)
+		if err != nil {
+			fmt.Fprintf(stderr, "mai: %v\n", err)
+			return 1
+		}
+		selectedAgent = &loaded
+		taskCfg.Model = loaded.Model
+		taskCfg.Effort = loaded.Effort
+	}
 	active, err := startSession(taskCfg, opts)
 	if err != nil {
 		fmt.Fprintf(stderr, "mai: %v\n", err)
@@ -106,7 +124,7 @@ func runTask(opts options, stdout, stderr io.Writer) int {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	runner := newAgent(stdout, stderr, active.path, opts.timeout, !opts.noInput && isTerminal(os.Stdin))
+	runner := newAgent(stdout, stderr, active.path, opts.timeout, !opts.noInput && isTerminal(os.Stdin), selectedAgent)
 	if err := runner.run(ctx, active.session, opts.prompt); err != nil {
 		if ctx.Err() != nil {
 			fmt.Fprintln(stderr, "mai: interrupted")

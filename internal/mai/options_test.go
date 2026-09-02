@@ -1,6 +1,9 @@
 package mai
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseOptionsInterspersed(t *testing.T) {
 	for _, test := range []struct {
@@ -22,6 +25,11 @@ func TestParseOptionsInterspersed(t *testing.T) {
 			name: "end of options",
 			args: []string{"--", "-m", "is", "part", "of", "the", "prompt"},
 			want: options{prompt: "-m is part of the prompt", timeout: defaultHTTPTimeout},
+		},
+		{
+			name: "custom subagent implies no input",
+			args: []string{"map", "the", "parser", "--subagent", "repo_scout"},
+			want: options{prompt: "map the parser", subagent: "repo_scout", noInput: true, timeout: defaultHTTPTimeout},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -51,6 +59,18 @@ func TestParseOptionsRejectsInvalid(t *testing.T) {
 	}
 	if _, err := parseOptions([]string{"hello", "--timeout", "never"}); err == nil {
 		t.Fatal("expected invalid timeout error")
+	}
+	for _, args := range [][]string{
+		{"hello", "--subagent", "../repo_scout"},
+		{"hello", "--subagent", "repo_scout", "--persist"},
+		{"hello", "--subagent", "repo_scout", "--last"},
+		{"hello", "--subagent", "repo_scout", "--model", "sol"},
+		{"hello", "--subagent", "repo_scout", "--effort", "h"},
+		{strings.Repeat("x", maxSubagentPromptBytes+1), "--subagent", "repo_scout"},
+	} {
+		if _, err := parseOptions(args); err == nil {
+			t.Fatalf("expected invalid subagent options for %v", args)
+		}
 	}
 }
 

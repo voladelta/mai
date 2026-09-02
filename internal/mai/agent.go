@@ -19,13 +19,19 @@ const (
 )
 
 type agent struct {
-	client      *codexClient
-	stdout      io.Writer
-	stderr      io.Writer
-	sessionPath string
-	approve     approvalFunc
-	skillsRoot  string
-	skillsError error
+	client        *codexClient
+	stdout        io.Writer
+	stderr        io.Writer
+	sessionPath   string
+	approve       approvalFunc
+	skillsRoot    string
+	skillsError   error
+	customAgent   *customAgent
+	customAgents  map[string]customAgent
+	agentWarnings []string
+	agentsError   error
+	executable    string
+	timeout       time.Duration
 }
 
 type functionCall struct {
@@ -35,13 +41,34 @@ type functionCall struct {
 	Arguments string `json:"arguments"`
 }
 
-func newAgent(stdout, stderr io.Writer, sessionPath string, timeout time.Duration, inputAllowed bool) *agent {
+func newAgent(stdout, stderr io.Writer, sessionPath string, timeout time.Duration, inputAllowed bool, customRole *customAgent) *agent {
 	root, err := defaultSkillsRoot()
+	var customAgents map[string]customAgent
+	var agentWarnings []string
+	var agentsErr error
+	var executable string
+	if customRole == nil {
+		var agentsRoot string
+		agentsRoot, agentsErr = defaultAgentsRoot()
+		if agentsErr == nil {
+			customAgents, agentWarnings, agentsErr = loadCustomAgents(agentsRoot)
+		}
+		if agentsErr == nil && len(customAgents) > 0 {
+			executable, agentsErr = os.Executable()
+			if agentsErr != nil {
+				agentsErr = fmt.Errorf("find mai executable: %w", agentsErr)
+			}
+		}
+	}
 	a := &agent{
 		stdout: stdout, stderr: stderr, sessionPath: sessionPath,
 		skillsRoot: root, skillsError: err,
+		customAgent:  customRole,
+		customAgents: customAgents, agentWarnings: agentWarnings, agentsError: agentsErr,
+		executable: executable, timeout: timeout,
 	}
 	a.client = newCodexClient(stdout, timeout)
+	a.client.allowSubagents = agentsErr == nil && len(customAgents) > 0
 	if inputAllowed {
 		a.approve = a.terminalApproval
 	}
@@ -53,7 +80,11 @@ func (a *agent) run(ctx context.Context, sess *session, userPrompt string) error
 	if interactive {
 		fmt.Fprintln(a.stderr, "→ thinking")
 	}
-	instructions := systemInstructions(sess, a.loadSkillInstructions(userPrompt))
+	instructions := systemInstructions(sess,
+		customAgentInstructions(a.customAgent),
+		a.loadSkillInstructions(userPrompt),
+		a.loadSubagentInstructions(),
+	)
 	if sess.ContextTokens == 0 {
 		sess.ContextTokens = estimateHistoryTokens(sess.History) + (int64(len(instructions))+3)/4
 	}
@@ -70,6 +101,20 @@ func (a *agent) run(ctx context.Context, sess *session, userPrompt string) error
 		}
 	}
 	return fmt.Errorf("agent stopped after %d model turns", maxAgentTurns)
+}
+
+func (a *agent) loadSubagentInstructions() string {
+	if a.customAgent != nil {
+		return ""
+	}
+	if a.agentsError != nil {
+		fmt.Fprintf(a.stderr, "mai: custom agents unavailable: %v\n", a.agentsError)
+		return ""
+	}
+	for _, warning := range a.agentWarnings {
+		fmt.Fprintf(a.stderr, "mai: custom agent warning: %s\n", warning)
+	}
+	return renderSubagentInstructions(a.customAgents)
 }
 
 func (a *agent) loadSkillInstructions(userPrompt string) string {
@@ -240,6 +285,8 @@ func (a *agent) executeTool(ctx context.Context, sess *session, call functionCal
 		return a.executeReadSkill(call.Arguments)
 	case "read_skill_file":
 		return a.executeReadSkillFile(call.Arguments)
+	case "spawn_subagent":
+		return a.executeSpawnSubagent(ctx, sess, call.Arguments)
 	case "bash":
 		return a.executeBash(ctx, sess, call.Arguments)
 	case "apply_patch":
@@ -247,6 +294,42 @@ func (a *agent) executeTool(ctx context.Context, sess *session, call functionCal
 	default:
 		return textToolOutput(toolError("unknown tool", fmt.Errorf("%s is not available", call.Name)))
 	}
+}
+
+func (a *agent) executeSpawnSubagent(ctx context.Context, sess *session, arguments string) json.RawMessage {
+	var args struct {
+		Name   string `json:"name"`
+		Prompt string `json:"prompt"`
+	}
+	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+		return textToolOutput(toolError("invalid spawn_subagent arguments", err))
+	}
+	if a.customAgent != nil {
+		return textToolOutput(toolError("spawn_subagent failed", errors.New("a subagent cannot spawn another subagent")))
+	}
+	if err := validateSubagentName(args.Name); err != nil {
+		return textToolOutput(toolError("spawn_subagent failed", err))
+	}
+	if strings.TrimSpace(args.Prompt) == "" {
+		return textToolOutput(toolError("spawn_subagent failed", errors.New("prompt is empty")))
+	}
+	if len(args.Prompt) > maxSubagentPromptBytes {
+		return textToolOutput(toolError("spawn_subagent failed", fmt.Errorf("prompt exceeds %d bytes", maxSubagentPromptBytes)))
+	}
+	if _, ok := a.customAgents[args.Name]; !ok {
+		return textToolOutput(toolError("spawn_subagent failed", fmt.Errorf("custom agent %q is not available", args.Name)))
+	}
+	fmt.Fprintf(a.stderr, "→ subagent: %s\n", args.Name)
+	raw := runSubagentProcess(ctx, a.executable, a.timeout, sess.CWD, args.Name, args.Prompt)
+	var result subagentResult
+	if err := json.Unmarshal([]byte(raw), &result); err == nil {
+		status := "completed"
+		if !result.OK {
+			status = "failed"
+		}
+		fmt.Fprintf(a.stderr, "← subagent: %s %s (%s)\n", args.Name, status, time.Duration(result.DurationMS)*time.Millisecond)
+	}
+	return textToolOutput(raw)
 }
 
 func (a *agent) executeReadSkill(arguments string) json.RawMessage {
