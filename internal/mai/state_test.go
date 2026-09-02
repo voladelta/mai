@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -126,6 +127,73 @@ func TestRepairInterruptedToolCalls(t *testing.T) {
 	}
 	if output.Type != "function_call_output" || output.CallID != "pending" || output.Output == "" {
 		t.Fatalf("unexpected repair output: %#v", output)
+	}
+	var recovery struct {
+		OK          *bool  `json:"ok"`
+		Outcome     string `json:"outcome"`
+		Error       string `json:"error"`
+		Instruction string `json:"instruction"`
+	}
+	if err := json.Unmarshal([]byte(output.Output), &recovery); err != nil {
+		t.Fatal(err)
+	}
+	if recovery.OK != nil || recovery.Outcome != "unknown" {
+		t.Fatalf("recovery result does not state an unknown outcome: %#v", recovery)
+	}
+	if !strings.Contains(recovery.Error, "tool outcome is unknown") ||
+		!strings.Contains(recovery.Instruction, "reconcile") ||
+		!strings.Contains(recovery.Instruction, "before you retry apply_patch") {
+		t.Fatalf("unsafe apply_patch recovery guidance: %#v", recovery)
+	}
+}
+
+func TestRepairInterruptedBashRequiresConfirmationBeforeUnsafeRetry(t *testing.T) {
+	sess := &session{History: []json.RawMessage{
+		json.RawMessage(`{"type":"function_call","call_id":"pending","name":"bash","arguments":"{\"command\":\"deploy\"}"}`),
+	}}
+	if err := repairInterruptedToolCalls(sess); err != nil {
+		t.Fatal(err)
+	}
+	var output struct {
+		Output string `json:"output"`
+	}
+	if err := json.Unmarshal(sess.History[1], &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.Output, `"outcome":"unknown"`) ||
+		!strings.Contains(output.Output, "non-idempotent effects without user confirmation") {
+		t.Fatalf("unsafe Bash recovery output: %s", output.Output)
+	}
+}
+
+func TestInterruptedToolRecoveryPersists(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.json")
+	sess := &session{
+		Version: stateVersion, ID: "session", CWD: t.TempDir(), RepoRoot: t.TempDir(),
+		Model: "luna", Effort: "max",
+		History: []json.RawMessage{
+			json.RawMessage(`{"type":"function_call","call_id":"pending","name":"apply_patch","arguments":"{}"}`),
+		},
+	}
+	if err := repairInterruptedToolCalls(sess); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveJSON(path, sess); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := loadSession(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output struct {
+		Output string `json:"output"`
+	}
+	if err := json.Unmarshal(loaded.History[1], &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.Output, `"outcome":"unknown"`) ||
+		!strings.Contains(output.Output, "reconcile the requested patch") {
+		t.Fatalf("persisted recovery output is incomplete: %s", output.Output)
 	}
 }
 

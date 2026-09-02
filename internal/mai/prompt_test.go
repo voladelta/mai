@@ -14,6 +14,9 @@ func TestSystemInstructionsAreLeanAndComplete(t *testing.T) {
 		"complete in-scope work",
 		"bash:",
 		"apply_patch:",
+		"unknown outcome",
+		"reconcile the requested patch",
+		"non-idempotent effects without user confirmation",
 		"ASD-STE100 Simplified Technical English",
 		"when the user prefers it",
 		"requested outcome is complete or genuinely blocked",
@@ -24,8 +27,8 @@ func TestSystemInstructionsAreLeanAndComplete(t *testing.T) {
 			t.Fatalf("prompt is missing %q:\n%s", required, prompt)
 		}
 	}
-	if words := len(strings.Fields(prompt)); words > 170 {
-		t.Fatalf("base prompt grew beyond the 170-word budget: %d words", words)
+	if words := len(strings.Fields(prompt)); words > 200 {
+		t.Fatalf("base prompt grew beyond the 200-word budget: %d words", words)
 	}
 	withSkills := systemInstructions(sess, "Skills\n- demo: A demonstration skill. (id: demo)")
 	if !strings.Contains(withSkills, "demo: A demonstration skill") {

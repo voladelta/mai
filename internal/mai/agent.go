@@ -242,10 +242,28 @@ func (a *agent) executePatch(sess *session, arguments string) json.RawMessage {
 	}
 	fmt.Fprintln(a.stderr, "→ apply_patch")
 	result, err := applyPatch(sess.RepoRoot, args.Patch)
-	if err != nil {
+	return patchToolOutput(result, err)
+}
+
+func patchToolOutput(result string, err error) json.RawMessage {
+	if err == nil {
+		return textToolOutput(result)
+	}
+	var commitErr *patchCommitError
+	if !errors.As(err, &commitErr) {
 		return textToolOutput(toolError("apply_patch failed", err))
 	}
-	return textToolOutput(result)
+	b, _ := json.Marshal(map[string]any{
+		"ok":                      false,
+		"outcome":                 "partial",
+		"error":                   "apply_patch failed: " + commitErr.Error(),
+		"applied":                 commitErr.applied,
+		"failed":                  commitErr.failed,
+		"pending":                 commitErr.pending,
+		"reconciliation_required": true,
+		"instruction":             "Inspect the repository and reconcile the requested patch with the current files before you retry apply_patch.",
+	})
+	return textToolOutput(string(b))
 }
 
 func textToolOutput(value string) json.RawMessage {

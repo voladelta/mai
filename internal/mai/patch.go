@@ -1,6 +1,8 @@
 package mai
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,35 +30,69 @@ type patchChunk struct {
 }
 
 type pendingFile struct {
-	path           string
-	content        string
-	mode           os.FileMode
-	originalExists bool
-	deleted        bool
+	path            string
+	content         string
+	originalContent string
+	mode            os.FileMode
+	originalExists  bool
+	deleted         bool
 }
 
 type patchPlan struct {
-	root    string
-	files   map[string]*pendingFile
-	changed []string
+	root     *os.Root
+	rootPath string
+	files    map[string]*pendingFile
+	changed  []string
 }
 
+type patchAction struct {
+	kind string
+	file *pendingFile
+}
+
+type patchCommitError struct {
+	cause   error
+	applied []string
+	failed  string
+	pending []string
+}
+
+func (err *patchCommitError) Error() string {
+	return err.cause.Error()
+}
+
+func (err *patchCommitError) Unwrap() error {
+	return err.cause
+}
+
+type patchWriteFunc func(*os.Root, string, []byte, os.FileMode) error
+type patchRemoveFunc func(*os.Root, string) error
+
 func applyPatch(repoRoot, patch string) (string, error) {
+	return applyPatchWithIO(repoRoot, patch, atomicWriteRootFile, (*os.Root).Remove)
+}
+
+func applyPatchWithIO(repoRoot, patch string, write patchWriteFunc, remove patchRemoveFunc) (string, error) {
 	resolvedRoot, err := canonicalPath(repoRoot)
 	if err != nil {
 		return "", fmt.Errorf("resolve repository root: %w", err)
 	}
+	root, err := os.OpenRoot(resolvedRoot)
+	if err != nil {
+		return "", fmt.Errorf("open repository root: %w", err)
+	}
+	defer root.Close()
 	ops, err := parsePatch(patch)
 	if err != nil {
 		return "", err
 	}
-	plan := patchPlan{root: resolvedRoot, files: make(map[string]*pendingFile)}
+	plan := patchPlan{root: root, rootPath: resolvedRoot, files: make(map[string]*pendingFile)}
 	for _, op := range ops {
 		if err := plan.addOperation(op); err != nil {
 			return "", err
 		}
 	}
-	if err := plan.commit(); err != nil {
+	if err := plan.commitWithIO(write, remove); err != nil {
 		return "", err
 	}
 
@@ -78,19 +114,19 @@ func (plan *patchPlan) addOperation(op patchOperation) error {
 }
 
 func (plan *patchPlan) addFile(op patchOperation) error {
-	abs, err := securePatchPath(plan.root, op.path)
+	path, err := securePatchPath(plan.rootPath, op.path)
 	if err != nil {
 		return err
 	}
-	if _, ok := plan.files[abs]; ok {
+	if _, ok := plan.files[path]; ok {
 		return fmt.Errorf("duplicate patch target %s", op.path)
 	}
-	if _, err := os.Lstat(abs); err == nil {
+	if _, err := plan.root.Lstat(path); err == nil {
 		return fmt.Errorf("cannot add %s: file already exists", op.path)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("inspect %s: %w", op.path, err)
 	}
-	plan.files[abs] = &pendingFile{path: abs, content: op.contents, mode: 0o644}
+	plan.files[path] = &pendingFile{path: path, content: op.contents, mode: 0o644}
 	plan.changed = append(plan.changed, "add "+op.path)
 	return nil
 }
@@ -123,7 +159,7 @@ func (plan *patchPlan) updateFile(op patchOperation) error {
 }
 
 func (plan *patchPlan) moveFile(file *pendingFile, source, destination string) error {
-	dest, err := securePatchPath(plan.root, destination)
+	dest, err := securePatchPath(plan.rootPath, destination)
 	if err != nil {
 		return err
 	}
@@ -133,7 +169,7 @@ func (plan *patchPlan) moveFile(file *pendingFile, source, destination string) e
 	if _, ok := plan.files[dest]; ok {
 		return fmt.Errorf("duplicate patch target %s", destination)
 	}
-	if _, err := os.Lstat(dest); err == nil {
+	if _, err := plan.root.Lstat(dest); err == nil {
 		return fmt.Errorf("cannot move to %s: file already exists", destination)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("inspect %s: %w", destination, err)
@@ -145,17 +181,17 @@ func (plan *patchPlan) moveFile(file *pendingFile, source, destination string) e
 }
 
 func (plan *patchPlan) loadFile(rel string) (*pendingFile, error) {
-	abs, err := securePatchPath(plan.root, rel)
+	path, err := securePatchPath(plan.rootPath, rel)
 	if err != nil {
 		return nil, err
 	}
-	if file, ok := plan.files[abs]; ok {
+	if file, ok := plan.files[path]; ok {
 		if file.deleted {
 			return nil, fmt.Errorf("%s was already deleted in this patch", rel)
 		}
 		return file, nil
 	}
-	info, err := os.Lstat(abs)
+	info, err := plan.root.Lstat(path)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", rel, err)
 	}
@@ -168,16 +204,52 @@ func (plan *patchPlan) loadFile(rel string) (*pendingFile, error) {
 	if info.Size() > maxPatchFileBytes {
 		return nil, fmt.Errorf("%s exceeds the %d byte patch limit", rel, maxPatchFileBytes)
 	}
-	content, err := os.ReadFile(abs)
+	content, err := plan.root.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", rel, err)
 	}
-	file := &pendingFile{path: abs, content: string(content), mode: info.Mode().Perm(), originalExists: true}
-	plan.files[abs] = file
+	file := &pendingFile{
+		path: path, content: string(content), originalContent: string(content),
+		mode: info.Mode().Perm(), originalExists: true,
+	}
+	plan.files[path] = file
 	return file, nil
 }
 
 func (plan *patchPlan) commit() error {
+	return plan.commitWithIO(atomicWriteRootFile, (*os.Root).Remove)
+}
+
+func (plan *patchPlan) commitWithIO(write patchWriteFunc, remove patchRemoveFunc) error {
+	actions, err := plan.commitActions()
+	if err != nil {
+		return err
+	}
+	if err := plan.checkCurrentFiles(); err != nil {
+		return err
+	}
+	applied := make([]string, 0, len(actions))
+	for index, action := range actions {
+		var actionErr error
+		switch action.kind {
+		case "write":
+			actionErr = write(plan.root, action.file.path, []byte(action.file.content), action.file.mode)
+		case "delete":
+			actionErr = remove(plan.root, action.file.path)
+		}
+		if actionErr != nil {
+			name := action.String()
+			return &patchCommitError{
+				cause: fmt.Errorf("%s: %w", name, actionErr), applied: applied, failed: name,
+				pending: patchActionNames(actions[index+1:]),
+			}
+		}
+		applied = append(applied, action.String())
+	}
+	return nil
+}
+
+func (plan *patchPlan) commitActions() ([]patchAction, error) {
 	var writes, deletes []*pendingFile
 	for _, file := range plan.files {
 		if file.deleted {
@@ -190,17 +262,73 @@ func (plan *patchPlan) commit() error {
 	}
 	sort.Slice(writes, func(i, j int) bool { return writes[i].path < writes[j].path })
 	sort.Slice(deletes, func(i, j int) bool { return deletes[i].path < deletes[j].path })
+	writeSet := make(map[string]bool, len(writes))
 	for _, file := range writes {
-		if err := atomicWriteFile(file.path, []byte(file.content), file.mode); err != nil {
-			return err
+		writeSet[file.path] = true
+	}
+	for _, file := range writes {
+		for parent := filepath.Dir(file.path); parent != "."; parent = filepath.Dir(parent) {
+			if writeSet[parent] {
+				return nil, fmt.Errorf("patch writes both file %s and its descendant %s", parent, file.path)
+			}
 		}
 	}
+	actions := make([]patchAction, 0, len(writes)+len(deletes))
+	for _, file := range writes {
+		actions = append(actions, patchAction{kind: "write", file: file})
+	}
 	for _, file := range deletes {
-		if err := os.Remove(file.path); err != nil {
-			return fmt.Errorf("delete %s: %w", file.path, err)
+		actions = append(actions, patchAction{kind: "delete", file: file})
+	}
+	return actions, nil
+}
+
+func (plan *patchPlan) checkCurrentFiles() error {
+	paths := make([]string, 0, len(plan.files))
+	for path, file := range plan.files {
+		if file.originalExists || !file.deleted {
+			paths = append(paths, path)
+		}
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		file := plan.files[path]
+		if !file.originalExists {
+			if _, err := plan.root.Lstat(path); err == nil {
+				return fmt.Errorf("patch target changed before commit: %s now exists", path)
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("inspect %s before commit: %w", path, err)
+			}
+			continue
+		}
+		info, err := plan.root.Lstat(path)
+		if err != nil {
+			return fmt.Errorf("inspect %s before commit: %w", path, err)
+		}
+		if !info.Mode().IsRegular() || info.Mode().Perm() != file.mode {
+			return fmt.Errorf("patch source changed before commit: %s", path)
+		}
+		content, err := plan.root.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read %s before commit: %w", path, err)
+		}
+		if string(content) != file.originalContent {
+			return fmt.Errorf("patch source changed before commit: %s", path)
 		}
 	}
 	return nil
+}
+
+func (action patchAction) String() string {
+	return action.kind + " " + action.file.path
+}
+
+func patchActionNames(actions []patchAction) []string {
+	names := make([]string, 0, len(actions))
+	for _, action := range actions {
+		names = append(names, action.String())
+	}
+	return names
 }
 
 type patchParser struct {
@@ -451,7 +579,58 @@ func securePatchPath(root, rel string) (string, error) {
 		}
 		parent = next
 	}
-	return abs, nil
+	return clean, nil
+}
+
+func atomicWriteRootFile(root *os.Root, path string, content []byte, mode os.FileMode) error {
+	dir := filepath.Dir(path)
+	if err := root.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create directory for %s: %w", path, err)
+	}
+	var tmp *os.File
+	var tmpPath string
+	for range 100 {
+		var suffix [12]byte
+		if _, err := rand.Read(suffix[:]); err != nil {
+			return fmt.Errorf("create temporary name for %s: %w", path, err)
+		}
+		tmpPath = filepath.Join(dir, ".mai-"+hex.EncodeToString(suffix[:]))
+		var err error
+		tmp, err = root.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("create temporary file for %s: %w", path, err)
+		}
+	}
+	if tmp == nil {
+		return fmt.Errorf("create temporary file for %s: too many name conflicts", path)
+	}
+	keep := false
+	defer func() {
+		_ = tmp.Close()
+		if !keep {
+			_ = root.Remove(tmpPath)
+		}
+	}()
+	if err := tmp.Chmod(mode); err != nil {
+		return fmt.Errorf("set mode for %s: %w", path, err)
+	}
+	if _, err := tmp.Write(content); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("sync %s: %w", path, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close %s: %w", path, err)
+	}
+	if err := root.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("replace %s: %w", path, err)
+	}
+	keep = true
+	return nil
 }
 
 func atomicWriteFile(path string, content []byte, mode os.FileMode) error {

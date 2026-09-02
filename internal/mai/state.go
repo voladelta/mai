@@ -191,20 +191,24 @@ func saveJSON(path string, value any) error {
 }
 
 func repairInterruptedToolCalls(sess *session) error {
-	pending := make(map[string]bool)
+	pending := make(map[string]functionCall)
 	var order []string
 	for _, raw := range sess.History {
 		var item struct {
 			Type   string `json:"type"`
 			CallID string `json:"call_id"`
+			Name   string `json:"name"`
 		}
 		if err := json.Unmarshal(raw, &item); err != nil {
 			return fmt.Errorf("parse saved history: %w", err)
 		}
 		switch item.Type {
 		case "function_call":
-			if item.CallID != "" && !pending[item.CallID] {
-				pending[item.CallID] = true
+			if item.CallID != "" {
+				if _, exists := pending[item.CallID]; exists {
+					continue
+				}
+				pending[item.CallID] = functionCall{CallID: item.CallID, Name: item.Name}
 				order = append(order, item.CallID)
 			}
 		case "function_call_output":
@@ -212,13 +216,23 @@ func repairInterruptedToolCalls(sess *session) error {
 		}
 	}
 	for _, callID := range order {
-		if !pending[callID] {
+		call, exists := pending[callID]
+		if !exists {
 			continue
+		}
+		recovery := map[string]any{
+			"outcome":     "unknown",
+			"error":       "the previous mai process stopped before this tool call output was saved; the tool outcome is unknown",
+			"instruction": interruptedToolInstruction(call.Name),
+		}
+		recoveryJSON, err := json.Marshal(recovery)
+		if err != nil {
+			return err
 		}
 		output, err := json.Marshal(map[string]any{
 			"type":    "function_call_output",
 			"call_id": callID,
-			"output":  `{"ok":false,"error":"the previous mai process stopped before this tool call completed; reconsider before retrying"}`,
+			"output":  string(recoveryJSON),
 		})
 		if err != nil {
 			return err
@@ -226,6 +240,17 @@ func repairInterruptedToolCalls(sess *session) error {
 		sess.History = append(sess.History, output)
 	}
 	return nil
+}
+
+func interruptedToolInstruction(name string) string {
+	switch name {
+	case "apply_patch":
+		return "Inspect the repository and reconcile the requested patch with the current files before you retry apply_patch."
+	case "bash":
+		return "Inspect the command effects. Do not repeat a command that can have non-idempotent effects without user confirmation."
+	default:
+		return "Inspect the relevant state before you retry the tool."
+	}
 }
 
 func newSessionID() (string, error) {

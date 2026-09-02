@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -76,6 +78,48 @@ func TestRunBashRejectsApprovalWhenInputIsUnavailable(t *testing.T) {
 	})
 	if !strings.Contains(raw, "rm approval required") {
 		t.Fatalf("unexpected result: %s", raw)
+	}
+}
+
+func TestRunBashDoesNotExecutePrefixedExternalRMWithoutApproval(t *testing.T) {
+	root := t.TempDir()
+	for _, prefix := range []string{"!", "time", "exec"} {
+		t.Run(prefix, func(t *testing.T) {
+			outside := t.TempDir()
+			target := filepath.Join(outside, "keep.txt")
+			if err := os.WriteFile(target, []byte("keep"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			raw := runBash(context.Background(), bashRequest{
+				Command: prefix + " rm -f " + target,
+				CWD:     root, RepoRoot: root,
+			})
+			if !strings.Contains(raw, "rm approval required") {
+				t.Fatalf("unexpected result: %s", raw)
+			}
+			if _, err := os.Stat(target); err != nil {
+				t.Fatalf("rm command ran without approval: %v", err)
+			}
+		})
+	}
+}
+
+func TestRunBashDoesNotExecuteUnclassifiedRMWithoutApproval(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	target := filepath.Join(outside, "keep.txt")
+	if err := os.WriteFile(target, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	raw := runBash(context.Background(), bashRequest{
+		Command: "nice -n 1 rm -f " + target,
+		CWD:     root, RepoRoot: root,
+	})
+	if !strings.Contains(raw, "rm approval required") {
+		t.Fatalf("unexpected result: %s", raw)
+	}
+	if _, err := os.Stat(target); err != nil {
+		t.Fatalf("rm command ran without approval: %v", err)
 	}
 }
 

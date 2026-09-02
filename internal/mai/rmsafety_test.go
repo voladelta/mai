@@ -44,11 +44,44 @@ func TestWrappedRMInsideRepositoryDoesNotNeedApproval(t *testing.T) {
 	commands := []string{
 		"sudo -n rm -rf build",
 		"env MODE=test command rm -- ./tmp",
+		"! rm -f ./missing",
+		"time rm -f ./missing",
+		"exec rm -f ./missing",
 		"printf done && rm 'quoted path'",
 	}
 	for _, command := range commands {
 		if required, reason := requiresRMApproval(command, root, root); required {
 			t.Fatalf("%q unexpectedly needs approval: %s", command, reason)
+		}
+	}
+}
+
+func TestShellPrefixesDoNotBypassExternalRMApproval(t *testing.T) {
+	root := t.TempDir()
+	for _, command := range []string{
+		"! rm -rf /tmp/mai-outside",
+		"time rm -rf /tmp/mai-outside",
+		"exec rm -rf /tmp/mai-outside",
+		"exec -a remove rm -rf /tmp/mai-outside",
+		"exec -a X=y rm -rf /tmp/mai-outside",
+		"sudo -u root rm -rf /tmp/mai-outside",
+		"env -u TARGET rm -rf /tmp/mai-outside",
+	} {
+		if required, reason := requiresRMApproval(command, root, root); !required {
+			t.Errorf("%q did not require approval; reason=%q", command, reason)
+		}
+	}
+}
+
+func TestUnclassifiedRMExecutionNeedsApproval(t *testing.T) {
+	root := t.TempDir()
+	for _, command := range []string{
+		"nice -n 1 rm -rf /tmp/mai-outside",
+		"timeout 5 rm -rf /tmp/mai-outside",
+		"sh -c 'rm -rf /tmp/mai-outside'",
+	} {
+		if required, reason := requiresRMApproval(command, root, root); !required {
+			t.Errorf("%q did not require approval; reason=%q", command, reason)
 		}
 	}
 }

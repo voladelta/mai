@@ -29,7 +29,11 @@ func requiresRMApproval(command, cwd, repoRoot string) (bool, string) {
 		return true, "rm appears with command substitution"
 	}
 
-	for _, invocation := range findRMInvocations(tokens) {
+	invocations, unclassified := findRMInvocations(tokens)
+	if unclassified {
+		return true, "rm appears after a command that could not be analyzed safely"
+	}
+	for _, invocation := range invocations {
 		if reason := rmApprovalReason(invocation, cwd, repoRoot); reason != "" {
 			return true, reason
 		}
@@ -37,16 +41,20 @@ func requiresRMApproval(command, cwd, repoRoot string) (bool, string) {
 	return false, ""
 }
 
-func findRMInvocations(tokens []shellToken) []rmInvocation {
+func findRMInvocations(tokens []shellToken) ([]rmInvocation, bool) {
 	var invocations []rmInvocation
 	commandStart := true
 	wrapped := false
+	wrapper := ""
+	wrapperArgument := false
 	directoryMayHaveChanged := false
 	for i := 0; i < len(tokens); i++ {
 		tok := tokens[i]
 		if tok.op {
 			commandStart = true
 			wrapped = false
+			wrapper = ""
+			wrapperArgument = false
 			continue
 		}
 		if tok.text == "then" || tok.text == "do" || tok.text == "else" {
@@ -56,20 +64,29 @@ func findRMInvocations(tokens []shellToken) []rmInvocation {
 		if !commandStart {
 			continue
 		}
+		if wrapperArgument {
+			wrapperArgument = false
+			continue
+		}
 		if isAssignment(tok.text) {
 			continue
 		}
 		base := filepath.Base(tok.text)
 		if isCommandWrapper(base) {
 			wrapped = true
+			wrapper = base
 			continue
 		}
 		if wrapped && strings.HasPrefix(tok.text, "-") {
+			wrapperArgument = wrapperOptionNeedsArgument(wrapper, tok.text)
 			continue
 		}
 		if base != "rm" {
 			if changesDirectory(base) {
 				directoryMayHaveChanged = true
+			}
+			if base != "printf" && containsRMWord(shellCommandArgs(tokens[i+1:])) {
+				return invocations, true
 			}
 			commandStart = false
 			continue
@@ -80,12 +97,42 @@ func findRMInvocations(tokens []shellToken) []rmInvocation {
 		})
 		commandStart = false
 	}
-	return invocations
+	return invocations, false
+}
+
+func containsRMWord(tokens []shellToken) bool {
+	for _, token := range tokens {
+		if token.op {
+			continue
+		}
+		for _, word := range strings.Fields(token.text) {
+			word = strings.Trim(word, ";|&()")
+			if filepath.Base(word) == "rm" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func wrapperOptionNeedsArgument(wrapper, option string) bool {
+	switch wrapper {
+	case "exec":
+		return option == "-a"
+	case "env":
+		return option == "-u" || option == "--unset" || option == "-C" || option == "--chdir" || option == "-S" || option == "--split-string"
+	case "sudo":
+		switch option {
+		case "-C", "--close-from", "-D", "--chdir", "-g", "--group", "-h", "--host", "-p", "--prompt", "-R", "--chroot", "-r", "--role", "-T", "--command-timeout", "-t", "--type", "-U", "--other-user", "-u", "--user":
+			return true
+		}
+	}
+	return false
 }
 
 func isCommandWrapper(command string) bool {
 	switch command {
-	case "sudo", "command", "builtin", "nohup", "env":
+	case "!", "sudo", "command", "builtin", "nohup", "env", "time", "exec":
 		return true
 	default:
 		return false
