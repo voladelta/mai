@@ -82,7 +82,7 @@ Use `-e` to choose the reasoning effort:
 - `x` means extra high
 - `max` means maximum
 
-The first run uses `luna` with `max` effort. An explicit `-m` or `-e` value only
+The first run uses `luna` with medium effort. An explicit `-m` or `-e` value only
 applies to that task. The saved task keeps those values when you use `--last`.
 
 You can use these options with a new or saved task:

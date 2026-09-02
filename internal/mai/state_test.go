@@ -8,6 +8,16 @@ import (
 	"testing"
 )
 
+func TestLoadConfigUsesMediumDefault(t *testing.T) {
+	cfg, err := loadConfig(filepath.Join(t.TempDir(), "missing.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Model != "luna" || cfg.Effort != "m" {
+		t.Fatalf("default config = %#v, want luna/medium", cfg)
+	}
+}
+
 func TestSaveJSONUsesStatePermissions(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "state")
 	t.Setenv("MAI_STATE_DIR", dir)

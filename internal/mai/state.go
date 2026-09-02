@@ -128,7 +128,7 @@ func migrateFile(source, destination string) error {
 }
 
 func loadConfig(path string) (config, error) {
-	out := config{Model: "luna", Effort: "max"}
+	out := config{Model: "luna", Effort: "m"}
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return out, nil
