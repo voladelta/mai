@@ -238,7 +238,8 @@ func TestDirectSubagentUsesConfiguredRoleAndDisablesSpawn(t *testing.T) {
 	instructions, _ := body["instructions"].(string)
 	if !strings.Contains(instructions, "Custom agent role: repo_scout") ||
 		!strings.Contains(instructions, "Instructions for repo_scout") ||
-		strings.Contains(instructions, "Available custom agents:") {
+		strings.Contains(instructions, "Available custom agents:") ||
+		strings.Contains(instructions, "Available skills:") {
 		t.Fatalf("request instructions = %s", instructions)
 	}
 	tools, _ := body["tools"].([]any)

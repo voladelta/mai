@@ -13,9 +13,9 @@ The agent has 5 tools:
 - `read_skill_file` loads a required supporting file from that skill
 - `spawn_subagent` runs one installed custom agent and returns its final output
 
-Skills are read only from `~/.agents/skills`. Each request includes eligible
-skill names and descriptions in an 8,000-character catalog, then loads a complete
-`SKILL.md` only when needed.
+Skills are read only from `~/.agents/skills`. Each main-agent request includes
+all eligible skill names and descriptions, then loads a complete `SKILL.md` only
+when needed. Each skill description must be 1,024 characters or fewer.
 Set `policy.allow_implicit_invocation` to `false` in `agents/openai.yaml` to hide
 a skill from automatic selection; an explicit `$skill-name` still loads it.
 Images use typed image output; other binary files are rejected.
@@ -34,7 +34,9 @@ mai --subagent repo_scout "map the parser"
 
 This mode uses the model, effort, and developer instructions from
 `repo_scout.toml`. It implies `--no-input` and cannot be combined with
-`--persist`, `--last`, `--model`, or `--effort`.
+`--persist`, `--last`, `--model`, or `--effort`. A custom subagent does not
+receive the general skill catalog. Its developer instructions must identify any
+required skills.
 
 `mai` uses server-sent events (SSE). The Go standard library provides everything
 it needs, so the project has no third-party dependencies.

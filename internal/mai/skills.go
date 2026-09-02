@@ -17,8 +17,8 @@ import (
 )
 
 const (
-	maxSkillFileBytes    = 2 << 20
-	maxSkillCatalogChars = 8_000
+	maxSkillFileBytes        = 2 << 20
+	maxSkillDescriptionChars = 1_024
 )
 
 var explicitSkillPattern = regexp.MustCompile(`\$([a-z][a-z0-9-]*)`)
@@ -75,13 +75,7 @@ func buildSkillContext(root, userPrompt string) (skillContext, error) {
 			visible = append(visible, skill)
 		}
 	}
-	catalog, truncated, omitted := renderSkillCatalog(visible)
-	if truncated {
-		warnings = append(warnings, "skill descriptions were shortened to fit the 8000-character catalog limit")
-	}
-	if omitted > 0 {
-		warnings = append(warnings, fmt.Sprintf("%d skills were omitted from the model-visible catalog because it exceeded 8000 characters", omitted))
-	}
+	catalog := renderSkillCatalog(visible)
 
 	var explicit strings.Builder
 	for _, mention := range explicitSkillMentions(userPrompt) {
@@ -275,67 +269,12 @@ func matchingSkills(skills []skillSummary, mention string) []skillSummary {
 	return nil
 }
 
-func renderSkillCatalog(skills []skillSummary) (catalog string, truncated bool, omitted int) {
-	if len(skills) == 0 {
-		return "", false, 0
-	}
-	if full := renderSkillLines(skills, -1); len([]rune(full)) <= maxSkillCatalogChars {
-		return full, false, 0
-	}
-
-	low, high := 0, 0
-	for _, skill := range skills {
-		high = max(high, len([]rune(skill.Description)))
-	}
-	if minimum := renderSkillLines(skills, 0); len([]rune(minimum)) <= maxSkillCatalogChars {
-		for low < high {
-			mid := low + (high-low+1)/2
-			if len([]rune(renderSkillLines(skills, mid))) <= maxSkillCatalogChars {
-				low = mid
-			} else {
-				high = mid - 1
-			}
-		}
-		return renderSkillLines(skills, low), true, 0
-	}
-
-	var lines []string
-	used := 0
-	for _, skill := range skills {
-		line := renderSkillLine(skill, 0)
-		cost := len([]rune(line))
-		if len(lines) > 0 {
-			cost++
-		}
-		if used+cost > maxSkillCatalogChars {
-			break
-		}
-		lines = append(lines, line)
-		used += cost
-	}
-	return strings.Join(lines, "\n"), true, len(skills) - len(lines)
-}
-
-func renderSkillLines(skills []skillSummary, descriptionLimit int) string {
+func renderSkillCatalog(skills []skillSummary) string {
 	lines := make([]string, 0, len(skills))
 	for _, skill := range skills {
-		lines = append(lines, renderSkillLine(skill, descriptionLimit))
+		lines = append(lines, fmt.Sprintf("- %s: %s (id: %s)", skill.Name, skill.Description, skill.ID))
 	}
 	return strings.Join(lines, "\n")
-}
-
-func renderSkillLine(skill skillSummary, descriptionLimit int) string {
-	if descriptionLimit == 0 {
-		return fmt.Sprintf("- %s (id: %s)", skill.Name, skill.ID)
-	}
-	description := skill.Description
-	if descriptionLimit > 0 {
-		runes := []rune(description)
-		if len(runes) > descriptionLimit {
-			description = string(runes[:descriptionLimit]) + "…"
-		}
-	}
-	return fmt.Sprintf("- %s: %s (id: %s)", skill.Name, description, skill.ID)
 }
 
 func readSkill(root, id string) (skillFileResult, error) {
@@ -508,6 +447,9 @@ func (matter skillFrontMatter) values() (string, string, error) {
 	description := strings.TrimSpace(matter.description)
 	if name == "" || description == "" {
 		return "", "", errors.New("SKILL.md front matter requires name and description")
+	}
+	if len([]rune(description)) > maxSkillDescriptionChars {
+		return "", "", fmt.Errorf("SKILL.md front matter description exceeds %d characters", maxSkillDescriptionChars)
 	}
 	return name, description, nil
 }

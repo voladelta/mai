@@ -118,6 +118,9 @@ func (a *agent) loadSubagentInstructions() string {
 }
 
 func (a *agent) loadSkillInstructions(userPrompt string) string {
+	if a.customAgent != nil {
+		return ""
+	}
 	if a.skillsError != nil {
 		fmt.Fprintf(a.stderr, "mai: skills unavailable: %v\n", a.skillsError)
 		return ""

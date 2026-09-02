@@ -77,24 +77,29 @@ func TestUnknownDollarNameIsNotTreatedAsMissingSkill(t *testing.T) {
 	}
 }
 
-func TestSkillCatalogFitsBudgetByShorteningDescriptions(t *testing.T) {
-	var skills []skillSummary
-	for i := 0; i < 40; i++ {
-		skills = append(skills, skillSummary{
-			ID: fmt.Sprintf("skill-%02d", i), Name: fmt.Sprintf("skill-%02d", i),
-			Description: strings.Repeat("description ", 40), AllowImplicit: true,
-		})
+func TestSkillCatalogIncludesEveryValidDescription(t *testing.T) {
+	root := testSkillRoot(t)
+	description := strings.Repeat("d", maxSkillDescriptionChars)
+	for i := 0; i < 12; i++ {
+		id := fmt.Sprintf("skill-%02d", i)
+		writeTestSkill(t, root, id, id, description)
 	}
-	catalog, truncated, omitted := renderSkillCatalog(skills)
-	if !truncated || omitted != 0 {
-		t.Fatalf("unexpected catalog result: truncated=%v omitted=%d", truncated, omitted)
+	result, err := buildSkillContext(root, "inspect the repository")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if chars := len([]rune(catalog)); chars > maxSkillCatalogChars {
-		t.Fatalf("catalog has %d characters, limit is %d", chars, maxSkillCatalogChars)
+	if len(result.Warnings) != 0 {
+		t.Fatalf("unexpected catalog warnings: %#v", result.Warnings)
 	}
-	for _, skill := range skills {
-		if !strings.Contains(catalog, "(id: "+skill.ID+")") {
-			t.Fatalf("catalog omitted %s despite enough minimum-line space", skill.ID)
+	catalog := result.Instructions
+	if chars := len([]rune(catalog)); chars <= 8_000 {
+		t.Fatalf("test catalog is too small to prove removal of the old limit: %d characters", chars)
+	}
+	for i := 0; i < 12; i++ {
+		id := fmt.Sprintf("skill-%02d", i)
+		line := fmt.Sprintf("- %s: %s (id: %s)", id, description, id)
+		if !strings.Contains(catalog, line) {
+			t.Fatalf("catalog omitted or shortened %s", id)
 		}
 	}
 }
@@ -223,6 +228,17 @@ func TestParseSkillFrontMatterSupportsFoldedDescription(t *testing.T) {
 	}
 	if name != "folded" || description != "First line. Second line." {
 		t.Fatalf("unexpected front matter: %q %q", name, description)
+	}
+}
+
+func TestParseSkillFrontMatterEnforcesDescriptionLimit(t *testing.T) {
+	valid := strings.Repeat("a", maxSkillDescriptionChars)
+	if _, description, err := parseSkillFrontMatter("---\nname: valid\ndescription: " + valid + "\n---\n"); err != nil || description != valid {
+		t.Fatalf("valid description was rejected: length=%d err=%v", len([]rune(description)), err)
+	}
+	tooLong := strings.Repeat("a", maxSkillDescriptionChars+1)
+	if _, _, err := parseSkillFrontMatter("---\nname: invalid\ndescription: " + tooLong + "\n---\n"); err == nil || !strings.Contains(err.Error(), "1024") {
+		t.Fatalf("overlong description error = %v", err)
 	}
 }
 
