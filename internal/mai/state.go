@@ -21,13 +21,14 @@ type taskConfig struct {
 }
 
 type session struct {
-	Version  int               `json:"version"`
-	ID       string            `json:"id"`
-	CWD      string            `json:"cwd"`
-	RepoRoot string            `json:"repo_root"`
-	Model    string            `json:"model"`
-	Effort   string            `json:"effort"`
-	History  []json.RawMessage `json:"history"`
+	Version       int               `json:"version"`
+	ID            string            `json:"id"`
+	CWD           string            `json:"cwd"`
+	RepoRoot      string            `json:"repo_root"`
+	Model         string            `json:"model"`
+	Effort        string            `json:"effort"`
+	ContextTokens int64             `json:"context_tokens,omitempty"`
+	History       []json.RawMessage `json:"history"`
 }
 
 type sessionPaths struct {
@@ -147,7 +148,7 @@ func loadSession(path string) (*session, error) {
 	if err := json.Unmarshal(b, &out); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
-	if out.Version != stateVersion || !validSessionID(out.ID) || out.CWD == "" || out.RepoRoot == "" {
+	if out.Version != stateVersion || !validSessionID(out.ID) || out.CWD == "" || out.RepoRoot == "" || out.ContextTokens < 0 {
 		return nil, fmt.Errorf("saved session is incomplete or unsupported")
 	}
 	if _, ok := modelIDs[out.Model]; !ok {
@@ -155,6 +156,9 @@ func loadSession(path string) (*session, error) {
 	}
 	if _, ok := effortIDs[out.Effort]; !ok {
 		return nil, fmt.Errorf("saved session has invalid effort %q", out.Effort)
+	}
+	if out.ContextTokens == 0 && len(out.History) > 0 {
+		out.ContextTokens = estimateHistoryTokens(out.History)
 	}
 	return &out, nil
 }
@@ -240,9 +244,41 @@ func repairInterruptedToolCalls(sess *session) error {
 		if err != nil {
 			return err
 		}
-		sess.History = append(sess.History, output)
+		sess.appendEstimatedHistory(output)
 	}
 	return nil
+}
+
+func (sess *session) appendEstimatedHistory(items ...json.RawMessage) {
+	sess.History = append(sess.History, items...)
+	for _, item := range items {
+		sess.ContextTokens += estimateHistoryItemTokens(item)
+	}
+}
+
+func estimateHistoryTokens(items []json.RawMessage) int64 {
+	var total int64
+	for _, item := range items {
+		total += estimateHistoryItemTokens(item)
+	}
+	return total
+}
+
+func estimateHistoryItemTokens(item json.RawMessage) int64 {
+	var envelope struct {
+		Type             string `json:"type"`
+		EncryptedContent string `json:"encrypted_content"`
+	}
+	if json.Unmarshal(item, &envelope) == nil &&
+		(envelope.Type == "compaction" || envelope.Type == "compaction_summary") {
+		// Codex estimates the decoded encrypted payload, less fixed envelope overhead.
+		bytes := int64(len(envelope.EncryptedContent))*3/4 - 650
+		if bytes < 0 {
+			bytes = 0
+		}
+		return (bytes + 3) / 4
+	}
+	return (int64(len(item)) + 3) / 4
 }
 
 func interruptedToolInstruction(name string) string {

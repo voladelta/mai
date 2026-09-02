@@ -13,6 +13,11 @@ import (
 
 const maxAgentTurns = 64
 
+const (
+	autoCompactPercent        = 90
+	retainedMessageTokenLimit = 64_000
+)
+
 type agent struct {
 	client      *codexClient
 	stdout      io.Writer
@@ -49,6 +54,9 @@ func (a *agent) run(ctx context.Context, sess *session, userPrompt string) error
 		fmt.Fprintln(a.stderr, "→ thinking")
 	}
 	instructions := systemInstructions(sess, a.loadSkillInstructions(userPrompt))
+	if sess.ContextTokens == 0 {
+		sess.ContextTokens = estimateHistoryTokens(sess.History) + (int64(len(instructions))+3)/4
+	}
 	for turn := 0; turn < maxAgentTurns; turn++ {
 		if interactive && turn > 0 {
 			fmt.Fprintln(a.stderr, "→ thinking")
@@ -83,6 +91,9 @@ func (a *agent) loadSkillInstructions(userPrompt string) string {
 }
 
 func (a *agent) runTurn(ctx context.Context, sess *session, instructions string) (bool, error) {
+	if err := a.compactIfNeeded(ctx, sess, instructions); err != nil {
+		return false, err
+	}
 	result, err := a.client.stream(ctx, sess, instructions)
 	if result.wrote {
 		fmt.Fprintln(a.stdout)
@@ -94,6 +105,11 @@ func (a *agent) runTurn(ctx context.Context, sess *session, instructions string)
 		return false, errors.New("Codex response contained no output items")
 	}
 	sess.History = append(sess.History, result.items...)
+	if result.totalTokens > 0 {
+		sess.ContextTokens = result.totalTokens
+	} else {
+		sess.ContextTokens += estimateHistoryTokens(result.items)
+	}
 	if a.sessionPath != "" {
 		if err := saveJSON(a.sessionPath, sess); err != nil {
 			return false, fmt.Errorf("save assistant response: %w", err)
@@ -112,6 +128,57 @@ func (a *agent) runTurn(ctx context.Context, sess *session, instructions string)
 	return false, nil
 }
 
+func (a *agent) compactIfNeeded(ctx context.Context, sess *session, instructions string) error {
+	contextWindow := modelContextWindows[sess.Model]
+	if contextWindow == 0 || sess.ContextTokens < contextWindow*autoCompactPercent/100 {
+		return nil
+	}
+	compaction, err := a.client.compact(ctx, sess, instructions)
+	if err != nil {
+		return fmt.Errorf("compact conversation: %w", err)
+	}
+	history, err := compactedHistory(sess.History, compaction)
+	if err != nil {
+		return err
+	}
+	next := *sess
+	next.History = history
+	next.ContextTokens = estimateHistoryTokens(history) + (int64(len(instructions))+3)/4
+	if a.sessionPath != "" {
+		if err := saveJSON(a.sessionPath, &next); err != nil {
+			return fmt.Errorf("save compacted conversation: %w", err)
+		}
+	}
+	*sess = next
+	return nil
+}
+
+func compactedHistory(history []json.RawMessage, compaction json.RawMessage) ([]json.RawMessage, error) {
+	remaining := int64(retainedMessageTokenLimit)
+	retained := make([]json.RawMessage, 0, len(history)+1)
+	for i := len(history) - 1; i >= 0; i-- {
+		var item struct {
+			Role string `json:"role"`
+		}
+		if err := json.Unmarshal(history[i], &item); err != nil {
+			return nil, fmt.Errorf("parse history for compaction: %w", err)
+		}
+		if item.Role != "user" && item.Role != "developer" && item.Role != "system" {
+			continue
+		}
+		tokens := estimateHistoryItemTokens(history[i])
+		if tokens > remaining {
+			continue
+		}
+		remaining -= tokens
+		retained = append(retained, history[i])
+	}
+	for left, right := 0, len(retained)-1; left < right; left, right = left+1, right-1 {
+		retained[left], retained[right] = retained[right], retained[left]
+	}
+	return append(retained, compaction), nil
+}
+
 func (a *agent) executeCalls(ctx context.Context, sess *session, calls []functionCall) error {
 	for _, call := range calls {
 		output := a.executeTool(ctx, sess, call)
@@ -123,7 +190,7 @@ func (a *agent) executeCalls(ctx context.Context, sess *session, calls []functio
 		if err != nil {
 			return fmt.Errorf("encode tool output: %w", err)
 		}
-		sess.History = append(sess.History, item)
+		sess.appendEstimatedHistory(item)
 		if a.sessionPath != "" {
 			if err := saveJSON(a.sessionPath, sess); err != nil {
 				return fmt.Errorf("save tool output: %w", err)

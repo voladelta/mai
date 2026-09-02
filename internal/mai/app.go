@@ -222,7 +222,7 @@ func appendUserPrompt(sess *session, prompt string) error {
 	if err != nil {
 		return fmt.Errorf("encode prompt: %w", err)
 	}
-	sess.History = append(sess.History, userItem)
+	sess.appendEstimatedHistory(userItem)
 	return nil
 }
 

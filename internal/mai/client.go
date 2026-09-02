@@ -28,8 +28,9 @@ type codexClient struct {
 }
 
 type streamResult struct {
-	items []json.RawMessage
-	wrote bool
+	items       []json.RawMessage
+	wrote       bool
+	totalTokens int64
 }
 
 type sseEvent struct {
@@ -45,6 +46,11 @@ type sseResponse struct {
 	Status string            `json:"status"`
 	Error  json.RawMessage   `json:"error"`
 	Output []json.RawMessage `json:"output"`
+	Usage  *tokenUsage       `json:"usage"`
+}
+
+type tokenUsage struct {
+	TotalTokens int64 `json:"total_tokens"`
 }
 
 type sseCollector struct {
@@ -52,6 +58,7 @@ type sseCollector struct {
 	items    map[int]json.RawMessage
 	wrote    bool
 	terminal bool
+	tokens   int64
 }
 
 type httpStatusError struct {
@@ -79,11 +86,50 @@ func newCodexClient(stdout io.Writer, timeout time.Duration) *codexClient {
 }
 
 func (c *codexClient) stream(ctx context.Context, sess *session, instructions string) (streamResult, error) {
+	return c.withCredentials(func(creds credentials) (streamResult, error) {
+		return c.streamWithCredentials(ctx, sess, instructions, creds)
+	})
+}
+
+func (c *codexClient) compact(ctx context.Context, sess *session, instructions string) (json.RawMessage, error) {
+	result, err := c.withCredentials(func(creds credentials) (streamResult, error) {
+		return c.compactWithCredentials(ctx, sess, instructions, creds)
+	})
+	if err != nil {
+		return nil, err
+	}
+	var compaction json.RawMessage
+	for _, raw := range result.items {
+		var item struct {
+			Type             string `json:"type"`
+			EncryptedContent string `json:"encrypted_content"`
+		}
+		if err := json.Unmarshal(raw, &item); err != nil {
+			return nil, fmt.Errorf("parse Codex compaction output: %w", err)
+		}
+		if item.Type != "compaction" && item.Type != "compaction_summary" {
+			continue
+		}
+		if compaction != nil {
+			return nil, errors.New("Codex compaction returned more than one compaction item")
+		}
+		if item.EncryptedContent == "" {
+			return nil, errors.New("Codex compaction returned empty encrypted content")
+		}
+		compaction = raw
+	}
+	if compaction == nil {
+		return nil, fmt.Errorf("Codex compaction returned no compaction item in %d output items", len(result.items))
+	}
+	return compaction, nil
+}
+
+func (c *codexClient) withCredentials(request func(credentials) (streamResult, error)) (streamResult, error) {
 	first, err := loadCredentials()
 	if err != nil {
 		return streamResult{}, err
 	}
-	result, err := c.streamWithCredentials(ctx, sess, instructions, first)
+	result, err := request(first)
 	var statusErr *httpStatusError
 	if !errors.As(err, &statusErr) || statusErr.status != http.StatusUnauthorized {
 		return result, err
@@ -96,10 +142,14 @@ func (c *codexClient) stream(ctx context.Context, sess *session, instructions st
 	if sha256.Sum256([]byte(first.AccessToken)) == sha256.Sum256([]byte(second.AccessToken)) {
 		return streamResult{}, loginError(second.Source)
 	}
-	return c.streamWithCredentials(ctx, sess, instructions, second)
+	return request(second)
 }
 
 func (c *codexClient) streamWithCredentials(ctx context.Context, sess *session, instructions string, creds credentials) (streamResult, error) {
+	return c.requestWithCredentials(ctx, sess, instructions, creds, false)
+}
+
+func (c *codexClient) requestWithCredentials(ctx context.Context, sess *session, instructions string, creds credentials, compaction bool) (streamResult, error) {
 	body := map[string]any{
 		"model":               modelIDs[sess.Model],
 		"store":               false,
@@ -134,6 +184,10 @@ func (c *codexClient) streamWithCredentials(ctx context.Context, sess *session, 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("session-id", sess.ID)
 	req.Header.Set("x-client-request-id", sess.ID)
+	req.Header.Set("x-codex-beta-features", "remote_compaction_v2")
+	if compaction {
+		req.Header.Set("x-codex-turn-metadata", `{"request_kind":"compaction"}`)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -152,6 +206,18 @@ func (c *codexClient) streamWithCredentials(ctx context.Context, sess *session, 
 		return streamResult{}, fmt.Errorf("Codex request timed out after %s; use --timeout to change the limit", c.httpClient.Timeout)
 	}
 	return result, err
+}
+
+func (c *codexClient) compactWithCredentials(ctx context.Context, sess *session, instructions string, creds credentials) (streamResult, error) {
+	trigger, err := json.Marshal(map[string]string{"type": "compaction_trigger"})
+	if err != nil {
+		return streamResult{}, err
+	}
+	compactSession := *sess
+	compactSession.History = append(append([]json.RawMessage(nil), sess.History...), trigger)
+	quietClient := *c
+	quietClient.stdout = io.Discard
+	return quietClient.requestWithCredentials(ctx, &compactSession, instructions, creds, true)
 }
 
 func (c *codexClient) readSSE(r io.Reader) (streamResult, error) {
@@ -249,6 +315,9 @@ func (collector *sseCollector) complete(response *sseResponse) error {
 	if response.Status != "completed" {
 		return fmt.Errorf("Codex response ended with status %q: %s", response.Status, compactJSON(response.Error))
 	}
+	if response.Usage != nil {
+		collector.tokens = response.Usage.TotalTokens
+	}
 	return nil
 }
 
@@ -270,7 +339,7 @@ func (collector *sseCollector) result() streamResult {
 	for _, index := range indexes {
 		ordered = append(ordered, collector.items[index])
 	}
-	return streamResult{items: ordered, wrote: collector.wrote}
+	return streamResult{items: ordered, wrote: collector.wrote, totalTokens: collector.tokens}
 }
 
 func compactJSON(raw json.RawMessage) string {

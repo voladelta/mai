@@ -92,6 +92,26 @@ func TestSeparateSessionsUseSeparateFiles(t *testing.T) {
 	}
 }
 
+func TestLoadSessionEstimatesTokensForOlderState(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "session.json")
+	sess := session{
+		Version: stateVersion, ID: "01234567-89ab-cdef-0123-456789abcdef",
+		CWD: root, RepoRoot: root, Model: "luna", Effort: "m",
+		History: []json.RawMessage{json.RawMessage(`{"role":"user","content":"existing history"}`)},
+	}
+	if err := saveJSON(path, sess); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := loadSession(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ContextTokens == 0 {
+		t.Fatal("older session history did not receive a token estimate")
+	}
+}
+
 func TestSessionLockRejectsConcurrentOwner(t *testing.T) {
 	paths := projectSessionPaths(t.TempDir())
 	if err := prepareSessionPaths(paths); err != nil {

@@ -156,6 +156,12 @@ The saved history includes completed model output and encrypted reasoning state.
 `mai` sends a stable cache key for each task so compatible requests can reuse
 cached input.
 
+Mai tracks the active context size reported by the Codex backend. At 90% of the
+model context window, it sends a Codex V2 compaction request before the next
+model request. The compacted history keeps recent user messages and the encrypted
+compaction item. Persisted tasks save this replacement history before they
+continue.
+
 ## Safety
 
 `apply_patch` can only change files inside the repository. It rejects paths and

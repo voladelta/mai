@@ -202,6 +202,12 @@ var modelIDs = map[string]string{
 	"terra": "gpt-5.6-terra",
 }
 
+var modelContextWindows = map[string]int64{
+	"sol":   272_000,
+	"luna":  272_000,
+	"terra": 272_000,
+}
+
 var effortIDs = map[string]string{
 	"l":   "low",
 	"m":   "medium",
