@@ -1,5 +1,7 @@
 # mai
 
+![mai project banner](assets/mai-banner.png)
+
 `mai` is a small coding agent for macOS and Linux. It uses your existing Codex
 ChatGPT login, so you do not need an OpenAI API key.
 
