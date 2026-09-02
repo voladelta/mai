@@ -15,8 +15,8 @@ func TestParseOptionsInterspersed(t *testing.T) {
 		},
 		{
 			name: "long forms around prompt",
-			args: []string{"--model=terra", "hello", "--effort", "xhigh"},
-			want: options{prompt: "hello", model: "terra", effort: "x", modelExplicit: true, effortExplicit: true, timeout: defaultHTTPTimeout},
+			args: []string{"--model=terra", "hello", "--effort", "xhigh", "--persist"},
+			want: options{prompt: "hello", persist: true, model: "terra", effort: "x", modelExplicit: true, effortExplicit: true, timeout: defaultHTTPTimeout},
 		},
 		{
 			name: "end of options",
@@ -43,14 +43,11 @@ func TestParseOptionsRejectsInvalid(t *testing.T) {
 	if _, err := parseOptions([]string{"--last"}); err == nil {
 		t.Fatal("expected missing prompt error")
 	}
-	if _, err := parseOptions([]string{"--save-defaults"}); err == nil {
-		t.Fatal("expected missing default selection error")
+	if _, err := parseOptions([]string{"hello", "--last", "--persist"}); err == nil {
+		t.Fatal("expected conflicting persistence mode error")
 	}
-	if _, err := parseOptions([]string{"--last", "-m", "sol", "--save-defaults"}); err == nil {
-		t.Fatal("expected --last without prompt error")
-	}
-	if _, err := parseOptions([]string{"-m", "sol", "--save-defaults", "--timeout", "1m"}); err == nil {
-		t.Fatal("expected timeout without prompt error")
+	if _, err := parseOptions([]string{"hello", "--save-defaults"}); err == nil {
+		t.Fatal("expected removed global settings option to be rejected")
 	}
 	if _, err := parseOptions([]string{"hello", "--timeout", "never"}); err == nil {
 		t.Fatal("expected invalid timeout error")

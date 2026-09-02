@@ -54,19 +54,27 @@ Run `mai` from the repository you want it to work on:
 mai "add tests for the parser"
 ```
 
-Start a new task without `--last`. This replaces the saved task.
+Tasks are stateless by default. A normal run does not write mai settings or
+conversation history.
 
-Resume the saved task with `--last`:
+Use `--persist` to save a new task in the current project:
+
+```bash
+mai "add tests for the parser" --persist
+```
+
+Resume the current saved task in that project with `--last`:
 
 ```bash
 mai "now fix the failing test" --last
 ```
 
 `--last` restores the original working directory, model, effort and conversation
-history.
+history. Two processes cannot use the same saved task at the same time. Other
+saved tasks can run at the same time.
 
-Run `mai` without a prompt to show concise usage text and the current model and
-effort defaults. Run `mai --help` for all options.
+Run `mai` without a prompt to show concise usage text. Run `mai --help` for all
+options.
 
 ## Choose a model and effort
 
@@ -84,21 +92,14 @@ Use `-e` to choose the reasoning effort:
 - `x` means extra high
 - `max` means maximum
 
-The first run uses `luna` with medium effort. An explicit `-m` or `-e` value only
-applies to that task. The saved task keeps those values when you use `--last`.
+Each new task uses `luna` with medium effort unless you set `-m` or `-e`. The
+saved task keeps its values when you use `--last`.
 
 You can use these options with a new or saved task:
 
 ```bash
 mai "refactor this package" -m sol -e h
 mai "continue the refactor" --last -m terra -e max
-```
-
-Add `--save-defaults` to save an explicit model or effort for future tasks:
-
-```bash
-mai -m sol -e h --save-defaults
-mai "refactor this package" -m sol -e h --save-defaults
 ```
 
 ## Timeouts and interactive input
@@ -123,7 +124,7 @@ needs approval, `mai` rejects it instead of opening a terminal prompt.
 `CODEX_HOME` is not set.
 
 `mai` does not read `OPENAI_API_KEY`. It does not copy your Codex credentials
-into its configuration or state files.
+into its state files.
 
 If Codex stores credentials only in the system keychain, set this option in your
 Codex configuration:
@@ -134,18 +135,24 @@ cli_auth_credentials_store = "file"
 
 Run `codex login` again after you change the option.
 
-## Saved settings and tasks
+## Saved tasks
 
-`mai` follows the XDG Base Directory Specification. It stores its own data in 2
-files by default:
+`mai` has no global settings or session file. When you use `--persist`, it stores
+project-local state under the repository root:
 
-- `~/.config/mai/config.json` stores the default model and effort
-- `~/.local/state/mai/session.json` stores the single saved task and its conversation history
+- `.mai/current` contains the current session ID
+- `.mai/sessions/<session-id>.json` contains one task and its history
+- `.mai/locks/<session-id>.lock` prevents concurrent use of one task
 
-`XDG_CONFIG_HOME` and `XDG_STATE_HOME` change these base directories. If the XDG
-files do not exist, `mai` copies existing files from `~/.mai` and leaves the old
-files in place. State directories use permission mode `0700`. Both files use
-mode `0600`.
+For a directory outside Git, `.mai` is stored in the working directory. Mai
+creates `.mai/.gitignore` so Git does not add the saved state. State directories
+use permission mode `0700`. State files use mode `0600`.
+
+Each persisted task has a separate session file. Starting concurrent tasks does
+not replace their history. An atomic update to `current` selects the task that a
+later `--last` command will resume.
+
+Mai does not read or migrate the earlier global XDG state files.
 
 The saved history includes completed model output and encrypted reasoning state.
 `mai` sends a stable cache key for each task so compatible requests can reuse

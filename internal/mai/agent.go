@@ -94,8 +94,10 @@ func (a *agent) runTurn(ctx context.Context, sess *session, instructions string)
 		return false, errors.New("Codex response contained no output items")
 	}
 	sess.History = append(sess.History, result.items...)
-	if err := saveJSON(a.sessionPath, sess); err != nil {
-		return false, fmt.Errorf("save assistant response: %w", err)
+	if a.sessionPath != "" {
+		if err := saveJSON(a.sessionPath, sess); err != nil {
+			return false, fmt.Errorf("save assistant response: %w", err)
+		}
 	}
 	calls, err := extractFunctionCalls(result.items)
 	if err != nil {
@@ -122,8 +124,10 @@ func (a *agent) executeCalls(ctx context.Context, sess *session, calls []functio
 			return fmt.Errorf("encode tool output: %w", err)
 		}
 		sess.History = append(sess.History, item)
-		if err := saveJSON(a.sessionPath, sess); err != nil {
-			return fmt.Errorf("save tool output: %w", err)
+		if a.sessionPath != "" {
+			if err := saveJSON(a.sessionPath, sess); err != nil {
+				return fmt.Errorf("save tool output: %w", err)
+			}
 		}
 	}
 	return nil

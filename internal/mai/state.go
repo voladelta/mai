@@ -6,15 +6,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 )
 
 const stateVersion = 1
 
-type config struct {
-	Model  string `json:"model"`
-	Effort string `json:"effort"`
+type taskConfig struct {
+	Model  string
+	Effort string
 }
 
 type session struct {
@@ -27,131 +30,115 @@ type session struct {
 	History  []json.RawMessage `json:"history"`
 }
 
-type paths struct {
-	config        string
-	session       string
-	legacyConfig  string
-	legacySession string
+type sessionPaths struct {
+	dir      string
+	current  string
+	sessions string
+	locks    string
 }
 
-func statePaths() (paths, error) {
-	if dir := os.Getenv("MAI_STATE_DIR"); dir != "" {
-		dir = filepath.Clean(dir)
-		return paths{
-			config:  filepath.Join(dir, "config.json"),
-			session: filepath.Join(dir, "session.json"),
-		}, nil
+func projectSessionPaths(repoRoot string) sessionPaths {
+	dir := filepath.Join(repoRoot, ".mai")
+	return sessionPaths{
+		dir:      dir,
+		current:  filepath.Join(dir, "current"),
+		sessions: filepath.Join(dir, "sessions"),
+		locks:    filepath.Join(dir, "locks"),
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return paths{}, fmt.Errorf("find home directory: %w", err)
-	}
-	configHome := os.Getenv("XDG_CONFIG_HOME")
-	if configHome == "" {
-		configHome = filepath.Join(home, ".config")
-	} else if !filepath.IsAbs(configHome) {
-		return paths{}, errors.New("XDG_CONFIG_HOME must be an absolute path")
-	}
-	stateHome := os.Getenv("XDG_STATE_HOME")
-	if stateHome == "" {
-		stateHome = filepath.Join(home, ".local", "state")
-	} else if !filepath.IsAbs(stateHome) {
-		return paths{}, errors.New("XDG_STATE_HOME must be an absolute path")
-	}
-	legacyDir := filepath.Join(home, ".mai")
-	return paths{
-		config:        filepath.Join(configHome, "mai", "config.json"),
-		session:       filepath.Join(stateHome, "mai", "session.json"),
-		legacyConfig:  filepath.Join(legacyDir, "config.json"),
-		legacySession: filepath.Join(legacyDir, "session.json"),
-	}, nil
 }
 
-func migrateLegacyState(state paths) error {
-	if state.legacyConfig == "" {
-		return nil
+func prepareSessionPaths(paths sessionPaths) error {
+	for _, dir := range []string{paths.dir, paths.sessions, paths.locks} {
+		info, err := os.Lstat(dir)
+		if errors.Is(err, os.ErrNotExist) {
+			if err := os.Mkdir(dir, 0o700); err != nil {
+				return fmt.Errorf("create session directory: %w", err)
+			}
+		} else if err != nil {
+			return fmt.Errorf("inspect session directory: %w", err)
+		} else if !info.IsDir() {
+			return fmt.Errorf("session path is not a directory: %s", dir)
+		}
+		if err := os.Chmod(dir, 0o700); err != nil {
+			return fmt.Errorf("secure session directory: %w", err)
+		}
 	}
-	if err := migrateFile(state.legacyConfig, state.config); err != nil {
-		return fmt.Errorf("migrate %s: %w", state.legacyConfig, err)
-	}
-	if err := migrateFile(state.legacySession, state.session); err != nil {
-		return fmt.Errorf("migrate %s: %w", state.legacySession, err)
+	ignore := filepath.Join(paths.dir, ".gitignore")
+	if info, err := os.Lstat(ignore); errors.Is(err, os.ErrNotExist) {
+		if err := atomicWriteFile(ignore, []byte("*\n"), 0o600); err != nil {
+			return fmt.Errorf("create .mai/.gitignore: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("inspect .mai/.gitignore: %w", err)
+	} else if !info.Mode().IsRegular() {
+		return errors.New(".mai/.gitignore is not a regular file")
 	}
 	return nil
 }
 
-func migrateFile(source, destination string) error {
-	if _, err := os.Stat(destination); err == nil {
-		return nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	b, err := os.ReadFile(source)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	dir := filepath.Dir(destination)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	if err := os.Chmod(dir, 0o700); err != nil {
-		return err
-	}
-	temp, err := os.CreateTemp(dir, ".mai-migrate-*")
-	if err != nil {
-		return err
-	}
-	tempName := temp.Name()
-	defer os.Remove(tempName)
-	if err := temp.Chmod(0o600); err != nil {
-		temp.Close()
-		return err
-	}
-	if _, err := temp.Write(b); err != nil {
-		temp.Close()
-		return err
-	}
-	if err := temp.Sync(); err != nil {
-		temp.Close()
-		return err
-	}
-	if err := temp.Close(); err != nil {
-		return err
-	}
-	if err := os.Link(tempName, destination); err != nil && !errors.Is(err, os.ErrExist) {
-		return err
-	}
-	return nil
+func sessionPath(paths sessionPaths, id string) string {
+	return filepath.Join(paths.sessions, id+".json")
 }
 
-func loadConfig(path string) (config, error) {
-	out := config{Model: "luna", Effort: "m"}
-	b, err := os.ReadFile(path)
+func saveCurrentSession(paths sessionPaths, id string) error {
+	if err := atomicWriteFile(paths.current, []byte(id+"\n"), 0o600); err != nil {
+		return fmt.Errorf("save current session: %w", err)
+	}
+	return os.Chmod(paths.current, 0o600)
+}
+
+func loadCurrentSessionID(paths sessionPaths) (string, error) {
+	if info, err := os.Lstat(paths.dir); err == nil && !info.IsDir() {
+		return "", errors.New(".mai is not a directory")
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("inspect .mai: %w", err)
+	}
+	b, err := readRegularFile(paths.current)
 	if errors.Is(err, os.ErrNotExist) {
-		return out, nil
+		return "", errors.New("no saved task in this project; use --persist to save a new task")
 	}
 	if err != nil {
-		return out, fmt.Errorf("read config: %w", err)
+		return "", fmt.Errorf("read current session: %w", err)
 	}
-	if err := json.Unmarshal(b, &out); err != nil {
-		return out, fmt.Errorf("parse %s: %w", path, err)
+	id := strings.TrimSpace(string(b))
+	if !validSessionID(id) {
+		return "", errors.New("current session ID is invalid")
 	}
-	if _, ok := modelIDs[out.Model]; !ok {
-		return out, fmt.Errorf("config has invalid model %q", out.Model)
+	return id, nil
+}
+
+func validSessionID(id string) bool {
+	if len(id) != 36 || id[8] != '-' || id[13] != '-' || id[18] != '-' || id[23] != '-' {
+		return false
 	}
-	if _, ok := effortIDs[out.Effort]; !ok {
-		return out, fmt.Errorf("config has invalid effort %q", out.Effort)
+	_, err := hex.DecodeString(strings.ReplaceAll(id, "-", ""))
+	return err == nil
+}
+
+func acquireSessionLock(paths sessionPaths, id string) (*os.File, error) {
+	lockPath := filepath.Join(paths.locks, id+".lock")
+	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open session lock: %w", err)
 	}
-	return out, nil
+	if err := lock.Chmod(0o600); err != nil {
+		lock.Close()
+		return nil, fmt.Errorf("secure session lock: %w", err)
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		lock.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+			return nil, fmt.Errorf("session %s is already running", id)
+		}
+		return nil, fmt.Errorf("lock session %s: %w", id, err)
+	}
+	return lock, nil
 }
 
 func loadSession(path string) (*session, error) {
-	b, err := os.ReadFile(path)
+	b, err := readRegularFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, errors.New("no saved task; run mai \"prompt\" first")
+		return nil, errors.New("saved task file does not exist")
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read session: %w", err)
@@ -160,7 +147,7 @@ func loadSession(path string) (*session, error) {
 	if err := json.Unmarshal(b, &out); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
-	if out.Version != stateVersion || out.ID == "" || out.CWD == "" || out.RepoRoot == "" {
+	if out.Version != stateVersion || !validSessionID(out.ID) || out.CWD == "" || out.RepoRoot == "" {
 		return nil, fmt.Errorf("saved session is incomplete or unsupported")
 	}
 	if _, ok := modelIDs[out.Model]; !ok {
@@ -170,6 +157,22 @@ func loadSession(path string) (*session, error) {
 		return nil, fmt.Errorf("saved session has invalid effort %q", out.Effort)
 	}
 	return &out, nil
+}
+
+func readRegularFile(path string) ([]byte, error) {
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	return io.ReadAll(file)
 }
 
 func saveJSON(path string, value any) error {

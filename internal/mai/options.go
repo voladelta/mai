@@ -8,18 +8,17 @@ import (
 )
 
 type options struct {
-	prompt          string
-	last            bool
-	model           string
-	effort          string
-	modelExplicit   bool
-	effortExplicit  bool
-	help            bool
-	version         bool
-	saveDefaults    bool
-	noInput         bool
-	timeout         time.Duration
-	timeoutExplicit bool
+	prompt         string
+	last           bool
+	persist        bool
+	model          string
+	effort         string
+	modelExplicit  bool
+	effortExplicit bool
+	help           bool
+	version        bool
+	noInput        bool
+	timeout        time.Duration
 }
 
 type optionKind int
@@ -28,7 +27,7 @@ const (
 	optionHelp optionKind = iota
 	optionVersion
 	optionLast
-	optionSaveDefaults
+	optionPersist
 	optionNoInput
 	optionModel
 	optionEffort
@@ -37,11 +36,11 @@ const (
 
 var optionKinds = map[string]optionKind{
 	"-h": optionHelp, "--help": optionHelp,
-	"--version":       optionVersion,
-	"--last":          optionLast,
-	"--save-defaults": optionSaveDefaults,
-	"--no-input":      optionNoInput,
-	"-m":              optionModel, "--model": optionModel,
+	"--version":  optionVersion,
+	"--last":     optionLast,
+	"--persist":  optionPersist,
+	"--no-input": optionNoInput,
+	"-m":         optionModel, "--model": optionModel,
 	"-e": optionEffort, "--effort": optionEffort,
 	"--timeout": optionTimeout,
 }
@@ -118,8 +117,8 @@ func (out *options) setOption(kind optionKind, value string) error {
 		out.version = true
 	case optionLast:
 		out.last = true
-	case optionSaveDefaults:
-		out.saveDefaults = true
+	case optionPersist:
+		out.persist = true
 	case optionNoInput:
 		out.noInput = true
 	case optionModel:
@@ -131,7 +130,7 @@ func (out *options) setOption(kind optionKind, value string) error {
 		if err != nil {
 			return err
 		}
-		out.timeout, out.timeoutExplicit = timeout, true
+		out.timeout = timeout
 	}
 	return nil
 }
@@ -160,27 +159,11 @@ func (out *options) normalizeSelections() error {
 }
 
 func (out options) validateMode(argCount int) error {
-	if out.saveDefaults && !out.modelExplicit && !out.effortExplicit {
-		return errors.New("--save-defaults requires --model or --effort")
+	if out.last && out.persist {
+		return errors.New("--last and --persist cannot be used together")
 	}
-	if out.prompt == "" && out.saveDefaults {
-		return out.validateSaveOnly()
-	}
-	if out.prompt == "" && !out.saveDefaults && argCount > 0 {
+	if out.prompt == "" && argCount > 0 {
 		return errors.New("prompt is required")
-	}
-	return nil
-}
-
-func (out options) validateSaveOnly() error {
-	if out.last {
-		return errors.New("--last requires a prompt")
-	}
-	if out.noInput {
-		return errors.New("--no-input requires a prompt")
-	}
-	if out.timeoutExplicit {
-		return errors.New("--timeout requires a prompt")
 	}
 	return nil
 }
