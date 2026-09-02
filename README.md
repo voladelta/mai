@@ -152,8 +152,6 @@ Each persisted task has a separate session file. Starting concurrent tasks does
 not replace their history. An atomic update to `current` selects the task that a
 later `--last` command will resume.
 
-Mai does not read or migrate the earlier global XDG state files.
-
 The saved history includes completed model output and encrypted reasoning state.
 `mai` sends a stable cache key for each task so compatible requests can reuse
 cached input.
