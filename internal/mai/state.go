@@ -16,7 +16,6 @@ import (
 const stateVersion = 1
 
 type taskConfig struct {
-	Model  string
 	Effort string
 }
 
@@ -27,6 +26,7 @@ type session struct {
 	RepoRoot      string            `json:"repo_root"`
 	Model         string            `json:"model"`
 	Effort        string            `json:"effort"`
+	RequestEffort string            `json:"request_effort,omitempty"`
 	ContextTokens int64             `json:"context_tokens,omitempty"`
 	History       []json.RawMessage `json:"history"`
 }
@@ -151,11 +151,19 @@ func loadSession(path string) (*session, error) {
 	if out.Version != stateVersion || !validSessionID(out.ID) || out.CWD == "" || out.RepoRoot == "" || out.ContextTokens < 0 {
 		return nil, fmt.Errorf("saved session is incomplete or unsupported")
 	}
-	if _, ok := modelIDs[out.Model]; !ok {
+	switch out.Model {
+	case "astra", "sol", "luna", "terra":
+	default:
 		return nil, fmt.Errorf("saved session has invalid model %q", out.Model)
 	}
 	if _, ok := effortIDs[out.Effort]; !ok {
 		return nil, fmt.Errorf("saved session has invalid effort %q", out.Effort)
+	}
+	if out.RequestEffort == "" {
+		out.RequestEffort = out.Effort
+	}
+	if _, ok := effortIDs[out.RequestEffort]; !ok {
+		return nil, fmt.Errorf("saved session has invalid request effort %q", out.RequestEffort)
 	}
 	if out.ContextTokens == 0 && len(out.History) > 0 {
 		out.ContextTokens = estimateHistoryTokens(out.History)

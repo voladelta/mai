@@ -40,7 +40,7 @@ enabled = true
 		t.Fatal(err)
 	}
 	if agent.Name != "repo_scout" || agent.Description != "Map the repository." ||
-		agent.Model != "terra" || agent.Effort != "m" {
+		agent.Effort != "m" {
 		t.Fatalf("custom agent = %#v", agent)
 	}
 	if agent.DeveloperInstructions != "Map the minimum context.\nKeep quoted \"symbols\" exact." {
@@ -228,7 +228,7 @@ func TestDirectSubagentUsesConfiguredRoleAndDisablesSpawn(t *testing.T) {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
 	body := <-requestBody
-	if body["model"] != "gpt-5.6-terra" {
+	if body["model"] != "gpt-6-astra" {
 		t.Fatalf("request model = %#v", body["model"])
 	}
 	reasoning, _ := body["reasoning"].(map[string]any)
@@ -289,4 +289,13 @@ func hasTool(definitions []map[string]any, name string) bool {
 		}
 	}
 	return false
+}
+
+func TestCustomAgentDoesNotRequireModel(t *testing.T) {
+	root := t.TempDir()
+	config := strings.ReplaceAll(validAgentConfig("repo_scout"), "model = \"gpt-5.6-terra\"\n", "")
+	writeAgentConfig(t, root, "repo_scout", config)
+	if _, err := loadCustomAgent(root, "repo_scout"); err != nil {
+		t.Fatal(err)
+	}
 }

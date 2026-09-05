@@ -26,21 +26,20 @@ Examples:
   mai --subagent repo_scout "map the affected code"
   mai "start a saved task" --persist
   mai "now fix the failing test" --last
-  mai "refactor this" -m sol -e h
+  mai "refactor this" -e h
 
 Options:
   -h, --help             Show this help text.
   --version              Show the mai version.
   --persist              Save this new task in the current project.
   --last                 Resume the current saved task in the current project.
-  -m, --model MODEL      Use sol, luna, or terra for this task.
   -e, --effort EFFORT    Use l, m, h, x, or max for this task.
   --timeout DURATION     Set the request timeout (default: 10m).
   --no-input             Do not ask for interactive approval.
   --subagent NAME        Run with an installed custom agent.
 
 Tasks are stateless unless you use --persist or --last.
-The built-in default is luna/medium.
+The built-in default is astra/low.
 
 Documentation and support: https://github.com/voladelta/mai
 `
@@ -78,7 +77,7 @@ Usage:
 Example:
   mai "add tests for the parser"
 
-Built-in default: luna/medium.
+Built-in default: astra/low.
 Run 'mai --help' for more information.
 `)
 	return 0
@@ -99,7 +98,6 @@ func runTask(opts options, stdout, stderr io.Writer) int {
 			return 1
 		}
 		selectedAgent = &loaded
-		taskCfg.Model = loaded.Model
 		taskCfg.Effort = loaded.Effort
 	}
 	active, err := startSession(taskCfg, opts)
@@ -163,10 +161,7 @@ func (task *activeTask) close() {
 }
 
 func configForTask(opts options) taskConfig {
-	cfg := taskConfig{Model: "luna", Effort: "m"}
-	if opts.modelExplicit {
-		cfg.Model = opts.model
-	}
+	cfg := taskConfig{Effort: "l"}
 	if opts.effortExplicit {
 		cfg.Effort = opts.effort
 	}
@@ -219,8 +214,10 @@ func startSession(cfg taskConfig, opts options) (*activeTask, error) {
 		lock.Close()
 		return nil, errors.New("saved task does not belong to this project")
 	}
-	if opts.modelExplicit {
-		sess.Model = opts.model
+	if sess.Model != "astra" {
+		// Old saved tasks switch to Astra with a new request prefix.
+		sess.Model = "astra"
+		sess.RequestEffort = ""
 	}
 	if opts.effortExplicit {
 		sess.Effort = opts.effort
@@ -239,6 +236,34 @@ func appendUserPrompt(sess *session, prompt string) error {
 	})
 	if err != nil {
 		return fmt.Errorf("encode prompt: %w", err)
+	}
+	if sess.RequestEffort == "" {
+		sess.RequestEffort = sess.Effort
+	}
+	effective := effortIDs[sess.RequestEffort]
+	for _, raw := range sess.History {
+		var item struct {
+			Type      string `json:"type"`
+			Reasoning struct {
+				Effort string `json:"effort"`
+			} `json:"reasoning"`
+		}
+		if err := json.Unmarshal(raw, &item); err != nil {
+			return fmt.Errorf("parse saved history: %w", err)
+		}
+		if item.Type == "configuration_update" {
+			effective = item.Reasoning.Effort
+		}
+	}
+	if effective != effortIDs[sess.Effort] {
+		update, err := json.Marshal(map[string]any{
+			"type":      "configuration_update",
+			"reasoning": map[string]string{"effort": effortIDs[sess.Effort]},
+		})
+		if err != nil {
+			return err
+		}
+		sess.appendEstimatedHistory(update)
 	}
 	sess.appendEstimatedHistory(userItem)
 	return nil
@@ -260,7 +285,7 @@ func createSession(cfg taskConfig) (*session, error) {
 	}
 	return &session{
 		Version: stateVersion, ID: id, CWD: cwd, RepoRoot: root,
-		Model: cfg.Model, Effort: cfg.Effort,
+		Model: "astra", Effort: cfg.Effort,
 	}, nil
 }
 

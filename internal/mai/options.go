@@ -11,9 +11,7 @@ type options struct {
 	prompt         string
 	last           bool
 	persist        bool
-	model          string
 	effort         string
-	modelExplicit  bool
 	effortExplicit bool
 	help           bool
 	version        bool
@@ -31,7 +29,6 @@ const (
 	optionPersist
 	optionNoInput
 	optionSubagent
-	optionModel
 	optionEffort
 	optionTimeout
 )
@@ -43,8 +40,7 @@ var optionKinds = map[string]optionKind{
 	"--persist":  optionPersist,
 	"--no-input": optionNoInput,
 	"--subagent": optionSubagent,
-	"-m":         optionModel, "--model": optionModel,
-	"-e": optionEffort, "--effort": optionEffort,
+	"-e":         optionEffort, "--effort": optionEffort,
 	"--timeout": optionTimeout,
 }
 
@@ -111,7 +107,7 @@ func parseOptionTokens(args []string, out *options) ([]string, error) {
 }
 
 func (kind optionKind) takesValue() bool {
-	return kind == optionSubagent || kind == optionModel || kind == optionEffort || kind == optionTimeout
+	return kind == optionSubagent || kind == optionEffort || kind == optionTimeout
 }
 
 func (out *options) setOption(kind optionKind, value string) error {
@@ -126,8 +122,6 @@ func (out *options) setOption(kind optionKind, value string) error {
 		out.noInput = true
 	case optionSubagent:
 		out.subagent = value
-	case optionModel:
-		out.model, out.modelExplicit = value, true
 	case optionEffort:
 		out.effort, out.effortExplicit = value, true
 	case optionTimeout:
@@ -155,12 +149,6 @@ func (out *options) normalizeSelections() error {
 		}
 		out.noInput = true
 	}
-	if out.modelExplicit {
-		out.model = normalizeModel(out.model)
-		if _, ok := modelIDs[out.model]; !ok {
-			return fmt.Errorf("invalid model %q (use sol, luna, or terra)", out.model)
-		}
-	}
 	if out.effortExplicit {
 		out.effort = normalizeEffort(out.effort)
 		if _, ok := effortIDs[out.effort]; !ok {
@@ -178,8 +166,8 @@ func (out options) validateMode(argCount int) error {
 		switch {
 		case out.last || out.persist:
 			return errors.New("--subagent cannot be used with --last or --persist")
-		case out.modelExplicit || out.effortExplicit:
-			return errors.New("--subagent cannot be used with --model or --effort")
+		case out.effortExplicit:
+			return errors.New("--subagent cannot be used with --effort")
 		case len(out.prompt) > maxSubagentPromptBytes:
 			return fmt.Errorf("subagent prompt exceeds %d bytes", maxSubagentPromptBytes)
 		}
@@ -198,10 +186,6 @@ func parseTimeout(value string) (time.Duration, error) {
 	return timeout, nil
 }
 
-func normalizeModel(value string) string {
-	return strings.ToLower(strings.TrimSpace(value))
-}
-
 func normalizeEffort(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	switch value {
@@ -218,17 +202,10 @@ func normalizeEffort(value string) string {
 	}
 }
 
-var modelIDs = map[string]string{
-	"sol":   "gpt-5.6-sol",
-	"luna":  "gpt-5.6-luna",
-	"terra": "gpt-5.6-terra",
-}
+const modelID = "gpt-6-astra"
 
-var modelContextWindows = map[string]int64{
-	"sol":   272_000,
-	"luna":  272_000,
-	"terra": 272_000,
-}
+// Keep the conservative input budget for the private Codex backend.
+const modelContextWindow int64 = 272_000
 
 var effortIDs = map[string]string{
 	"l":   "low",

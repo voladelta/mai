@@ -177,8 +177,8 @@ func (a *agent) runTurn(ctx context.Context, sess *session, instructions string)
 }
 
 func (a *agent) compactIfNeeded(ctx context.Context, sess *session, instructions string) error {
-	contextWindow := modelContextWindows[sess.Model]
-	if contextWindow == 0 || sess.ContextTokens < contextWindow*autoCompactPercent/100 {
+	contextWindow := modelContextWindow
+	if sess.ContextTokens < contextWindow*autoCompactPercent/100 {
 		return nil
 	}
 	compaction, err := a.client.compact(ctx, sess, instructions)
@@ -191,6 +191,9 @@ func (a *agent) compactIfNeeded(ctx context.Context, sess *session, instructions
 	}
 	next := *sess
 	next.History = history
+	// Compaction replaces the prompt prefix and removes configuration updates.
+	// Start the replacement prefix at the current effort.
+	next.RequestEffort = next.Effort
 	next.ContextTokens = estimateHistoryTokens(history) + (int64(len(instructions))+3)/4
 	if a.sessionPath != "" {
 		if err := saveJSON(a.sessionPath, &next); err != nil {

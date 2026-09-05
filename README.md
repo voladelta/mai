@@ -22,9 +22,7 @@ Images use typed image output; other binary files are rejected.
 
 Custom agents are read from `$CODEX_HOME/agents`, or `~/.codex/agents` when
 `CODEX_HOME` is not set. Each `<name>.toml` file must define matching `name`,
-`description`, `developer_instructions`, `model`, and `model_reasoning_effort`
-fields. Mai supports the same model names and reasoning efforts as its command
-line options.
+`description`, and `developer_instructions` fields, plus a reasoning effort.
 
 Run a custom agent directly with:
 
@@ -32,9 +30,9 @@ Run a custom agent directly with:
 mai --subagent repo_scout "map the parser"
 ```
 
-This mode uses the model, effort, and developer instructions from
+This mode uses the effort and developer instructions from
 `repo_scout.toml`. It implies `--no-input` and cannot be combined with
-`--persist`, `--last`, `--model`, or `--effort`. A custom subagent does not
+`--persist`, `--last`, or `--effort`. A custom subagent does not
 receive the general skill catalog. Its developer instructions must identify any
 required skills.
 
@@ -88,20 +86,14 @@ Resume the current saved task in that project with `--last`:
 mai "now fix the failing test" --last
 ```
 
-`--last` restores the original working directory, model, effort and conversation
+`--last` restores the original working directory, effort and conversation
 history. Two processes cannot use the same saved task at the same time. Other
 saved tasks can run at the same time.
 
 Run `mai` without a prompt to show concise usage text. Run `mai --help` for all
 options.
 
-## Choose a model and effort
-
-Use `-m` to choose a model:
-
-- `luna` uses `gpt-5.6-luna`
-- `terra` uses `gpt-5.6-terra`
-- `sol` uses `gpt-5.6-sol`
+## Choose reasoning effort
 
 Use `-e` to choose the reasoning effort:
 
@@ -111,14 +103,14 @@ Use `-e` to choose the reasoning effort:
 - `x` means extra high
 - `max` means maximum
 
-Each new task uses `luna` with medium effort unless you set `-m` or `-e`. The
+Each new task uses low effort unless you set `-e`. The
 saved task keeps its values when you use `--last`.
 
 You can use these options with a new or saved task:
 
 ```bash
-mai "refactor this package" -m sol -e h
-mai "continue the refactor" --last -m terra -e max
+mai "refactor this package" -e h
+mai "continue the refactor" --last -e max
 ```
 
 ## Timeouts and interactive input
@@ -177,18 +169,25 @@ Each persisted task has a separate session file. Starting concurrent tasks does
 not replace their history. An atomic update to `current` selects the task that a
 later `--last` command will resume.
 
-The saved history includes completed model output and encrypted reasoning state.
+The saved history includes completed responses and encrypted reasoning state.
 `mai` sends a stable cache key for each task so compatible requests can reuse
-cached input.
+cached input. `--last -e h` adds a `configuration_update` before the
+new prompt and keeps the original request effort. Later resumes replay those
+updates so an effort change can preserve the cached prefix. Cache hits still
+depend on the backend and cache lifetime. Compacting history starts a new prompt
+prefix at the selected effort.
+
+Async tool calling is not enabled. Tools and child agents run in sequence.
+Mid-turn steering is not enabled.
 
 Children never create their own saved tasks. A persisted parent saves the
 `spawn_subagent` call and its returned result in the parent task history.
 
 Mai tracks the active context size reported by the Codex backend. At 90% of the
-model context window, it sends a Codex V2 compaction request before the next
-model request. The compacted history keeps recent user messages and the encrypted
-compaction item. Persisted tasks save this replacement history before they
-continue.
+configured context budget (272,000 tokens), it sends a Codex V2 compaction
+request before the next response request. The compacted history keeps recent
+user messages and the encrypted compaction item. Persisted tasks save this
+replacement history before they continue.
 
 ## Safety
 

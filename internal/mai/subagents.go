@@ -26,7 +26,6 @@ type customAgent struct {
 	Name                  string
 	Description           string
 	DeveloperInstructions string
-	Model                 string
 	Effort                string
 }
 
@@ -172,17 +171,12 @@ func parseCustomAgent(content string) (customAgent, error) {
 		DeveloperInstructions: strings.TrimSpace(values["developer_instructions"]),
 	}
 	if agent.Name == "" || agent.Description == "" || agent.DeveloperInstructions == "" ||
-		strings.TrimSpace(values["model"]) == "" || strings.TrimSpace(values["model_reasoning_effort"]) == "" {
-		return customAgent{}, errors.New("name, description, developer_instructions, model, and model_reasoning_effort are required")
+		strings.TrimSpace(values["model_reasoning_effort"]) == "" {
+		return customAgent{}, errors.New("name, description, developer_instructions, and model_reasoning_effort are required")
 	}
 	if err := validateSubagentName(agent.Name); err != nil {
 		return customAgent{}, fmt.Errorf("invalid name: %w", err)
 	}
-	model, ok := modelAlias(values["model"])
-	if !ok {
-		return customAgent{}, fmt.Errorf("unsupported model %q", values["model"])
-	}
-	agent.Model = model
 	agent.Effort = normalizeEffort(values["model_reasoning_effort"])
 	if _, ok := effortIDs[agent.Effort]; !ok {
 		return customAgent{}, fmt.Errorf("unsupported model_reasoning_effort %q", values["model_reasoning_effort"])
@@ -289,19 +283,6 @@ func validateSubagentName(name string) error {
 		return errors.New("subagent name can contain only letters, numbers, underscores, and hyphens")
 	}
 	return nil
-}
-
-func modelAlias(value string) (string, bool) {
-	value = normalizeModel(value)
-	if _, ok := modelIDs[value]; ok {
-		return value, true
-	}
-	for alias, id := range modelIDs {
-		if value == id {
-			return alias, true
-		}
-	}
-	return "", false
 }
 
 func renderSubagentInstructions(agents map[string]customAgent) string {

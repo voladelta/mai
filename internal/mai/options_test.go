@@ -13,13 +13,13 @@ func TestParseOptionsInterspersed(t *testing.T) {
 	}{
 		{
 			name: "short forms after prompt",
-			args: []string{"fix", "the", "test", "--last", "-m", "sol", "-e=h"},
-			want: options{prompt: "fix the test", last: true, model: "sol", effort: "h", modelExplicit: true, effortExplicit: true, timeout: defaultHTTPTimeout},
+			args: []string{"fix", "the", "test", "--last", "-e=h"},
+			want: options{prompt: "fix the test", last: true, effort: "h", effortExplicit: true, timeout: defaultHTTPTimeout},
 		},
 		{
 			name: "long forms around prompt",
-			args: []string{"--model=terra", "hello", "--effort", "xhigh", "--persist"},
-			want: options{prompt: "hello", persist: true, model: "terra", effort: "x", modelExplicit: true, effortExplicit: true, timeout: defaultHTTPTimeout},
+			args: []string{"hello", "--effort", "xhigh", "--persist"},
+			want: options{prompt: "hello", persist: true, effort: "x", effortExplicit: true, timeout: defaultHTTPTimeout},
 		},
 		{
 			name: "end of options",
@@ -91,5 +91,13 @@ func TestParseOptionsHelpOverridesOtherArguments(t *testing.T) {
 	}
 	if !got.help {
 		t.Fatalf("unexpected options: %#v", got)
+	}
+}
+
+func TestModelSelectionRemoved(t *testing.T) {
+	for _, flag := range []string{"-m", "--model", "--model=astra"} {
+		if _, err := parseOptions([]string{"hello", flag, "astra"}); err == nil || !strings.Contains(err.Error(), "unknown option") {
+			t.Fatalf("%s: error = %v", flag, err)
+		}
 	}
 }

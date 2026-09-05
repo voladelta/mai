@@ -129,3 +129,63 @@ func mustJSON(t *testing.T, value any) []byte {
 	}
 	return out
 }
+
+func TestAstraCompactionKeepsSelectedEffort(t *testing.T) {
+	writeTestCodexAuth(t)
+	var requests []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+			return
+		}
+		requests = append(requests, body)
+		if hasCompactionTrigger(body["input"]) {
+			writeSSEItem(t, w, `{"type":"compaction","encrypted_content":"summary"}`, 200)
+		} else {
+			writeSSEItem(t, w, `{"type":"message","role":"assistant","content":[]}`, 250)
+		}
+	}))
+	defer server.Close()
+	sess := &session{
+		Version: stateVersion, ID: "01234567-89ab-cdef-0123-456789abcdef",
+		CWD: t.TempDir(), RepoRoot: t.TempDir(), Model: "astra", Effort: "h", RequestEffort: "l",
+		ContextTokens: 244_800,
+		History: []json.RawMessage{
+			json.RawMessage(`{"role":"user","content":"first"}`),
+			json.RawMessage(`{"type":"configuration_update","reasoning":{"effort":"high"}}`),
+			json.RawMessage(`{"role":"user","content":"second"}`),
+		},
+	}
+	path := filepath.Join(t.TempDir(), "session.json")
+	a := newAgent(&bytes.Buffer{}, &bytes.Buffer{}, path, time.Second, false, nil)
+	a.client.endpoint = server.URL
+	if _, err := a.runTurn(context.Background(), sess, "instructions"); err != nil {
+		t.Fatal(err)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("requests = %d", len(requests))
+	}
+	if requests[0]["reasoning"].(map[string]any)["effort"] != "low" || requests[1]["reasoning"].(map[string]any)["effort"] != "high" {
+		t.Fatalf("compaction changed effective effort: %v", requests)
+	}
+	for _, raw := range requests[1]["input"].([]any) {
+		if raw.(map[string]any)["type"] == "configuration_update" {
+			t.Fatal("stale update survived compaction")
+		}
+	}
+	saved, err := loadSession(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.RequestEffort != "h" || saved.Effort != "h" {
+		t.Fatalf("saved effort = %#v", saved)
+	}
+	before := len(saved.History)
+	if err := appendUserPrompt(saved, "third"); err != nil {
+		t.Fatal(err)
+	}
+	if len(saved.History) != before+1 {
+		t.Fatal("unchanged effort added an update after compaction")
+	}
+}

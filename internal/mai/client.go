@@ -151,8 +151,12 @@ func (c *codexClient) streamWithCredentials(ctx context.Context, sess *session, 
 }
 
 func (c *codexClient) requestWithCredentials(ctx context.Context, sess *session, instructions string, creds credentials, compaction bool) (streamResult, error) {
+	effort := sess.Effort
+	if sess.RequestEffort != "" {
+		effort = sess.RequestEffort
+	}
 	body := map[string]any{
-		"model":               modelIDs[sess.Model],
+		"model":               modelID,
 		"store":               false,
 		"stream":              true,
 		"instructions":        instructions,
@@ -161,7 +165,7 @@ func (c *codexClient) requestWithCredentials(ctx context.Context, sess *session,
 		"tool_choice":         "auto",
 		"parallel_tool_calls": false,
 		"reasoning": map[string]any{
-			"effort":  effortIDs[sess.Effort],
+			"effort":  effortIDs[effort],
 			"summary": "auto",
 		},
 		"text":             map[string]string{"verbosity": "low"},
