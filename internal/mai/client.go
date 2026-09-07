@@ -396,6 +396,21 @@ func toolDefinitions(allowSubagents ...bool) []map[string]any {
 			},
 		},
 		{
+			"type": "function", "name": "python",
+			"description": "Execute a Python cell in a persistent namespace, or reset it. Returns the last expression, bounded stdout/stderr, generation, fresh and state_lost flags. Use exactly one of code or reset:true. State does not survive Mai exit or resume.",
+			"parameters": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"code":  map[string]any{"type": "string", "minLength": 1},
+					"reset": map[string]any{"type": "boolean", "enum": []bool{true}},
+				},
+				"oneOf": []map[string]any{
+					{"required": []string{"code"}},
+					{"required": []string{"reset"}},
+				},
+			},
+		},
+		{
 			"type": "function", "name": "apply_patch",
 			"description": "Create, update, move, or delete repository files with a Codex-style patch bounded by *** Begin Patch and *** End Patch.",
 			"parameters": map[string]any{

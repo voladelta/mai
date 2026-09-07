@@ -13,6 +13,9 @@ func TestSystemInstructionsAreLeanAndComplete(t *testing.T) {
 		"Change files only when the user asks",
 		"complete in-scope work",
 		"bash:",
+		"python:",
+		"including --last, starts fresh",
+		"Never replay uncertain cells automatically",
 		"apply_patch:",
 		"unknown outcome",
 		"reconcile the requested patch",
@@ -27,8 +30,8 @@ func TestSystemInstructionsAreLeanAndComplete(t *testing.T) {
 			t.Fatalf("prompt is missing %q:\n%s", required, prompt)
 		}
 	}
-	if words := len(strings.Fields(prompt)); words > 200 {
-		t.Fatalf("base prompt grew beyond the 200-word budget: %d words", words)
+	if words := len(strings.Fields(prompt)); words > 250 {
+		t.Fatalf("base prompt grew beyond the 250-word budget: %d words", words)
 	}
 	withSkills := systemInstructions(sess, "Skills\n- demo: A demonstration skill. (id: demo)")
 	if !strings.Contains(withSkills, "demo: A demonstration skill") {

@@ -5,9 +5,10 @@
 `mai` is a small coding agent for macOS and Linux. It uses your existing Codex
 ChatGPT login, so you do not need an OpenAI API key.
 
-The agent has 5 tools:
+The agent has 6 tools:
 
 - `bash` reads files, searches code and runs commands
+- `python` explores data in a persistent Python namespace
 - `apply_patch` creates, changes, moves and deletes files
 - `read_skill` loads the complete instructions for one skill
 - `read_skill_file` loads a required supporting file from that skill
@@ -134,6 +135,35 @@ beginning and end and reports the omitted byte count.
 
 Use `--no-input` in scripts and other non-interactive environments. If a command
 needs approval, `mai` rejects it instead of opening a terminal prompt.
+
+### Persistent Python
+
+The optional `python` tool starts a Python subprocess on its first cell. Install
+Python 3.9 or newer on `PATH`, or set `MAI_PYTHON` to a Python executable. An active
+virtual environment works through `PATH`. Mai does not install Python packages.
+For example, use `MAI_PYTHON=python3.14 mai "explore sales.csv"` to select Python 3.14.
+
+Send `{"code":"..."}` to execute a cell or `{"reset":true}` to discard the
+environment. Imports, variables, functions, and SQLite connections remain between
+cells. The last expression is printed unless its value is `None`. Use standard
+library `csv` and `sqlite3`, or packages already installed in the chosen environment.
+For exploration, prefer read-only SQLite connections and selected summaries of
+large datasets. Each cell uses the `--timeout` limit and the same 64 KiB per-stream
+head-and-tail output limits as Bash. Tracebacks are part of stderr.
+
+State survives conversation compaction, but ends when Mai exits. `--last` restores
+conversation history only; it starts a new Python environment. Results report the
+kernel generation (local to this run), whether it is fresh, and whether state was
+lost. Reset is lazy: the next cell starts the next generation. Save explicit files
+for durable work; Mai does not snapshot variables or replay cells.
+
+An exception can leave partial changes in the namespace. A timeout, cancellation,
+or kernel failure discards it and kills the process group. External effects can
+remain; failed cells are never retried automatically. Python is not sandboxed and
+has Mai's OS access. Interactive input and top-level `await` are unsupported. Cells
+must finish all background threads and subprocess work before returning; output
+from work left running cannot be attributed reliably. Native libraries must flush
+their own buffered output before the cell returns.
 
 ## Authentication
 

@@ -32,6 +32,7 @@ type agent struct {
 	agentsError   error
 	executable    string
 	timeout       time.Duration
+	python        pythonKernel
 }
 
 type functionCall struct {
@@ -76,6 +77,7 @@ func newAgent(stdout, stderr io.Writer, sessionPath string, timeout time.Duratio
 }
 
 func (a *agent) run(ctx context.Context, sess *session, userPrompt string) error {
+	defer a.python.close()
 	interactive := isTerminalWriter(a.stderr)
 	if interactive {
 		fmt.Fprintln(a.stderr, "→ thinking")
@@ -295,6 +297,8 @@ func (a *agent) executeTool(ctx context.Context, sess *session, call functionCal
 		return a.executeSpawnSubagent(ctx, sess, call.Arguments)
 	case "bash":
 		return a.executeBash(ctx, sess, call.Arguments)
+	case "python":
+		return a.executePython(ctx, sess, call.Arguments)
 	case "apply_patch":
 		return a.executePatch(sess, call.Arguments)
 	default:
