@@ -488,6 +488,14 @@ func applyChunks(content string, chunks []patchChunk) (string, error) {
 			start = anchorAt + 1
 		}
 
+		if chunk.endOfFile {
+			suffix := len(lines) - len(chunk.oldLines)
+			if suffix < start {
+				return "", fmt.Errorf("chunk %d does not reach end of file", index+1)
+			}
+			start = suffix
+		}
+
 		at := findSequence(lines, chunk.oldLines, start)
 		if at < 0 {
 			return "", fmt.Errorf("chunk %d context not found", index+1)
@@ -574,7 +582,14 @@ func securePatchPath(root, rel string) (string, error) {
 			if !pathWithin(root, resolved) {
 				return "", fmt.Errorf("patch path resolves outside repository: %s", rel)
 			}
-			break
+
+			// Use one identity for paths reached through directory aliases, including
+			// new descendants whose nearest existing parent is the alias target.
+			suffix, err := filepath.Rel(parent, abs)
+			if err != nil {
+				return "", fmt.Errorf("resolve patch path %s: %w", rel, err)
+			}
+			return filepath.Rel(root, filepath.Join(resolved, suffix))
 		}
 		if !errors.Is(err, os.ErrNotExist) {
 			return "", fmt.Errorf("resolve patch path %s: %w", rel, err)
@@ -585,7 +600,6 @@ func securePatchPath(root, rel string) (string, error) {
 		}
 		parent = next
 	}
-	return clean, nil
 }
 
 func atomicWriteRootFile(root *os.Root, path string, content []byte, mode os.FileMode) error {

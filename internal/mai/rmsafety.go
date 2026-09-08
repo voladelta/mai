@@ -1,7 +1,9 @@
 package mai
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"unicode"
@@ -205,16 +207,58 @@ func rmTargetApprovalReason(target shellToken, cwd, repoRoot string) string {
 	}
 	path := target.text
 	if !filepath.IsAbs(path) {
-		path = filepath.Join(cwd, path)
+		// Join would erase .. before the filesystem resolves preceding symlinks.
+		path = cwd + string(filepath.Separator) + path
 	}
-	path = filepath.Clean(path)
 	if !pathWithin(repoRoot, path) {
 		return fmt.Sprintf("rm target %s is outside %s", path, repoRoot)
 	}
-	if resolved, err := filepath.EvalSymlinks(path); err == nil && !pathWithin(repoRoot, resolved) {
+
+	resolved, err := resolveRMTarget(path)
+	if err != nil {
+		return fmt.Sprintf("rm target %q could not be resolved safely: %v", target.text, err)
+	}
+
+	root, err := filepath.EvalSymlinks(repoRoot)
+	if err != nil {
+		return "the repository root could not be resolved safely"
+	}
+	if !pathWithin(root, resolved) {
 		return fmt.Sprintf("rm target %s resolves outside %s", path, repoRoot)
 	}
+
 	return ""
+}
+
+func resolveRMTarget(path string) (string, error) {
+	var missing []string
+	for {
+		resolved, err := filepath.EvalSymlinks(path)
+		if err == nil {
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			return resolved, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+
+		// Missing ordinary children are safe to classify from their parent.
+		// A dangling link or traversal through a missing directory is uncertain.
+		if info, statErr := os.Lstat(path); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+			return "", err
+		}
+		at := strings.LastIndexByte(path, byte(filepath.Separator))
+		if at < 0 || path[at+1:] == ".." {
+			return "", err
+		}
+		missing = append(missing, path[at+1:])
+		path = path[:at]
+		if path == "" {
+			path = string(filepath.Separator)
+		}
+	}
 }
 
 func pathWithin(root, path string) bool {
@@ -293,7 +337,9 @@ func (lexer *shellLexer) readEscape(index *int) bool {
 		return false
 	}
 	(*index)++
-	lexer.word.WriteByte(lexer.input[*index])
+	if lexer.input[*index] != '\n' {
+		lexer.word.WriteByte(lexer.input[*index])
+	}
 	return true
 }
 
@@ -313,7 +359,14 @@ func (lexer *shellLexer) readDoubleQuoted(index *int) bool {
 			lexer.dynamic = true
 		}
 		if lexer.input[*index] == '\\' && *index+1 < len(lexer.input) {
-			(*index)++
+			next := lexer.input[*index+1]
+			if next == '\n' {
+				*index += 2
+				continue
+			}
+			if strings.ContainsRune("$`\"\\", rune(next)) {
+				(*index)++
+			}
 		}
 		lexer.word.WriteByte(lexer.input[*index])
 		(*index)++

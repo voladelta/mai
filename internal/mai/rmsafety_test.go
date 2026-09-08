@@ -6,6 +6,44 @@ import (
 	"testing"
 )
 
+func TestRMResolvesSymlinkBeforeParentTraversal(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Mkdir(filepath.Join(outside, "subdir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "victim"), []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "subdir"), filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "missing"), filepath.Join(root, "dangling")); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, target := range []string{"link/../victim", "link/../missing", "missing/../victim", "dangling"} {
+		if required, _ := requiresRMApproval("rm "+target, root, root); !required {
+			t.Errorf("%s bypassed approval", target)
+		}
+	}
+}
+
+func TestRMLineContinuations(t *testing.T) {
+	root := t.TempDir()
+	for _, command := range []string{"rm\\\n /tmp/victim", "r\\\nm /tmp/victim", "\"r\\\nm\" /tmp/victim"} {
+		if required, _ := requiresRMApproval(command, root, root); !required {
+			t.Errorf("%q bypassed approval", command)
+		}
+	}
+
+	for _, command := range []string{"rm\\\n missing", "\"r\\\nm\" missing", "'r\\\nm' /tmp/victim", "\"r\\m\" /tmp/victim"} {
+		if required, reason := requiresRMApproval(command, root, root); required {
+			t.Errorf("%q needs unnecessary approval: %s", command, reason)
+		}
+	}
+}
+
 func TestRMInsideRepositoryDoesNotNeedApproval(t *testing.T) {
 	root := t.TempDir()
 	if required, reason := requiresRMApproval("rm -rf build ./tmp", root, root); required {

@@ -10,6 +10,65 @@ import (
 	"testing"
 )
 
+func TestPatchAliasesSharePendingContent(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "real/file"), "a\nb\n")
+	if err := os.Symlink("real", filepath.Join(root, "alias")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := applyPatch(root, "*** Begin Patch\n*** Update File: alias/file\n@@\n-a\n+A\n*** Update File: real/file\n@@\n-b\n+B\n*** End Patch")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assertContent(t, filepath.Join(root, "real/file"), "A\nB\n")
+
+	_, err = applyPatch(root, "*** Begin Patch\n*** Update File: alias/file\n@@\n-A\n+intermediate\n*** Update File: real/file\n@@\n-intermediate\n+final\n*** End Patch")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assertContent(t, filepath.Join(root, "real/file"), "final\nB\n")
+}
+
+func TestPatchAliasesRejectDuplicateAddsBeforeWrites(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "real"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("real", filepath.Join(root, "alias")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := applyPatch(root, "*** Begin Patch\n*** Add File: alias/nested/file\n+first\n*** Add File: real/nested/file\n+second\n*** End Patch")
+	if err == nil {
+		t.Fatal("accepted duplicate target through alias")
+	}
+
+	if _, err := os.Stat(filepath.Join(root, "real/nested/file")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("duplicate add changed disk: %v", err)
+	}
+}
+
+func TestPatchEOFMatchesSuffix(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "file"), "a\nb\na\n")
+
+	_, err := applyPatch(root, "*** Begin Patch\n*** Update File: file\n@@\n-a\n+last\n*** End of File\n*** End Patch")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assertContent(t, filepath.Join(root, "file"), "a\nb\nlast\n")
+	if _, err := applyChunks("a\nb\na\n", []patchChunk{
+		{anchor: "b", oldLines: []string{"a"}},
+		{oldLines: []string{"a"}, endOfFile: true},
+	}); err == nil {
+		t.Fatal("EOF hunk searched behind the cursor")
+	}
+}
+
 func TestApplyChunksPreservesForwardMatchingAndNewlines(t *testing.T) {
 	for _, trailing := range []string{"", "\n"} {
 		content := "head\na\nb\nanchor\nc\ntail" + trailing
