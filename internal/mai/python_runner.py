@@ -4,12 +4,26 @@ import ast
 import __future__
 import json
 import os
+import signal
 import sys
 import traceback
 import types
 
 
 def main():
+    # Only Mai holds the writing end of this pipe. A separate process can
+    # stop a cell even when it blocks in native code or Mai dies by SIGKILL.
+    if os.fork() == 0:
+        for fd in range(5):
+            os.close(fd)
+        try:
+            while os.read(5, 1):
+                pass
+        finally:
+            os.killpg(os.getpgrp(), signal.SIGKILL)
+        os._exit(0)
+    os.close(5)
+
     requests = os.fdopen(3, "r", encoding="utf-8")
     responses = os.fdopen(4, "w", encoding="utf-8")
     module = types.ModuleType("__main__")
@@ -31,10 +45,13 @@ def main():
             if tree.body and isinstance(tree.body[-1], ast.Expr):
                 expression = ast.Expression(tree.body.pop().value)
             program = compile(tree, "<mai>", "exec", flags=flags)
-            flags |= program.co_flags & future_mask
+            next_flags = flags | (program.co_flags & future_mask)
+            if expression is not None:
+                expression = compile(expression, "<mai>", "eval", flags=next_flags)
+            flags = next_flags
             exec(program, namespace)
             if expression is not None:
-                value = eval(compile(expression, "<mai>", "eval", flags=flags), namespace)
+                value = eval(expression, namespace)
                 if value is not None:
                     print(repr(value))
         except BaseException:

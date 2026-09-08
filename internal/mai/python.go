@@ -27,6 +27,7 @@ type pythonKernel struct {
 	response   *os.File
 	stdout     *os.File
 	stderr     *os.File
+	lifetime   *os.File
 	wait       chan error
 	generation int
 }
@@ -47,17 +48,24 @@ type pythonResult struct {
 	DurationMS   int64  `json:"duration_ms"`
 }
 
-func (k *pythonKernel) close() {
+func (k *pythonKernel) stop() {
 	if k.cmd == nil {
 		return
 	}
 	_ = syscall.Kill(-k.cmd.Process.Pid, syscall.SIGKILL)
+	_ = k.lifetime.Close()
 	_ = k.request.Close()
 	_ = k.response.Close()
-	_ = k.stdout.Close()
-	_ = k.stderr.Close()
 	<-k.wait
 	k.cmd = nil
+}
+
+func (k *pythonKernel) close() {
+	k.stop()
+	if k.stdout != nil {
+		_ = k.stdout.Close()
+		_ = k.stderr.Close()
+	}
 }
 
 func (k *pythonKernel) start(cwd string) error {
@@ -100,9 +108,13 @@ func (k *pythonKernel) start(cwd string) error {
 	if err != nil {
 		return err
 	}
+	lifetimeR, lifetimeW, err := pipe()
+	if err != nil {
+		return err
+	}
 	cmd := exec.Command(path, "-u", "-c", pythonRunner)
 	cmd.Dir = cwd
-	cmd.ExtraFiles = []*os.File{requestR, responseW}
+	cmd.ExtraFiles = []*os.File{requestR, responseW, lifetimeR}
 	cmd.Stdout, cmd.Stderr = stdoutW, stderrW
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
@@ -110,6 +122,7 @@ func (k *pythonKernel) start(cwd string) error {
 	}
 	k.cmd, k.request, k.response = cmd, requestW, responseR
 	k.stdout, k.stderr = stdoutR, stderrR
+	k.lifetime = lifetimeW
 	k.generation++
 	wait := make(chan error, 1)
 	k.wait = wait
@@ -117,7 +130,7 @@ func (k *pythonKernel) start(cwd string) error {
 		wait <- cmd.Wait()
 		close(wait)
 	}()
-	files = []*os.File{requestR, responseW, stdoutW, stderrW}
+	files = []*os.File{requestR, responseW, stdoutW, stderrW, lifetimeR}
 	return nil
 }
 
@@ -205,21 +218,32 @@ func (k *pythonKernel) execute(parent context.Context, cwd, code string, reset b
 		done <- err
 	}()
 	var failure error
+	stop := func() {
+		k.stop()
+		// Keep buffered output after a crash. A descendant outside the group
+		// can hold these pipes open, so draining must have a deadline.
+		deadline := time.Now().Add(time.Second)
+		_ = k.stdout.SetReadDeadline(deadline)
+		_ = k.stderr.SetReadDeadline(deadline)
+	}
 	for remaining := 3; remaining > 0; remaining-- {
 		select {
 		case err := <-done:
 			if err != nil && failure == nil {
 				failure = err
-				k.close()
+				stop()
 			}
 		case <-ctx.Done():
 			if failure == nil {
 				failure = ctx.Err()
-				k.close()
+				stop()
 			}
-			// Collect all workers after closing their descriptors.
+			// Collect all workers after stopping the process and bounding reads.
 			<-done
 		}
+	}
+	if failure != nil {
+		k.close()
 	}
 	result.OK = failure == nil && *status.OK
 	result.Stdout, result.Stderr = stdout.String(), stderr.String()
