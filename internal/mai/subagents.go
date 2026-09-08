@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -115,23 +114,18 @@ func loadCustomAgentFile(path string) (customAgent, error) {
 		return customAgent{}, err
 	}
 	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return customAgent{}, err
-	}
-	if !info.Mode().IsRegular() {
+
+	content, err := readBoundedFile(file, maxAgentFileBytes)
+	if errors.Is(err, errNotRegularFile) {
 		return customAgent{}, errors.New("agent configuration is not a regular file")
 	}
-	if info.Size() > maxAgentFileBytes {
+	if errors.Is(err, errFileTooLarge) {
 		return customAgent{}, fmt.Errorf("agent configuration exceeds %d bytes", maxAgentFileBytes)
 	}
-	content, err := io.ReadAll(io.LimitReader(file, maxAgentFileBytes+1))
 	if err != nil {
 		return customAgent{}, err
 	}
-	if len(content) > maxAgentFileBytes {
-		return customAgent{}, fmt.Errorf("agent configuration exceeds %d bytes", maxAgentFileBytes)
-	}
+
 	return parseCustomAgent(string(content))
 }
 

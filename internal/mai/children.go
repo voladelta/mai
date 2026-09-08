@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"sync"
 	"syscall"
@@ -66,20 +65,15 @@ func openChildRegistry(path string) (*childRegistry, error) {
 		return nil, fmt.Errorf("read child journal: %w", err)
 	}
 	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() || info.Size() > maxChildJournalBytes {
+
+	data, err := readBoundedFile(file, maxChildJournalBytes)
+	if errors.Is(err, errNotRegularFile) || errors.Is(err, errFileTooLarge) {
 		return nil, errors.New("child journal is not a bounded regular file")
 	}
-	data, err := io.ReadAll(io.LimitReader(file, maxChildJournalBytes+1))
 	if err != nil {
 		return nil, err
 	}
-	if len(data) > maxChildJournalBytes {
-		return nil, errors.New("child journal exceeds size limit")
-	}
+
 	if err := json.Unmarshal(data, &r.recovered); err != nil {
 		return nil, fmt.Errorf("parse child journal: %w", err)
 	}

@@ -363,6 +363,7 @@ func secureSkillDir(root, id string) (string, error) {
 }
 
 func readBoundedRegularFile(path string) ([]byte, error) {
+	// Reject special files before opening, which could block on a FIFO.
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, err
@@ -370,13 +371,24 @@ func readBoundedRegularFile(path string) ([]byte, error) {
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("%s is not a regular file", path)
 	}
-	if info.Size() > maxSkillFileBytes {
-		return nil, fmt.Errorf("%s exceeds the %d byte skill file limit", path, maxSkillFileBytes)
-	}
-	b, err := os.ReadFile(path)
+
+	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
+	defer file.Close()
+
+	b, err := readBoundedFile(file, maxSkillFileBytes)
+	if errors.Is(err, errNotRegularFile) {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	if errors.Is(err, errFileTooLarge) {
+		return nil, fmt.Errorf("%s exceeds the %d byte skill file limit", path, maxSkillFileBytes)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+
 	return b, nil
 }
 
