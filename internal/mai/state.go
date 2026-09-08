@@ -20,15 +20,16 @@ type taskConfig struct {
 }
 
 type session struct {
-	Version       int               `json:"version"`
-	ID            string            `json:"id"`
-	CWD           string            `json:"cwd"`
-	RepoRoot      string            `json:"repo_root"`
-	Model         string            `json:"model"`
-	Effort        string            `json:"effort"`
-	RequestEffort string            `json:"request_effort,omitempty"`
-	ContextTokens int64             `json:"context_tokens,omitempty"`
-	History       []json.RawMessage `json:"history"`
+	Version          int               `json:"version"`
+	ID               string            `json:"id"`
+	CWD              string            `json:"cwd"`
+	RepoRoot         string            `json:"repo_root"`
+	Model            string            `json:"model"`
+	Effort           string            `json:"effort"`
+	RequestEffort    string            `json:"request_effort,omitempty"`
+	ContextTokens    int64             `json:"context_tokens,omitempty"`
+	History          []json.RawMessage `json:"history"`
+	PythonActivities []pythonActivity  `json:"python_activities,omitempty"`
 }
 
 type sessionPaths struct {
@@ -206,6 +207,12 @@ func saveJSON(path string, value any) error {
 }
 
 func repairInterruptedToolCalls(sess *session) error {
+	for i := range sess.PythonActivities {
+		if sess.PythonActivities[i].Status == "pending" {
+			sess.PythonActivities[i].Status = "unknown"
+		}
+	}
+
 	pending := make(map[string]functionCall)
 	var order []string
 	for _, raw := range sess.History {
@@ -240,6 +247,19 @@ func repairInterruptedToolCalls(sess *session) error {
 			"error":       "the previous mai process stopped before this tool call output was saved; the tool outcome is unknown",
 			"instruction": interruptedToolInstruction(call.Name),
 		}
+		var activities []pythonActivity
+		for _, activity := range sess.PythonActivities {
+			if activity.OuterCallID == callID {
+				activities = append(activities, activity)
+			}
+		}
+		if len(activities) > 0 {
+			summaries, omitted := summarizePythonActivities(activities)
+			recovery["activities"] = summaries
+			if omitted > 0 {
+				recovery["activities_omitted"] = omitted
+			}
+		}
 		recoveryJSON, err := json.Marshal(recovery)
 		if err != nil {
 			return err
@@ -254,6 +274,15 @@ func repairInterruptedToolCalls(sess *session) error {
 		}
 		sess.appendEstimatedHistory(output)
 	}
+	// Recovered calls now contain their activity summaries in the outer
+	// output. Persist that transfer atomically without retaining old journals.
+	kept := sess.PythonActivities[:0]
+	for _, activity := range sess.PythonActivities {
+		if _, exists := pending[activity.OuterCallID]; !exists {
+			kept = append(kept, activity)
+		}
+	}
+	sess.PythonActivities = kept
 	return nil
 }
 

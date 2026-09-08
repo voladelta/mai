@@ -142,6 +142,8 @@ The optional `python` tool starts a Python subprocess on its first cell. Install
 Python 3.9 or newer on `PATH`, or set `MAI_PYTHON` to a Python executable. An active
 virtual environment works through `PATH`. Mai does not install Python packages.
 For example, use `MAI_PYTHON=python3.14 mai "explore sales.csv"` to select Python 3.14.
+Use `MAI_PYTHON=python3.14t` to select an installed free-threaded build. The default
+remains `python3`.
 
 Send `{"code":"..."}` to execute a cell or `{"reset":true}` to discard the
 environment. Imports, variables, functions, and SQLite connections remain between
@@ -151,19 +153,89 @@ For exploration, prefer read-only SQLite connections and selected summaries of
 large datasets. Each cell uses the `--timeout` limit and the same 64 KiB per-stream
 head-and-tail output limits as Bash. Tracebacks are part of stderr.
 
+Cells support top-level `await`, `async for`, and `async with`. Sync and async
+cells execute on the same Python thread, so SQLite connections remain usable.
+One event loop persists between async cells; synchronous `asyncio.run(...)`
+snippets still work. A returned awaitable is printed as a value unless the code
+explicitly awaits it.
+
+The preloaded `mai` module calls the existing Go tools:
+
+```python
+listing = await mai.bash("rg --files", timeout_ms=10_000)
+paths = listing["stdout"].splitlines()
+len(paths)
+```
+
+`await mai.apply_patch(patch)` applies a repository patch, and
+`await mai.spawn_subagent(name, prompt)` returns a completed child result.
+These calls use the same validation, approvals, and repository boundaries as
+direct tool calls. Children cannot spawn children. Host operations run in
+sequence, with at most eight pending requests and 64 calls per cell. Read-only
+child status requests do not consume the 64-call budget. The bridge
+accepts calls only from the cell's Python thread. It does not expose recursive
+Python calls.
+
+Use `mai.spawn` for background work when subagent use is authorized:
+
+```python
+first = await mai.spawn("repo_scout", "Inspect the storage code")
+second = await mai.spawn("repo_scout", "Inspect the API code")
+# Both children run independently, including between cells.
+first_result = await first.wait()
+second_result = await second.wait()
+```
+
+`await first.status()` returns the child ID, name, status, and terminal result
+when available. `await first.cancel()` cancels and reaps the child, then returns
+its terminal status and result. Cancellation is idempotent. Repeated waits return
+the same result. Cancelling a wait, including with `asyncio.wait_for`, leaves the
+child running. Waiting polls every 100 ms and does not block other host operations.
+
+Go owns a maximum of four active background children and 64 retained background
+child records per task, including across Python resets and persisted-task
+resumes. Admission rejects overload; it never queues or retries a child. Start a
+new task after the retained record limit is reached. Handles survive cells,
+ordinary Python exceptions, and conversation compaction. Reset, kernel loss, parent
+cancellation, and shutdown cancel and reap children. Each child has its own
+`--timeout` deadline, independent of its spawning cell. Ordinary leftover Python
+tasks are still cancelled at cell completion.
+
+Persisted tasks keep a bounded `.children.json` journal beside the session file.
+Admission is saved before the process starts, and completion is saved even when
+Python is idle. A save failure prevents new admissions; an unsaved result has an
+unknown outcome. On restart, no live handles are restored. Unfinished children
+become unknown, and saved child IDs, statuses, and short result summaries appear
+in task guidance. Inspect effects before deciding whether new work is safe;
+Mai never relaunches a recovered child automatically.
+
 State survives conversation compaction, but ends when Mai exits. `--last` restores
 conversation history only; it starts a new Python environment. Results report the
 kernel generation (local to this run), whether it is fresh, and whether state was
 lost. Reset is lazy: the next cell starts the next generation. Save explicit files
 for durable work; Mai does not snapshot variables or replay cells.
 
+Results include the Python version, executable, and GIL status. Tracebacks use
+cell filenames such as `<mai:g2:c7>`; a bounded source cache retains recent cell
+text. In persisted tasks, Mai journals nested host calls before dispatch and
+saves their results. The outer Python result includes bounded activity summaries;
+large arguments and results are abbreviated, with omitted activities counted.
+An interrupted pending operation has an unknown outcome on resume; it is never
+replayed automatically.
+
 An exception can leave partial changes in the namespace. A timeout, cancellation,
-or kernel failure discards it and kills the process group. External effects can
-remain; failed cells are never retried automatically. Python is not sandboxed and
-has Mai's OS access. Interactive input and top-level `await` are unsupported. Cells
-must finish all background threads and subprocess work before returning; output
-from work left running cannot be attributed reliably. Native libraries must flush
-their own buffered output before the cell returns.
+or kernel failure discards it and stops owned processes. Owner-lifetime watchers
+also stop the Python, Bash, and child-agent process groups if Mai is forcibly
+killed. Descendants that deliberately leave those process groups are outside this
+cleanup. External effects can remain; failed cells are never retried automatically.
+Python is not sandboxed and has Mai's OS access. Interactive input is unsupported.
+
+Await all async work before returning. Mai cancels remaining cell tasks and waits
+for active host calls to finish; the cell timeout discards a kernel that cannot
+finish cleanup. Cells must finish scheduled callbacks, background threads, and
+subprocess work before returning; output from work left running cannot be
+attributed reliably. Native libraries must flush their own buffered output before
+the cell returns.
 
 ## Authentication
 
@@ -207,8 +279,9 @@ updates so an effort change can preserve the cached prefix. Cache hits still
 depend on the backend and cache lifetime. Compacting history starts a new prompt
 prefix at the selected effort.
 
-Async tool calling is not enabled. Tools and child agents run in sequence.
-Mid-turn steering is not enabled.
+Model tool calls and synchronous `spawn_subagent` calls run in sequence. Python
+cells can await host tools, whose operations also run in sequence. Children
+started with `mai.spawn` run concurrently. Mid-turn steering is not enabled.
 
 Children never create their own saved tasks. A persisted parent saves the
 `spawn_subagent` call and its returned result in the parent task history.

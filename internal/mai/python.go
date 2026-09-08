@@ -9,9 +9,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -30,30 +30,43 @@ type pythonKernel struct {
 	lifetime   *os.File
 	wait       chan error
 	generation int
+	cell       int
+	runtime    *pythonRuntime
+	messages   chan pythonMessage
+	readStop   chan struct{}
+	children   *childRegistry
 }
 
 type pythonResult struct {
-	OK           bool   `json:"ok"`
-	Generation   int    `json:"generation"`
-	Fresh        bool   `json:"fresh"`
-	StateLost    bool   `json:"state_lost"`
-	Error        string `json:"error,omitempty"`
-	Stdout       string `json:"stdout"`
-	Stderr       string `json:"stderr"`
-	Truncated    bool   `json:"truncated"`
-	StdoutBytes  int64  `json:"stdout_bytes"`
-	StderrBytes  int64  `json:"stderr_bytes"`
-	OmittedBytes int64  `json:"omitted_bytes"`
-	TimedOut     bool   `json:"timed_out"`
-	DurationMS   int64  `json:"duration_ms"`
+	OK                bool                    `json:"ok"`
+	Generation        int                     `json:"generation"`
+	Fresh             bool                    `json:"fresh"`
+	StateLost         bool                    `json:"state_lost"`
+	Error             string                  `json:"error,omitempty"`
+	Stdout            string                  `json:"stdout"`
+	Stderr            string                  `json:"stderr"`
+	Truncated         bool                    `json:"truncated"`
+	StdoutBytes       int64                   `json:"stdout_bytes"`
+	StderrBytes       int64                   `json:"stderr_bytes"`
+	OmittedBytes      int64                   `json:"omitted_bytes"`
+	TimedOut          bool                    `json:"timed_out"`
+	DurationMS        int64                   `json:"duration_ms"`
+	Cell              int                     `json:"cell"`
+	Runtime           *pythonRuntime          `json:"runtime,omitempty"`
+	Activities        []pythonActivitySummary `json:"activities,omitempty"`
+	ActivitiesOmitted int                     `json:"activities_omitted,omitempty"`
 }
 
 func (k *pythonKernel) stop() {
+	if k.children != nil {
+		k.children.stop()
+	}
 	if k.cmd == nil {
 		return
 	}
 	_ = syscall.Kill(-k.cmd.Process.Pid, syscall.SIGKILL)
 	_ = k.lifetime.Close()
+	close(k.readStop)
 	_ = k.request.Close()
 	_ = k.response.Close()
 	<-k.wait
@@ -112,7 +125,7 @@ func (k *pythonKernel) start(cwd string) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(path, "-u", "-c", pythonRunner)
+	cmd := exec.Command(path, "-u", "-c", pythonRunner, strconv.Itoa(k.generation+1))
 	cmd.Dir = cwd
 	cmd.ExtraFiles = []*os.File{requestR, responseW, lifetimeR}
 	cmd.Stdout, cmd.Stderr = stdoutW, stderrW
@@ -124,10 +137,19 @@ func (k *pythonKernel) start(cwd string) error {
 	k.stdout, k.stderr = stdoutR, stderrR
 	k.lifetime = lifetimeW
 	k.generation++
+	k.runtime = nil
+	k.messages = make(chan pythonMessage, maxPythonPending)
+	k.readStop = make(chan struct{})
+	go readPythonFrames(responseR, k.messages, k.readStop)
 	wait := make(chan error, 1)
 	k.wait = wait
+	children := k.children
 	go func() {
-		wait <- cmd.Wait()
+		err := cmd.Wait()
+		if children != nil {
+			children.stop()
+		}
+		wait <- err
 		close(wait)
 	}()
 	files = []*os.File{requestR, responseW, stdoutW, stderrW, lifetimeR}
@@ -157,7 +179,7 @@ func drainPythonOutput(file *os.File, marker []byte, output *cappedBuffer) error
 	}
 }
 
-func (k *pythonKernel) execute(parent context.Context, cwd, code string, reset bool, timeout time.Duration) pythonResult {
+func (k *pythonKernel) execute(parent context.Context, cwd, code string, reset bool, timeout time.Duration, hosts ...pythonHostHandler) pythonResult {
 	started := time.Now()
 	result := pythonResult{Generation: k.generation}
 	if reset {
@@ -195,6 +217,12 @@ func (k *pythonKernel) execute(parent context.Context, cwd, code string, reset b
 	}
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
+	k.cell++
+	result.Cell = k.cell
+	var host pythonHostHandler
+	if len(hosts) > 0 {
+		host = hosts[0]
+	}
 	var random [24]byte
 	_, _ = rand.Read(random[:])
 	marker := "\x00mai-" + hex.EncodeToString(random[:]) + "\x00"
@@ -203,22 +231,15 @@ func (k *pythonKernel) execute(parent context.Context, cwd, code string, reset b
 	done := make(chan error, 3)
 	go func() { done <- drainPythonOutput(k.stdout, []byte(marker), &stdout) }()
 	go func() { done <- drainPythonOutput(k.stderr, []byte(marker), &stderr) }()
-	var status struct {
-		OK *bool `json:"ok"`
-	}
+	var status bool
 	go func() {
-		err := json.NewEncoder(k.request).Encode(map[string]string{"code": code, "marker": marker})
-		if err == nil {
-			// The runner's status is tiny. Bound a broken protocol response too.
-			err = json.NewDecoder(io.LimitReader(k.response, 1024)).Decode(&status)
-			if err == nil && status.OK == nil {
-				err = errors.New("invalid Python status")
-			}
-		}
+		var err error
+		status, err = k.runProtocol(ctx, code, marker, host)
 		done <- err
 	}()
 	var failure error
 	stop := func() {
+		cancel()
 		k.stop()
 		// Keep buffered output after a crash. A descendant outside the group
 		// can hold these pipes open, so draining must have a deadline.
@@ -245,7 +266,8 @@ func (k *pythonKernel) execute(parent context.Context, cwd, code string, reset b
 	if failure != nil {
 		k.close()
 	}
-	result.OK = failure == nil && *status.OK
+	result.OK = failure == nil && status
+	result.Runtime = k.runtime
 	result.Stdout, result.Stderr = stdout.String(), stderr.String()
 	result.StdoutBytes, result.StderrBytes = stdout.TotalBytes(), stderr.TotalBytes()
 	result.OmittedBytes = stdout.OmittedBytes() + stderr.OmittedBytes()
@@ -255,13 +277,13 @@ func (k *pythonKernel) execute(parent context.Context, cwd, code string, reset b
 	if failure != nil {
 		result.StateLost = true
 		result.Error = fmt.Sprintf("Python stopped: %v. State was lost; external effects may have completed. Do not replay the cell automatically.", failure)
-	} else if !*status.OK {
+	} else if !status {
 		result.Error = "Python cell failed; partial changes remain in the namespace."
 	}
 	return result
 }
 
-func (a *agent) executePython(ctx context.Context, sess *session, arguments string) json.RawMessage {
+func (a *agent) executePython(ctx context.Context, sess *session, arguments string, outerCall string) json.RawMessage {
 	var args map[string]json.RawMessage
 	err := json.Unmarshal([]byte(arguments), &args)
 	var code string
@@ -284,5 +306,37 @@ func (a *agent) executePython(ctx context.Context, sess *session, arguments stri
 		return textToolOutput(toolError("invalid python arguments", err))
 	}
 	fmt.Fprintln(a.stderr, "→ python")
-	return textToolOutput(marshalToolResult(a.python.execute(ctx, sess.CWD, code, reset, a.timeout)))
+	if err := a.prepareChildren(); err != nil {
+		a.children = &childRegistry{runs: make(map[string]*childRun), failure: err}
+	}
+	if a.python.cmd == nil && a.children.isClosed() {
+		a.children = a.children.nextGeneration()
+	}
+	a.python.children = a.children
+	start := len(sess.PythonActivities)
+	host := a.pythonHost(sess, outerCall)
+	result := a.python.execute(ctx, sess.CWD, code, reset, a.timeout, func(cellCtx context.Context, generation, cell, call int, name string, args json.RawMessage) (json.RawMessage, error) {
+		if name == "spawn" || name == "child_status" || name == "child_cancel" {
+			activity := pythonActivity{OuterCallID: outerCall, Generation: generation, Cell: cell, Call: call, Name: name, Arguments: args}
+			raw, err := a.childHost(ctx, sess, activity)
+			if name != "child_status" {
+				activity.Status = "admitted"
+				if name == "child_cancel" {
+					activity.Status = "cancel_requested"
+				}
+				var outcome struct {
+					Error string `json:"error"`
+				}
+				if err != nil || json.Unmarshal(raw, &outcome) != nil || outcome.Error != "" {
+					activity.Status = "failed"
+				}
+				activity.Result = raw
+				sess.PythonActivities = append(sess.PythonActivities, activity)
+			}
+			return raw, err
+		}
+		return host(cellCtx, generation, cell, call, name, args)
+	})
+	result.Activities, result.ActivitiesOmitted = summarizePythonActivities(sess.PythonActivities[start:])
+	return textToolOutput(marshalToolResult(result))
 }

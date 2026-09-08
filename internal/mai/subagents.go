@@ -299,6 +299,10 @@ func renderSubagentInstructions(agents map[string]customAgent) string {
 - spawn_subagent runs one installed custom agent synchronously and returns its final output.
 - Use it when the user, an applicable skill, or repository instructions request that custom agent.
 - A child cannot spawn another child.
+- Python await mai.spawn(name, prompt) returns a background handle promptly. For two concurrent children: first = await mai.spawn(name, prompt); second = await mai.spawn(name, other_prompt); then collect await first.wait() and await second.wait().
+- Handles support async status(), cancel(), and repeatable wait(). cancel() reaps the child and returns its terminal status/result. Cancelling a wait leaves its child running. Status polling does not use the 64 ordinary host-call quota.
+- Go owns children across cells, ordinary Python exceptions, and compaction. Ordinary leftover Python Tasks are cancelled. Reset, state loss, parent cancellation, and shutdown cancel/reap children. Each child has the agent timeout independent of its spawning cell.
+- Limits: 4 active background children and 64 retained background child records per task, including resets/resumes; overload rejects. Start a new task after reaching the retained record limit. On restart no live handles return; unfinished saved children become unknown. Never relaunch automatically.
 
 Available custom agents:`)
 	for _, name := range names {
@@ -317,16 +321,13 @@ func customAgentInstructions(agent *customAgent) string {
 func runSubagentProcess(parent context.Context, executable string, timeout time.Duration, cwd string, name, prompt string) string {
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, executable, "--subagent", name, "--timeout", timeout.String(), "--", prompt)
-	cmd.Dir = cwd
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error {
-		if cmd.Process == nil {
-			return nil
-		}
-		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	cmd, cleanup, err := ownedCommand(ctx, executable, "--subagent", name, "--timeout", timeout.String(), "--", prompt)
+	if err != nil {
+		return toolError("start subagent", err)
 	}
-	cmd.WaitDelay = 2 * time.Second
+	defer cleanup()
+	cmd.Dir = cwd
+	cmd.Env = cleanShellEnv(cmd.Environ())
 	var stdout, stderr cappedBuffer
 	stdout.max = maxToolStreamBytes
 	stderr.max = maxToolStreamBytes

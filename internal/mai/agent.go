@@ -33,6 +33,7 @@ type agent struct {
 	executable    string
 	timeout       time.Duration
 	python        pythonKernel
+	children      *childRegistry
 }
 
 type functionCall struct {
@@ -78,6 +79,9 @@ func newAgent(stdout, stderr io.Writer, sessionPath string, timeout time.Duratio
 
 func (a *agent) run(ctx context.Context, sess *session, userPrompt string) error {
 	defer a.python.close()
+	if err := a.prepareChildren(); err != nil {
+		return err
+	}
 	interactive := isTerminalWriter(a.stderr)
 	if interactive {
 		fmt.Fprintln(a.stderr, "→ thinking")
@@ -87,6 +91,7 @@ func (a *agent) run(ctx context.Context, sess *session, userPrompt string) error
 		a.loadSkillInstructions(userPrompt),
 		a.loadSubagentInstructions(),
 	)
+	instructions += a.children.recoveryInstructions()
 	if sess.ContextTokens == 0 {
 		sess.ContextTokens = estimateHistoryTokens(sess.History) + (int64(len(instructions))+3)/4
 	}
@@ -244,6 +249,15 @@ func (a *agent) executeCalls(ctx context.Context, sess *session, calls []functio
 			return fmt.Errorf("encode tool output: %w", err)
 		}
 		sess.appendEstimatedHistory(item)
+		if call.Name == "python" {
+			kept := sess.PythonActivities[:0]
+			for _, activity := range sess.PythonActivities {
+				if activity.OuterCallID != call.CallID {
+					kept = append(kept, activity)
+				}
+			}
+			sess.PythonActivities = kept
+		}
 		if a.sessionPath != "" {
 			if err := saveJSON(a.sessionPath, sess); err != nil {
 				return fmt.Errorf("save tool output: %w", err)
@@ -298,7 +312,7 @@ func (a *agent) executeTool(ctx context.Context, sess *session, call functionCal
 	case "bash":
 		return a.executeBash(ctx, sess, call.Arguments)
 	case "python":
-		return a.executePython(ctx, sess, call.Arguments)
+		return a.executePython(ctx, sess, call.Arguments, call.CallID)
 	case "apply_patch":
 		return a.executePatch(sess, call.Arguments)
 	default:
@@ -314,20 +328,8 @@ func (a *agent) executeSpawnSubagent(ctx context.Context, sess *session, argumen
 	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
 		return textToolOutput(toolError("invalid spawn_subagent arguments", err))
 	}
-	if a.customAgent != nil {
-		return textToolOutput(toolError("spawn_subagent failed", errors.New("a subagent cannot spawn another subagent")))
-	}
-	if err := validateSubagentName(args.Name); err != nil {
+	if err := a.validateChild(args.Name, args.Prompt); err != nil {
 		return textToolOutput(toolError("spawn_subagent failed", err))
-	}
-	if strings.TrimSpace(args.Prompt) == "" {
-		return textToolOutput(toolError("spawn_subagent failed", errors.New("prompt is empty")))
-	}
-	if len(args.Prompt) > maxSubagentPromptBytes {
-		return textToolOutput(toolError("spawn_subagent failed", fmt.Errorf("prompt exceeds %d bytes", maxSubagentPromptBytes)))
-	}
-	if _, ok := a.customAgents[args.Name]; !ok {
-		return textToolOutput(toolError("spawn_subagent failed", fmt.Errorf("custom agent %q is not available", args.Name)))
 	}
 	fmt.Fprintf(a.stderr, "→ subagent: %s\n", args.Name)
 	raw := runSubagentProcess(ctx, a.executable, a.timeout, sess.CWD, args.Name, args.Prompt)
@@ -340,6 +342,25 @@ func (a *agent) executeSpawnSubagent(ctx context.Context, sess *session, argumen
 		fmt.Fprintf(a.stderr, "← subagent: %s %s (%s)\n", args.Name, status, time.Duration(result.DurationMS)*time.Millisecond)
 	}
 	return textToolOutput(raw)
+}
+
+func (a *agent) validateChild(name, prompt string) error {
+	if a.customAgent != nil {
+		return errors.New("a subagent cannot spawn another subagent")
+	}
+	if err := validateSubagentName(name); err != nil {
+		return err
+	}
+	if strings.TrimSpace(prompt) == "" {
+		return errors.New("prompt is empty")
+	}
+	if len(prompt) > maxSubagentPromptBytes {
+		return fmt.Errorf("prompt exceeds %d bytes", maxSubagentPromptBytes)
+	}
+	if _, ok := a.customAgents[name]; !ok {
+		return fmt.Errorf("custom agent %q is not available", name)
+	}
+	return nil
 }
 
 func (a *agent) executeReadSkill(arguments string) json.RawMessage {

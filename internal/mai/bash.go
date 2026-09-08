@@ -1,7 +1,6 @@
 package mai
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,7 +19,7 @@ const (
 	maxToolStreamBytes = 64 << 10
 )
 
-type approvalFunc func(command, reason string) (bool, error)
+type approvalFunc func(context.Context, string, string) (bool, error)
 
 type bashRequest struct {
 	Command   string
@@ -44,19 +43,6 @@ type bashResult struct {
 }
 
 func runBash(parent context.Context, req bashRequest) string {
-	if required, reason := requiresRMApproval(req.Command, req.CWD, req.RepoRoot); required {
-		if req.Approve == nil {
-			return toolError("rm approval required", errors.New(reason))
-		}
-		approved, err := req.Approve(req.Command, reason)
-		if err != nil {
-			return toolError("rm approval failed", err)
-		}
-		if !approved {
-			return toolError("rm denied", errors.New(reason))
-		}
-	}
-
 	timeout := defaultBashTimeout
 	if req.TimeoutMS > 0 {
 		timeout = time.Duration(req.TimeoutMS) * time.Millisecond
@@ -66,25 +52,40 @@ func runBash(parent context.Context, req bashRequest) string {
 	}
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "/bin/bash", "-c", req.Command)
-	cmd.Dir = req.CWD
-	cmd.Env = cleanShellEnv(os.Environ())
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error {
-		if cmd.Process == nil {
-			return nil
-		}
-		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	if err := ctx.Err(); err != nil {
+		return toolError("bash cancelled before dispatch", err)
 	}
-	cmd.WaitDelay = 2 * time.Second
+
+	if required, reason := requiresRMApproval(req.Command, req.CWD, req.RepoRoot); required {
+		if req.Approve == nil {
+			return toolError("rm approval required", errors.New(reason))
+		}
+		approved, err := req.Approve(ctx, req.Command, reason)
+		if err != nil {
+			return toolError("rm approval failed", err)
+		}
+		if !approved {
+			return toolError("rm denied", errors.New(reason))
+		}
+	}
+
+	if err := ctx.Err(); err != nil {
+		return toolError("bash cancelled before dispatch", err)
+	}
+	cmd, cleanup, err := ownedCommand(ctx, "/bin/bash", "-c", req.Command)
+	if err != nil {
+		return toolError("start bash", err)
+	}
+	defer cleanup()
+	cmd.Dir = req.CWD
+	cmd.Env = cleanShellEnv(cmd.Environ())
 	var stdout, stderr cappedBuffer
 	stdout.max = maxToolStreamBytes
 	stderr.max = maxToolStreamBytes
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	started := time.Now()
-	err := cmd.Run()
+	err = cmd.Run()
 
 	result := bashResult{
 		OK: err == nil, Stdout: stdout.String(), Stderr: stderr.String(),
@@ -191,17 +192,48 @@ func cleanShellEnv(env []string) []string {
 	return out
 }
 
-func (a *agent) terminalApproval(command, reason string) (bool, error) {
-	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+func (a *agent) terminalApproval(ctx context.Context, command, reason string) (bool, error) {
+	tty, err := os.OpenFile("/dev/tty", os.O_RDWR|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return false, fmt.Errorf("cannot ask for approval without a terminal: %w", err)
 	}
 	defer tty.Close()
+	stop := context.AfterFunc(ctx, func() { _ = tty.Close() })
+	defer stop()
 	fmt.Fprintf(tty, "\nmai wants to run rm outside the repository.\nReason: %s\nCommand: %s\nApprove? [y/N] ", reason, command)
-	answer, err := bufio.NewReader(tty).ReadString('\n')
-	if err != nil {
-		return false, err
+	// Some terminals cannot use Go's runtime poller. Nonblocking reads keep
+	// cancellation bounded on those terminals without leaving a reader behind.
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	var answer strings.Builder
+	var buffer [256]byte
+	for {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		n, err := tty.Read(buffer[:])
+		if n > 0 {
+			part := string(buffer[:n])
+			line, _, complete := strings.Cut(part, "\n")
+			answer.WriteString(line)
+			if answer.Len() > 1024 {
+				return false, errors.New("approval response exceeds 1024 bytes")
+			}
+			if complete {
+				value := strings.ToLower(strings.TrimSpace(answer.String()))
+				return value == "y" || value == "yes", nil
+			}
+		}
+		if err != nil && !errors.Is(err, syscall.EAGAIN) && !errors.Is(err, syscall.EINTR) {
+			if ctx.Err() != nil {
+				return false, ctx.Err()
+			}
+			return false, err
+		}
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-ticker.C:
+		}
 	}
-	answer = strings.ToLower(strings.TrimSpace(answer))
-	return answer == "y" || answer == "yes", nil
 }

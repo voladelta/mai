@@ -20,7 +20,7 @@ Authority
 
 Tools
 - bash: read or search files and run commands or tests.
-- python: explore data; variables survive cells and compaction. Every run, including --last, starts fresh; history cannot restore variables. Check generation/fresh/state_lost. Exceptions retain partial changes. Never replay uncertain cells automatically. Join background work before returning. Prefer read-only SQLite connections; return selected summaries.
+- python: persistent exploration with top-level await. Use await mai.bash(command), mai.apply_patch(patch), or mai.spawn_subagent(name, prompt) under existing rules. Subagent instructions explain background mai.spawn handles. Ordinary leftover Tasks are cancelled. Variables survive compaction. Every run, including --last, starts fresh. Check generation/fresh/state_lost. Exceptions retain partial changes. Never replay uncertain cells automatically. Prefer read-only SQLite and selected summaries.
 - apply_patch: create, update, move, or delete repository files. Use it for file edits.
 
 Recovery
