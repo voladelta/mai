@@ -1,0 +1,18 @@
+Create a contemporary editorial raster banner for the coding-agent project mai, landscape 3:1, ideally 2400 by 800 pixels. Flat front-facing print on Cool Gray neutral paper #E9E9E5, chosen for a technology subject. Pure one-ink mode: Cobalt #2148B8 alone carries type, rules and screening through density changes.
+
+Use a type-led declaration composition, assertive tension, exactly one focal event: oversized type. Set a huge fully readable lowercase mai across the upper-left and central area, occupying approximately 65% of the composition's width. Maintain 6% outer margins, an asymmetric two-column grid, and 40% visibly empty paper. The quiet release zone is open paper in the upper-right. A single short hand-drawn cobalt underline beneath the title is the only manual gesture. No unresolved edge; keep all letters inside the canvas.
+
+The subject is the word mai as a physical printed typographic object, expressing a small coding agent. Use strong engineered letter silhouettes with medium mechanical halftone screening in portions of the big letters and solid cobalt elsewhere. Exposed paper forms crisp letter counters and clipped ink highlights. No separate illustration or icon sequence.
+
+Use the Typographic Object role: oversized bold grotesk display plus minimal monospaced support, with a 12:1 scale ratio. The sole type behavior is word-as-object. Exact display title: "mai". Exact subordinate phrase: "Small coding agent". Exact smaller factual lines: "6 tools / skills / subagents" and "Persistent Python" and "macOS + Linux". Place this compact support group below and tightly aligned to the right edge of the oversized title, locking it to the title's lower edge. Keep support text clean, readable, and clearly subordinate. No other text.
+
+Use visible regular printing dots, subtle ink-density variation, clean paper, and crisp edges. No yellowing, distress, gradients, glossy photography, shadows, 3D, UI panels, cards, frames, decorative blobs, logos, icons, fake marks, marketing copy or extra colors. Make a fresh composition with large title above and support below, no full-width rule or modular icon diagram.
+REVISION PROMPT (applied to the initial generated banner)
+
+Edit the supplied Mai banner. Preserve its 3:1 dimensions, exact lowercase mai title, all existing wording and spelling, cobalt #2148B8 single ink, neutral paper, halftone treatment, and left-side typography.
+
+Fill the currently excessive blank right third with one coherent editorial line illustration of a coding agent coordinating tools: a large terminal prompt symbol >_ at the center of the right third, connected by thin orthogonal branching lines to three smaller functional symbols: code brackets { }, a small 3-by-3 data grid, and a pair of branching child nodes for subagents. Make it an integrated open diagram, not boxed cards or a row of badges. Keep every symbol legible and intentional, with generous internal spacing. Diagram should occupy roughly 75% of the available right-side area's width and 60% of its height, centered vertically, with comfortable outer margins. Use medium-weight cobalt lines, solid cobalt nodes, and a small amount of the same mechanical halftone inside the central terminal symbol. No extra text or labels.
+
+Balance the visual weight of the large title with this secondary illustration, while keeping the title dominant. Keep about 30% of the whole canvas exposed quiet paper. One flat printed page, one ink only, no gradients, shadows, 3D, decorative blobs, extra logos, border, or invented publication marks. Retain the existing underline as the only manual gesture. All exact existing copy must remain: mai; Small coding agent; 6 tools / skills / subagents; Persistent Python; macOS + Linux.
+
+INITIAL PROMPT
