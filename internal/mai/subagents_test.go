@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,36 @@ import (
 	"testing"
 	"time"
 )
+
+func TestSubagentResultWireCompatibility(t *testing.T) {
+	result := subagentResult{OK: true, Name: "scout", Output: "done", DurationMS: 12}
+	want := `{"ok":true,"name":"scout","output":"done","exit_code":0,"duration_ms":12,"truncated":false,"output_bytes":0,"stderr_bytes":0,"omitted_bytes":0}`
+	if got := encodeSubagentResult(result, nil); got != want {
+		t.Fatalf("success wire format changed: %s", got)
+	}
+
+	setupErr := errors.New("fixture setup failure")
+	if got := encodeSubagentResult(subagentResult{}, setupErr); got != toolError("start subagent", setupErr) {
+		t.Fatalf("setup error wire format changed: %s", got)
+	}
+}
+
+func TestRunSubagentMissingExecutableReturnsFailedResult(t *testing.T) {
+	root := t.TempDir()
+	result, err := runSubagentProcess(context.Background(), filepath.Join(root, "missing"), time.Second, root, "scout", "test")
+	if err != nil {
+		t.Fatalf("runtime startup failure became setup error: %v", err)
+	}
+
+	if result.OK || result.Name != "scout" || result.Error == "" || result.ExitCode == 0 || result.TimedOut || result.Cancelled {
+		t.Fatalf("unexpected startup failure: %#v", result)
+	}
+
+	decoded := decodeSubagentResult(t, encodeSubagentResult(result, nil))
+	if decoded != result {
+		t.Fatalf("failure result changed at wire boundary: %#v", decoded)
+	}
+}
 
 func TestLoadCustomAgentParsesCodexAgentFile(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "agents")
@@ -122,7 +153,10 @@ printf 'diagnostic\n' >&2
 		t.Fatal(err)
 	}
 
-	result := decodeSubagentResult(t, runSubagentProcess(context.Background(), executable, time.Second, root, "repo_scout", "map the parser"))
+	result, err := runSubagentProcess(context.Background(), executable, time.Second, root, "repo_scout", "map the parser")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !result.OK || result.ExitCode != 0 || result.Name != "repo_scout" {
 		t.Fatalf("subagent result = %#v", result)
 	}
@@ -141,7 +175,10 @@ func TestRunSubagentProcessTimesOutWholeChild(t *testing.T) {
 		t.Fatal(err)
 	}
 	started := time.Now()
-	result := decodeSubagentResult(t, runSubagentProcess(context.Background(), executable, 50*time.Millisecond, t.TempDir(), "repo_scout", "wait"))
+	result, err := runSubagentProcess(context.Background(), executable, 50*time.Millisecond, t.TempDir(), "repo_scout", "wait")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if result.OK || !result.TimedOut || !strings.Contains(result.Error, "timed out") {
 		t.Fatalf("timeout result = %#v", result)
 	}

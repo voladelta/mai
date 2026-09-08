@@ -210,13 +210,13 @@ func (r *childRegistry) spawn(parent context.Context, generation int, executable
 	go func() {
 		defer close(run.done)
 		defer cancel()
-		result := json.RawMessage(runSubagentProcess(ctx, executable, timeout, cwd, name, prompt))
+		outcome, setupErr := runSubagentProcess(ctx, executable, timeout, cwd, name, prompt)
+		result := json.RawMessage(encodeSubagentResult(outcome, setupErr))
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		run.record.Result = result
 		run.record.Status = "completed"
-		var outcome subagentResult
-		if json.Unmarshal(result, &outcome) != nil || !outcome.OK {
+		if setupErr != nil || !outcome.OK {
 			run.record.Status = "failed"
 		}
 		if outcome.Cancelled {

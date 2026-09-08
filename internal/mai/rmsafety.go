@@ -30,7 +30,7 @@ func requiresRMApproval(command, cwd, repoRoot string) (bool, string) {
 	}
 
 	invocations, unclassified := findRMInvocations(tokens)
-	if unclassified {
+	if unclassified && (strings.Contains(command, "rm") || containsRMWord(tokens)) {
 		return true, "rm appears after a command that could not be analyzed safely"
 	}
 	for _, invocation := range invocations {
@@ -48,6 +48,7 @@ func findRMInvocations(tokens []shellToken) ([]rmInvocation, bool) {
 	wrapper := ""
 	wrapperArgument := false
 	directoryMayHaveChanged := false
+	commandMayHaveChanged := false
 	for i := 0; i < len(tokens); i++ {
 		tok := tokens[i]
 		if tok.op {
@@ -78,7 +79,10 @@ func findRMInvocations(tokens []shellToken) ([]rmInvocation, bool) {
 			continue
 		}
 		if wrapped && strings.HasPrefix(tok.text, "-") {
-			wrapperArgument = wrapperOptionNeedsArgument(wrapper, tok.text)
+			option := wrapperOptionEffect(wrapper, tok.text)
+			wrapperArgument = option.argument
+			directoryMayHaveChanged = directoryMayHaveChanged || option.directory
+			commandMayHaveChanged = commandMayHaveChanged || option.command
 			continue
 		}
 		if base != "rm" {
@@ -97,7 +101,7 @@ func findRMInvocations(tokens []shellToken) ([]rmInvocation, bool) {
 		})
 		commandStart = false
 	}
-	return invocations, false
+	return invocations, commandMayHaveChanged
 }
 
 func containsRMWord(tokens []shellToken) bool {
@@ -115,19 +119,44 @@ func containsRMWord(tokens []shellToken) bool {
 	return false
 }
 
-func wrapperOptionNeedsArgument(wrapper, option string) bool {
+type wrapperOption struct {
+	argument  bool
+	directory bool
+	command   bool
+}
+
+func wrapperOptionEffect(wrapper, option string) wrapperOption {
+	name, _, attached := strings.Cut(option, "=")
+	if !strings.HasPrefix(option, "--") && len(option) > 2 {
+		effect := wrapperOptionEffect(wrapper, option[:2])
+		if effect.argument {
+			effect.argument = false
+			return effect
+		}
+
+		rest := wrapperOptionEffect(wrapper, "-"+option[2:])
+		rest.directory = rest.directory || effect.directory
+		rest.command = rest.command || effect.command
+		return rest
+	}
+	effect := wrapperOption{}
 	switch wrapper {
 	case "exec":
-		return option == "-a"
+		effect.argument = name == "-a"
 	case "env":
-		return option == "-u" || option == "--unset" || option == "-C" || option == "--chdir" || option == "-S" || option == "--split-string"
+		effect.directory = name == "-C" || name == "--chdir"
+		effect.command = name == "-S" || name == "--split-string"
+		effect.argument = name == "-u" || name == "--unset" || effect.directory || effect.command
 	case "sudo":
-		switch option {
+		effect.directory = name == "-D" || name == "--chdir" || name == "-R" || name == "--chroot"
+		effect.command = name == "-i" || name == "--login" || name == "-s" || name == "--shell"
+		switch name {
 		case "-C", "--close-from", "-D", "--chdir", "-g", "--group", "-h", "--host", "-p", "--prompt", "-R", "--chroot", "-r", "--role", "-T", "--command-timeout", "-t", "--type", "-U", "--other-user", "-u", "--user":
-			return true
+			effect.argument = true
 		}
 	}
-	return false
+	effect.argument = effect.argument && !attached
+	return effect
 }
 
 func isCommandWrapper(command string) bool {

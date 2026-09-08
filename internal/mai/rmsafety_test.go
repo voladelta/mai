@@ -13,6 +13,31 @@ func TestRMInsideRepositoryDoesNotNeedApproval(t *testing.T) {
 	}
 }
 
+func TestWrapperEffectsRequireRMApproval(t *testing.T) {
+	root := t.TempDir()
+	for _, command := range []string{
+		"env -C /tmp rm victim", "env -C/tmp rm victim", "env --chdir=/tmp rm victim",
+		"env --chdir /tmp command rm victim", "sudo -D /tmp rm victim", "sudo -D/tmp rm victim",
+		"sudo --chdir=/tmp rm victim", "sudo -nD/tmp rm victim", "sudo -R/tmp rm victim",
+		"env -S 'rm victim'", "env '-Srm victim'", "env --split-string='rm victim'",
+		"sudo -i rm victim", "env -u X sudo -n --chdir /tmp command rm victim",
+		`nice r\m /tmp/victim`,
+	} {
+		if required, _ := requiresRMApproval(command, root, root); !required {
+			t.Errorf("%q bypassed approval", command)
+		}
+	}
+
+	for _, command := range []string{
+		"env -uX rm victim", "env --unset=X rm victim", "sudo -nu root rm victim",
+		"sudo --user=root command rm victim", "exec -aname rm victim", "env -S 'printf hello'",
+	} {
+		if required, reason := requiresRMApproval(command, root, root); required {
+			t.Errorf("%q needs unnecessary approval: %s", command, reason)
+		}
+	}
+}
+
 func TestRMOutsideRepositoryNeedsApproval(t *testing.T) {
 	root := t.TempDir()
 	if required, _ := requiresRMApproval("rm -f /tmp/mai-outside", root, root); !required {

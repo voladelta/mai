@@ -3,11 +3,64 @@ package mai
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestApplyChunksPreservesForwardMatchingAndNewlines(t *testing.T) {
+	for _, trailing := range []string{"", "\n"} {
+		content := "head\na\nb\nanchor\nc\ntail" + trailing
+		chunks := []patchChunk{
+			{oldLines: []string{"a", "b"}, newLines: []string{"replacement"}},
+			{anchor: "anchor", oldLines: []string{"c"}, newLines: []string{"c1", "c2"}},
+			{newLines: []string{"insert1"}},
+			{newLines: []string{"insert2"}},
+			{oldLines: []string{"tail"}, newLines: []string{"end"}, endOfFile: true},
+		}
+
+		got, err := applyChunks(content, chunks)
+		want := "head\nreplacement\nanchor\nc1\nc2\ninsert1\ninsert2\nend" + trailing
+		if err != nil || got != want {
+			t.Fatalf("got %q, err=%v; want %q", got, err, want)
+		}
+	}
+
+	if _, err := applyChunks("a\nb\n", []patchChunk{{oldLines: []string{"a"}, endOfFile: true}}); err == nil {
+		t.Fatal("accepted context that does not reach EOF")
+	}
+
+	if _, err := applyChunks("a\nb", []patchChunk{
+		{oldLines: []string{"a"}, newLines: []string{"inserted"}},
+		{anchor: "inserted", newLines: []string{"x"}},
+	}); err == nil {
+		t.Fatal("searched backwards into inserted content")
+	}
+}
+
+func BenchmarkApplyChunksManyHunks(b *testing.B) {
+	for _, count := range []int{100, 1000} {
+		b.Run(fmt.Sprint(count), func(b *testing.B) {
+			lines := make([]string, count)
+			chunks := make([]patchChunk, count)
+			for i := range lines {
+				lines[i] = fmt.Sprintf("line %d", i)
+				chunks[i] = patchChunk{oldLines: []string{lines[i]}, newLines: []string{"updated"}}
+			}
+			content := strings.Join(lines, "\n")
+			b.ReportAllocs()
+			b.ResetTimer()
+
+			for i := 0; i < b.N; i++ {
+				if _, err := applyChunks(content, chunks); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
 
 func TestApplyPatchCreateUpdateMoveDelete(t *testing.T) {
 	root := t.TempDir()

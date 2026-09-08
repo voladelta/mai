@@ -36,6 +36,39 @@ func awaitChild(t *testing.T, r *childRegistry, id string) childRecord {
 	return childRecord{}
 }
 
+func TestChildFailureKeepsTypedOutcomeInJournal(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "session.json")
+	r, err := openChildRegistry(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(r.stop)
+	executable := childTestExecutable(t, root, "printf partial; printf diagnostic >&2; exit 7")
+
+	record, err := r.spawn(context.Background(), 1, executable, root, "review", "work", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed := awaitChild(t, r, record.ID)
+	result := decodeSubagentResult(t, string(failed.Result))
+	if failed.Status != "failed" || result.OK || result.ExitCode != 7 || result.Output != "partial" || result.Stderr != "diagnostic" {
+		t.Fatalf("failure lost at registry boundary: %#v %#v", failed, result)
+	}
+
+	data, err := os.ReadFile(path + ".children.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved []childRecord
+	if err := json.Unmarshal(data, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if len(saved) != 1 || saved[0].Status != "failed" || decodeSubagentResult(t, string(saved[0].Result)) != result {
+		t.Fatalf("durable failure changed: %s", data)
+	}
+}
+
 func TestChildAdmissionCompletionAndRecovery(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "session.json")

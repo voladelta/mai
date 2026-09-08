@@ -476,6 +476,8 @@ func parseChunks(lines []string) ([]patchChunk, error) {
 func applyChunks(content string, chunks []patchChunk) (string, error) {
 	lines, trailingNewline := splitFileLines(content)
 	cursor := 0
+	output := make([]string, 0, len(lines))
+
 	for index, chunk := range chunks {
 		start := cursor
 		if chunk.anchor != "" {
@@ -485,6 +487,7 @@ func applyChunks(content string, chunks []patchChunk) (string, error) {
 			}
 			start = anchorAt + 1
 		}
+
 		at := findSequence(lines, chunk.oldLines, start)
 		if at < 0 {
 			return "", fmt.Errorf("chunk %d context not found", index+1)
@@ -492,11 +495,14 @@ func applyChunks(content string, chunks []patchChunk) (string, error) {
 		if chunk.endOfFile && at+len(chunk.oldLines) != len(lines) {
 			return "", fmt.Errorf("chunk %d does not reach end of file", index+1)
 		}
-		replacement := append([]string(nil), chunk.newLines...)
-		lines = append(lines[:at], append(replacement, lines[at+len(chunk.oldLines):]...)...)
-		cursor = at + len(replacement)
+
+		output = append(output, lines[cursor:at]...)
+		output = append(output, chunk.newLines...)
+		cursor = at + len(chunk.oldLines)
 	}
-	return joinFileLines(lines, trailingNewline), nil
+
+	output = append(output, lines[cursor:]...)
+	return joinFileLines(output, trailingNewline), nil
 }
 
 func splitFileLines(content string) ([]string, bool) {

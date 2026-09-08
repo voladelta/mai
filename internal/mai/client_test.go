@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -107,6 +109,49 @@ func TestReadSSERejectsIncompleteAndFailedStreams(t *testing.T) {
 	failed := "data: " + `{"type":"response.failed","response":{"status":"failed","error":{"message":"bad"}}}` + "\n\n"
 	if _, err := client.readSSE(strings.NewReader(failed)); err == nil || !strings.Contains(err.Error(), "response failed") {
 		t.Fatalf("unexpected failed-stream error: %v", err)
+	}
+}
+
+func TestReadSSERequiresValidatedCompletion(t *testing.T) {
+	item := `data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","call_id":"one","name":"bash","arguments":"{}"}}` + "\n\n"
+	for _, ending := range []string{"data: [DONE]\n\n", `data: {"type":"response.completed"}` + "\n\n"} {
+		client := &codexClient{stdout: &bytes.Buffer{}}
+		result, err := client.readSSE(strings.NewReader(item + ending))
+		if err == nil || len(result.items) != 0 {
+			t.Fatalf("unconfirmed tool call accepted: result=%#v err=%v", result, err)
+		}
+	}
+
+	client := &codexClient{stdout: &bytes.Buffer{}}
+	ending := `data: {"type":"response.completed","response":{"status":"completed"}}` + "\n\ndata: [DONE]\n\n"
+	result, err := client.readSSE(strings.NewReader(item + ending))
+	if err != nil || len(result.items) != 1 {
+		t.Fatalf("valid completion rejected: result=%#v err=%v", result, err)
+	}
+}
+
+func TestAgentDoesNotExecuteUnconfirmedToolCall(t *testing.T) {
+	writeTestCodexAuth(t)
+	root := t.TempDir()
+	for _, ending := range []string{"[DONE]", `{"type":"response.completed"}`} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprintln(w, `data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","call_id":"one","name":"bash","arguments":"{\"command\":\"touch marker\"}"}}`)
+			fmt.Fprintln(w)
+			fmt.Fprintf(w, "data: %s\n\n", ending)
+		}))
+		a := newAgent(&bytes.Buffer{}, &bytes.Buffer{}, "", time.Second, false, nil)
+		a.client.endpoint = server.URL
+		sess := &session{ID: "test", Model: "luna", Effort: "l", CWD: root, RepoRoot: root}
+
+		_, err := a.runTurn(context.Background(), sess, "test")
+		server.Close()
+		if err == nil || len(sess.History) != 0 {
+			t.Fatalf("unconfirmed response accepted: history=%s err=%v", sess.History, err)
+		}
+
+		if _, err := os.Stat(filepath.Join(root, "marker")); !os.IsNotExist(err) {
+			t.Fatalf("unconfirmed tool had an effect: %v", err)
+		}
 	}
 }
 

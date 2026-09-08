@@ -55,11 +55,11 @@ type tokenUsage struct {
 }
 
 type sseCollector struct {
-	stdout   io.Writer
-	items    map[int]json.RawMessage
-	wrote    bool
-	terminal bool
-	tokens   int64
+	stdout    io.Writer
+	items     map[int]json.RawMessage
+	wrote     bool
+	completed bool
+	tokens    int64
 }
 
 type httpStatusError struct {
@@ -253,7 +253,7 @@ func (c *codexClient) readSSE(r io.Reader) (streamResult, error) {
 			break
 		}
 	}
-	if !collector.terminal {
+	if !collector.completed {
 		return streamResult{}, errors.New("Codex stream ended before response.completed")
 	}
 	return collector.result(), nil
@@ -270,9 +270,9 @@ func (collector *sseCollector) dispatch(dataLines *[]string) error {
 
 func (collector *sseCollector) consume(data string) error {
 	if data == "[DONE]" {
-		collector.terminal = true
 		return nil
 	}
+
 	var event sseEvent
 	if err := json.Unmarshal([]byte(data), &event); err != nil {
 		return fmt.Errorf("parse Codex stream event: %w", err)
@@ -308,26 +308,27 @@ func (collector *sseCollector) collectItem(index int, item json.RawMessage) {
 }
 
 func (collector *sseCollector) complete(response *sseResponse) error {
-	collector.terminal = true
 	if response == nil {
-		return nil
+		return errors.New("Codex response.completed is missing response")
 	}
+	if response.Status != "completed" {
+		return fmt.Errorf("Codex response ended with status %q: %s", response.Status, compactJSON(response.Error))
+	}
+
+	collector.completed = true
 	if len(collector.items) == 0 {
 		for i, item := range response.Output {
 			collector.collectItem(i, item)
 		}
 	}
-	if response.Status != "completed" {
-		return fmt.Errorf("Codex response ended with status %q: %s", response.Status, compactJSON(response.Error))
-	}
 	if response.Usage != nil {
 		collector.tokens = response.Usage.TotalTokens
 	}
+
 	return nil
 }
 
 func (collector *sseCollector) fail(event sseEvent) error {
-	collector.terminal = true
 	if event.Response != nil {
 		return fmt.Errorf("Codex response failed: %s", compactJSON(event.Response.Error))
 	}

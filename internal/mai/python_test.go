@@ -400,7 +400,8 @@ func TestPythonSubagentOwnerDeathStopsProcessGroup(t *testing.T) {
 				timeout = 10 * time.Second
 			}
 			go func() {
-				done <- runSubagentProcess(ctx, wrapper, timeout, root, "test", "wait")
+				result, err := runSubagentProcess(ctx, wrapper, timeout, root, "test", "wait")
+				done <- encodeSubagentResult(result, err)
 			}()
 
 			var kernelPID, childPID int

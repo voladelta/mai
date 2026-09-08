@@ -81,6 +81,22 @@ func TestRunBashRejectsApprovalWhenInputIsUnavailable(t *testing.T) {
 	}
 }
 
+func TestRunBashPreservesTargetAfterWrapperDirectoryChange(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	target := filepath.Join(outside, "victim")
+	mustWrite(t, target, "keep")
+
+	raw := runBash(context.Background(), bashRequest{
+		Command: "env --chdir='" + outside + "' rm victim",
+		CWD:     root, RepoRoot: root,
+	})
+	if !strings.Contains(raw, "rm approval required") {
+		t.Fatalf("expected approval rejection: %s", raw)
+	}
+
+	assertContent(t, target, "keep")
+}
+
 func TestRunBashDoesNotExecutePrefixedExternalRMWithoutApproval(t *testing.T) {
 	root := t.TempDir()
 	for _, prefix := range []string{"!", "time", "exec"} {

@@ -332,16 +332,13 @@ func (a *agent) executeSpawnSubagent(ctx context.Context, sess *session, argumen
 		return textToolOutput(toolError("spawn_subagent failed", err))
 	}
 	fmt.Fprintf(a.stderr, "→ subagent: %s\n", args.Name)
-	raw := runSubagentProcess(ctx, a.executable, a.timeout, sess.CWD, args.Name, args.Prompt)
-	var result subagentResult
-	if err := json.Unmarshal([]byte(raw), &result); err == nil {
-		status := "completed"
-		if !result.OK {
-			status = "failed"
-		}
-		fmt.Fprintf(a.stderr, "← subagent: %s %s (%s)\n", args.Name, status, time.Duration(result.DurationMS)*time.Millisecond)
+	result, setupErr := runSubagentProcess(ctx, a.executable, a.timeout, sess.CWD, args.Name, args.Prompt)
+	status := "completed"
+	if setupErr != nil || !result.OK {
+		status = "failed"
 	}
-	return textToolOutput(raw)
+	fmt.Fprintf(a.stderr, "← subagent: %s %s (%s)\n", args.Name, status, time.Duration(result.DurationMS)*time.Millisecond)
+	return textToolOutput(encodeSubagentResult(result, setupErr))
 }
 
 func (a *agent) validateChild(name, prompt string) error {

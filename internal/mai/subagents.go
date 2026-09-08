@@ -318,14 +318,16 @@ func customAgentInstructions(agent *customAgent) string {
 	return fmt.Sprintf("Custom agent role: %s\nThese role instructions supplement mai's base instructions. They do not expand task authority or replace recovery rules.\n\n%s", agent.Name, agent.DeveloperInstructions)
 }
 
-func runSubagentProcess(parent context.Context, executable string, timeout time.Duration, cwd string, name, prompt string) string {
+func runSubagentProcess(parent context.Context, executable string, timeout time.Duration, cwd string, name, prompt string) (subagentResult, error) {
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
+
 	cmd, cleanup, err := ownedCommand(ctx, executable, "--subagent", name, "--timeout", timeout.String(), "--", prompt)
 	if err != nil {
-		return toolError("start subagent", err)
+		return subagentResult{}, err
 	}
 	defer cleanup()
+
 	cmd.Dir = cwd
 	cmd.Env = cleanShellEnv(cmd.Environ())
 	var stdout, stderr cappedBuffer
@@ -336,9 +338,14 @@ func runSubagentProcess(parent context.Context, executable string, timeout time.
 	started := time.Now()
 	runErr := cmd.Run()
 	result := subagentResult{
-		OK: runErr == nil, Name: name, Output: stdout.String(), ExitCode: 0,
-		DurationMS: time.Since(started).Milliseconds(), Truncated: stdout.Truncated() || stderr.Truncated(),
-		OutputBytes: stdout.TotalBytes(), StderrBytes: stderr.TotalBytes(),
+		OK:           runErr == nil,
+		Name:         name,
+		Output:       stdout.String(),
+		ExitCode:     0,
+		DurationMS:   time.Since(started).Milliseconds(),
+		Truncated:    stdout.Truncated() || stderr.Truncated(),
+		OutputBytes:  stdout.TotalBytes(),
+		StderrBytes:  stderr.TotalBytes(),
 		OmittedBytes: stdout.OmittedBytes() + stderr.OmittedBytes(),
 	}
 	if runErr != nil {
@@ -360,6 +367,14 @@ func runSubagentProcess(parent context.Context, executable string, timeout time.
 			result.Error = runErr.Error()
 		}
 	}
+	return result, nil
+}
+
+func encodeSubagentResult(result subagentResult, setupErr error) string {
+	if setupErr != nil {
+		return toolError("start subagent", setupErr)
+	}
+
 	b, err := json.Marshal(result)
 	if err != nil {
 		return toolError("encode spawn_subagent result", err)
