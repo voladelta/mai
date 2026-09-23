@@ -336,7 +336,7 @@ func TestCustomAgentDoesNotRequireModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agent.Model != "sol" {
+	if agent.Model != "luna" {
 		t.Fatalf("default model = %q", agent.Model)
 	}
 }

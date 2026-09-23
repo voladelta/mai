@@ -216,7 +216,7 @@ func normalizeEffort(value string) string {
 	}
 }
 
-const defaultModel = "sol"
+const defaultModel = "luna"
 
 func normalizeModel(model string) string {
 	model = strings.ToLower(strings.TrimSpace(model))

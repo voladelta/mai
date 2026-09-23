@@ -41,7 +41,7 @@ Options:
   --subagent NAME        Run with an installed custom agent.
 
 Tasks are stateless unless you use --persist or --last.
-The built-in default is sol/low.
+The built-in default is luna/medium.
 
 Documentation and support: https://github.com/voladelta/mai
 `
@@ -79,7 +79,7 @@ Usage:
 Example:
   mai "add tests for the parser"
 
-Built-in default: sol/low.
+Built-in default: luna/medium.
 Run 'mai --help' for more information.
 `)
 	return 0
@@ -164,7 +164,7 @@ func (task *activeTask) close() {
 }
 
 func configForTask(opts options) taskConfig {
-	cfg := taskConfig{Model: defaultModel, Effort: "l"}
+	cfg := taskConfig{Model: defaultModel, Effort: "m"}
 	if opts.modelExplicit {
 		cfg.Model = opts.model
 	}

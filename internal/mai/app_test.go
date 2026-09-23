@@ -16,7 +16,7 @@ func TestMainWithoutPromptShowsBuiltInDefault(t *testing.T) {
 	if code := Main(nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "Built-in default: sol/low.") {
+	if !strings.Contains(stdout.String(), "Built-in default: luna/medium.") {
 		t.Fatalf("stdout does not show the built-in default:\n%s", stdout.String())
 	}
 }
@@ -51,7 +51,7 @@ func TestPersistCreatesProjectSessionAndCurrentPointer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sess.ID != id || sess.Model != "sol" || sess.Effort != "h" || len(sess.History) != 1 {
+	if sess.ID != id || sess.Model != "luna" || sess.Effort != "h" || len(sess.History) != 1 {
 		t.Fatalf("saved session = %#v", sess)
 	}
 }
@@ -183,7 +183,7 @@ func TestModelSelectionAndResumePreserveRequestPrefix(t *testing.T) {
 		}
 	}
 	for i, request := range requests {
-		wantModel, wantEffort := []string{"gpt-6-sol", "gpt-6-luna", "gpt-6-luna", "gpt-6-sol"}[i], "low"
+		wantModel, wantEffort := []string{"gpt-6-luna", "gpt-6-luna", "gpt-6-luna", "gpt-6-sol"}[i], "medium"
 		if request["model"] != wantModel || request["reasoning"].(map[string]any)["effort"] != wantEffort {
 			t.Fatalf("request %d model/effort = %v / %v", i, request["model"], request["reasoning"])
 		}
@@ -214,7 +214,7 @@ func TestModelSelectionAndResumePreserveRequestPrefix(t *testing.T) {
 	}
 }
 
-func TestLastMigratesOlderModelToSol(t *testing.T) {
+func TestLastMigratesOlderModelToLuna(t *testing.T) {
 	t.Chdir(t.TempDir())
 	active, err := startSession(taskConfig{Effort: "m"}, options{persist: true})
 	if err != nil {
@@ -244,7 +244,7 @@ func TestLastMigratesOlderModelToSol(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if saved.Model != "sol" || saved.Effort != "h" || saved.RequestEffort != "h" || len(saved.History) != 2 || compactJSON(saved.History[0]) != compactJSON(original) {
+	if saved.Model != "luna" || saved.Effort != "h" || saved.RequestEffort != "h" || len(saved.History) != 2 || compactJSON(saved.History[0]) != compactJSON(original) {
 		t.Fatalf("migrated session = %#v", saved)
 	}
 }

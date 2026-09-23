@@ -102,17 +102,17 @@ options.
 
 ## Choose a model
 
-New tasks use `gpt-6-sol` by default. Select `gpt-6-luna` with `-m luna` or
-`--model gpt-6-luna`. Saved tasks retain their selected model; pass `-m` with
-`--last` to change it. Older saved tasks that used another model switch to Sol
+New tasks use `gpt-6-luna` by default. Select `gpt-6-sol` with `-m sol` or
+`--model gpt-6-sol`. Saved tasks retain their selected model; pass `-m` with
+`--last` to change it. Older saved tasks that used another model switch to Luna
 when resumed.
 
 Custom agents may set `model` to `gpt-6-sol` or `gpt-6-luna` in their TOML
-file. When omitted, they use Sol.
+file. When omitted, they use Luna.
 
 ```bash
-mai "quick review" -m luna
-mai "continue the review" --last -m sol
+mai "complex refactor" -m sol
+mai "continue the refactor" --last -m luna
 ```
 
 ## Choose reasoning effort
@@ -125,7 +125,7 @@ Use `-e` to choose the reasoning effort:
 - `x` means extra high
 - `max` means maximum
 
-Each new task uses low effort unless you set `-e`. The
+Each new task uses medium effort unless you set `-e`. The
 saved task keeps its values when you use `--last`.
 
 You can use these options with a new or saved task:
