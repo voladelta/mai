@@ -40,6 +40,8 @@ type streamResult struct {
 
 type sseEvent struct {
 	Type        string          `json:"type"`
+	Code        string          `json:"code"`
+	Message     string          `json:"message"`
 	Delta       string          `json:"delta"`
 	OutputIndex int             `json:"output_index"`
 	Item        json.RawMessage `json:"item"`
@@ -73,8 +75,19 @@ type httpStatusError struct {
 	hasRetryAfter bool
 }
 
+type providerFailure struct {
+	context string
+	code    string
+	detail  string
+}
+
+func (e *providerFailure) Error() string {
+	return e.context + ": " + e.detail
+}
+
 var errIncompleteStream = errors.New("Codex stream ended before response.completed")
 var errStreamRead = errors.New("read Codex stream")
+var errOutputWrite = errors.New("write Codex output")
 
 func (e *httpStatusError) Error() string {
 	if e.body == "" {
@@ -185,6 +198,18 @@ func (c *codexClient) requestWithCredentials(ctx context.Context, sess *session,
 }
 
 func retryableRequestError(err error) bool {
+	if errors.Is(err, errOutputWrite) {
+		return false
+	}
+	var providerErr *providerFailure
+	if errors.As(err, &providerErr) {
+		switch providerErr.code {
+		case "rate_limit_exceeded", "requests_limit_reached", "slow_down", "server_error", "overloaded", "server_is_overloaded", "service_unavailable", "internal_error", "timeout":
+			return true
+		default:
+			return false
+		}
+	}
 	var statusErr *httpStatusError
 	if errors.As(err, &statusErr) {
 		body := strings.ToLower(statusErr.body)
@@ -363,7 +388,7 @@ func (collector *sseCollector) writeDelta(delta string) error {
 		return nil
 	}
 	if _, err := io.WriteString(collector.stdout, delta); err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errOutputWrite, err)
 	}
 	collector.wrote = true
 	return nil
@@ -380,13 +405,38 @@ func (collector *sseCollector) complete(response *sseResponse) error {
 		return errors.New("Codex response.completed is missing response")
 	}
 	if response.Status != "completed" {
-		return fmt.Errorf("Codex response ended with status %q: %s", response.Status, compactJSON(response.Error))
+		return newProviderFailure(fmt.Sprintf("Codex response ended with status %q", response.Status), response.Error)
 	}
 
 	collector.completed = true
-	if len(collector.items) == 0 {
-		for i, item := range response.Output {
+	for i, item := range response.Output {
+		if _, exists := collector.items[i]; !exists {
 			collector.collectItem(i, item)
+		}
+	}
+	if !collector.wrote {
+		for _, item := range collector.result().items {
+			var message struct {
+				Type    string `json:"type"`
+				Role    string `json:"role"`
+				Content []struct {
+					Type string `json:"type"`
+					Text string `json:"text"`
+				} `json:"content"`
+			}
+			if err := json.Unmarshal(item, &message); err != nil {
+				return fmt.Errorf("parse Codex output item: %w", err)
+			}
+			if message.Type != "message" || message.Role != "assistant" {
+				continue
+			}
+			for _, part := range message.Content {
+				if part.Type == "output_text" {
+					if err := collector.writeDelta(part.Text); err != nil {
+						return err
+					}
+				}
+			}
 		}
 	}
 	if response.Usage != nil {
@@ -398,9 +448,38 @@ func (collector *sseCollector) complete(response *sseResponse) error {
 
 func (collector *sseCollector) fail(event sseEvent) error {
 	if event.Response != nil {
-		return fmt.Errorf("Codex response failed: %s", compactJSON(event.Response.Error))
+		return newProviderFailure("Codex response failed", event.Response.Error)
 	}
-	return fmt.Errorf("Codex stream failed: %s", compactJSON(event.Error))
+	if len(event.Error) == 0 && (event.Code != "" || event.Message != "") {
+		return &providerFailure{
+			context: "Codex stream failed", code: strings.ToLower(event.Code),
+			detail: fmt.Sprintf("%s (%s)", event.Message, event.Code),
+		}
+	}
+	return newProviderFailure("Codex stream failed", event.Error)
+}
+
+func newProviderFailure(context string, raw json.RawMessage) error {
+	var value struct {
+		Code  string `json:"code"`
+		Type  string `json:"type"`
+		Error *struct {
+			Code string `json:"code"`
+			Type string `json:"type"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(raw, &value)
+	code := value.Code
+	if code == "" && value.Error != nil {
+		code = value.Error.Code
+		if code == "" {
+			code = value.Error.Type
+		}
+	}
+	if code == "" {
+		code = value.Type
+	}
+	return &providerFailure{context: context, code: strings.ToLower(code), detail: compactJSON(raw)}
 }
 
 func (collector *sseCollector) result() streamResult {
@@ -431,25 +510,14 @@ func toolDefinitions(allowSubagents ...bool) []map[string]any {
 	definitions := []map[string]any{
 		{
 			"type": "function", "name": "read_skill",
-			"description": "Read the complete SKILL.md for one installed skill. Read it before using that skill or loading its supporting files.",
+			"description": "Read one file from an installed skill. Omit file to read SKILL.md; read it before using the skill or loading supporting files. Images are returned as image content; unsupported binary files fail.",
 			"parameters": map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
-					"skill": map[string]string{"type": "string", "description": "The installed skill directory id shown in the instructions."},
+					"path": map[string]string{"type": "string", "description": "The installed skill directory id shown in the instructions."},
+					"file": map[string]string{"type": "string", "description": "Optional relative file path inside the skill. Omit to read SKILL.md."},
 				},
-				"required": []string{"skill"},
-			},
-		},
-		{
-			"type": "function", "name": "read_skill_file",
-			"description": "Read one supporting file from a selected skill. Read only files required by SKILL.md. Images are returned as image content; unsupported binary files fail.",
-			"parameters": map[string]any{
-				"type": "object", "additionalProperties": false,
-				"properties": map[string]any{
-					"skill": map[string]string{"type": "string", "description": "The installed skill directory id shown in the instructions."},
-					"path":  map[string]string{"type": "string", "description": "A relative path inside the selected skill, commonly below assets, references, or scripts."},
-				},
-				"required": []string{"skill", "path"},
+				"required": []string{"path"},
 			},
 		},
 		{

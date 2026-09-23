@@ -37,6 +37,11 @@ func TestBuildSkillContextListsImplicitSkillsAndLoadsExplicitOptOut(t *testing.T
 	if len(result.Warnings) != 0 {
 		t.Fatalf("unexpected warnings: %#v", result.Warnings)
 	}
+	if !strings.Contains(result.Instructions, `read_skill({"path":"<id>"})`) ||
+		!strings.Contains(result.Instructions, `read_skill({"path":"<id>","file":"<relative file path>"})`) ||
+		strings.Contains(result.Instructions, "read_skill_file") {
+		t.Fatalf("skill instructions do not describe the single tool:\n%s", result.Instructions)
+	}
 }
 
 func TestImplicitPolicyDefaultsTrueAndParsesFalse(t *testing.T) {
@@ -117,7 +122,7 @@ func TestReadSkillReturnsCompleteFileAndSupportingFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := readSkill(root, "demo")
+	result, err := readSkill(root, "demo", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,19 +130,19 @@ func TestReadSkillReturnsCompleteFileAndSupportingFiles(t *testing.T) {
 		t.Fatalf("unexpected skill result: %#v", result)
 	}
 
-	result, err = readSkillFile(root, "demo", "references/guide.md")
+	result, err = readSkill(root, "demo", "references/guide.md")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Content != "# Guide\nRead all of this.\n" {
 		t.Fatalf("unexpected reference result: %#v", result)
 	}
-	result, err = readSkillFile(root, "demo", "root-note.md")
+	result, err = readSkill(root, "demo", "root-note.md")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	result, err = readSkillFile(root, "demo", "assets/icon.png")
+	result, err = readSkill(root, "demo", "assets/icon.png")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,14 +151,14 @@ func TestReadSkillReturnsCompleteFileAndSupportingFiles(t *testing.T) {
 	}
 }
 
-func TestReadSkillFileRejectsEscapesAndUnscopedFiles(t *testing.T) {
+func TestReadSkillRejectsEscapesAndUnscopedFiles(t *testing.T) {
 	root := testSkillRoot(t)
 	writeTestSkill(t, root, "demo", "demo", "A demonstration skill.")
 	mustWrite(t, filepath.Join(root, "secret.txt"), "secret")
 
 	for _, path := range []string{"../secret.txt", "/etc/passwd"} {
-		if _, err := readSkillFile(root, "demo", path); err == nil {
-			t.Fatalf("readSkillFile accepted %q", path)
+		if _, err := readSkill(root, "demo", path); err == nil {
+			t.Fatalf("readSkill accepted %q", path)
 		}
 	}
 
@@ -163,11 +168,11 @@ func TestReadSkillFileRejectsEscapesAndUnscopedFiles(t *testing.T) {
 	if err := os.Symlink(filepath.Join(root, "secret.txt"), filepath.Join(root, "demo", "references", "escape.txt")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readSkillFile(root, "demo", "references/escape.txt"); err == nil {
-		t.Fatal("readSkillFile accepted a symlink escape")
+	if _, err := readSkill(root, "demo", "references/escape.txt"); err == nil {
+		t.Fatal("readSkill accepted a symlink escape")
 	}
 	mustWrite(t, filepath.Join(root, "demo", "assets", "data.bin"), string([]byte{0, 1, 2}))
-	if _, err := readSkillFile(root, "demo", "assets/data.bin"); err == nil || !strings.Contains(err.Error(), "unsupported media type") {
+	if _, err := readSkill(root, "demo", "assets/data.bin"); err == nil || !strings.Contains(err.Error(), "unsupported media type") {
 		t.Fatalf("unexpected binary file error: %v", err)
 	}
 }
@@ -178,24 +183,31 @@ func TestAgentRoutesRegisteredSkillTools(t *testing.T) {
 	mustWrite(t, filepath.Join(root, "demo", "references", "guide.md"), "Guide.\n")
 	a := &agent{stderr: io.Discard, skillsRoot: root}
 
-	calls := []functionCall{
-		{Name: "read_skill", Arguments: `{"skill":"demo"}`},
-		{Name: "read_skill_file", Arguments: `{"skill":"demo","path":"references/guide.md"}`},
+	calls := []struct {
+		arguments string
+		wantPath  string
+	}{
+		{arguments: `{"path":"demo"}`, wantPath: "SKILL.md"},
+		{arguments: `{"path":"demo","file":"references/guide.md"}`, wantPath: "references/guide.md"},
 	}
 	for _, call := range calls {
-		raw := a.executeTool(context.Background(), &session{}, call)
-		var result string
-		if err := json.Unmarshal(raw, &result); err != nil {
-			t.Fatalf("decode %s output: %v", call.Name, err)
+		raw := a.executeTool(context.Background(), &session{}, functionCall{Name: "read_skill", Arguments: call.arguments})
+		var encoded string
+		if err := json.Unmarshal(raw, &encoded); err != nil {
+			t.Fatalf("decode read_skill output: %v", err)
 		}
-		if !strings.Contains(result, `"ok":true`) {
-			t.Fatalf("%s failed: %s", call.Name, result)
+		var result skillFileResult
+		if err := json.Unmarshal([]byte(encoded), &result); err != nil {
+			t.Fatalf("decode skill result: %v", err)
+		}
+		if !result.OK || result.Path != call.wantPath {
+			t.Fatalf("read_skill(%s) = %#v", call.arguments, result)
 		}
 	}
 
 	mustWrite(t, filepath.Join(root, "demo", "assets", "icon.png"), string([]byte{0x89, 'P', 'N', 'G', 0, 1}))
 	raw := a.executeTool(context.Background(), &session{}, functionCall{
-		Name: "read_skill_file", Arguments: `{"skill":"demo","path":"assets/icon.png"}`,
+		Name: "read_skill", Arguments: `{"path":"demo","file":"assets/icon.png"}`,
 	})
 	var content []map[string]string
 	if err := json.Unmarshal(raw, &content); err != nil {
@@ -210,14 +222,25 @@ func TestAgentRoutesRegisteredSkillTools(t *testing.T) {
 
 	definitions := toolDefinitions()
 	registered := make(map[string]bool, len(definitions))
+	var skillDefinition map[string]any
 	for _, definition := range definitions {
 		name, _ := definition["name"].(string)
 		registered[name] = true
-	}
-	for _, name := range []string{"read_skill", "read_skill_file"} {
-		if !registered[name] {
-			t.Fatalf("tool %q is not registered", name)
+		if name == "read_skill" {
+			skillDefinition = definition
 		}
+	}
+	if !registered["read_skill"] || registered["read_skill_file"] {
+		t.Fatalf("skill tools are not collapsed: %#v", registered)
+	}
+	parameters := skillDefinition["parameters"].(map[string]any)
+	properties := parameters["properties"].(map[string]any)
+	required := parameters["required"].([]string)
+	if len(required) != 1 || required[0] != "path" || len(properties) != 2 || properties["path"] == nil || properties["file"] == nil {
+		t.Fatalf("unexpected read_skill schema: %#v", parameters)
+	}
+	if output := a.executeTool(context.Background(), &session{}, functionCall{Name: "read_skill_file"}); !strings.Contains(string(output), "unknown tool") {
+		t.Fatalf("retired tool still dispatched: %s", output)
 	}
 }
 

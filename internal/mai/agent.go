@@ -328,8 +328,6 @@ func (a *agent) executeTool(ctx context.Context, sess *session, call functionCal
 	switch call.Name {
 	case "read_skill":
 		return a.executeReadSkill(call.Arguments)
-	case "read_skill_file":
-		return a.executeReadSkillFile(call.Arguments)
 	case "view_image":
 		return a.executeViewImage(sess, call.Arguments)
 	case "spawn_subagent":
@@ -387,7 +385,8 @@ func (a *agent) validateChild(name, prompt string) error {
 
 func (a *agent) executeReadSkill(arguments string) json.RawMessage {
 	var args struct {
-		Skill string `json:"skill"`
+		Path string `json:"path"`
+		File string `json:"file"`
 	}
 	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
 		return textToolOutput(toolError("invalid read_skill arguments", err))
@@ -395,29 +394,14 @@ func (a *agent) executeReadSkill(arguments string) json.RawMessage {
 	if a.skillsError != nil {
 		return textToolOutput(toolError("find skills directory", a.skillsError))
 	}
-	fmt.Fprintf(a.stderr, "→ read_skill: %s\n", args.Skill)
-	result, err := readSkill(a.skillsRoot, args.Skill)
+	file := args.File
+	if file == "" {
+		file = "SKILL.md"
+	}
+	fmt.Fprintf(a.stderr, "→ read_skill: %s/%s\n", args.Path, file)
+	result, err := readSkill(a.skillsRoot, args.Path, args.File)
 	if err != nil {
 		return textToolOutput(toolError("read_skill failed", err))
-	}
-	return skillFileToolOutput(result)
-}
-
-func (a *agent) executeReadSkillFile(arguments string) json.RawMessage {
-	var args struct {
-		Skill string `json:"skill"`
-		Path  string `json:"path"`
-	}
-	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
-		return textToolOutput(toolError("invalid read_skill_file arguments", err))
-	}
-	if a.skillsError != nil {
-		return textToolOutput(toolError("find skills directory", a.skillsError))
-	}
-	fmt.Fprintf(a.stderr, "→ read_skill_file: %s/%s\n", args.Skill, args.Path)
-	result, err := readSkillFile(a.skillsRoot, args.Skill, args.Path)
-	if err != nil {
-		return textToolOutput(toolError("read_skill_file failed", err))
 	}
 	return skillFileToolOutput(result)
 }

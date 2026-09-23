@@ -46,7 +46,7 @@ func TestReadBoundedFileRejectsDirectory(t *testing.T) {
 	}
 }
 
-func TestReadSkillFileSizeBoundaryAndInternalSymlink(t *testing.T) {
+func TestReadSkillSizeBoundaryAndInternalSymlink(t *testing.T) {
 	root := testSkillRoot(t)
 	writeTestSkill(t, root, "demo", "demo", "A demonstration skill.")
 	path := filepath.Join(root, "demo", "guide.txt")
@@ -56,13 +56,13 @@ func TestReadSkillFileSizeBoundaryAndInternalSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := readSkillFile(root, "demo", "link.txt")
+	result, err := readSkill(root, "demo", "link.txt")
 	if err != nil || result.Content != content {
 		t.Fatalf("exact-limit symlink read: bytes=%d, error=%v", len(result.Content), err)
 	}
 
 	mustWrite(t, path, content+"a")
-	if _, err := readSkillFile(root, "demo", "link.txt"); err == nil || !strings.Contains(err.Error(), "skill file limit") {
+	if _, err := readSkill(root, "demo", "link.txt"); err == nil || !strings.Contains(err.Error(), "skill file limit") {
 		t.Fatalf("oversize skill error = %v", err)
 	}
 }

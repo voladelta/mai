@@ -53,6 +53,43 @@ func TestMainJSONLProducesOnlyEventsOnStdout(t *testing.T) {
 	}
 }
 
+func TestMainPrintsCompletedTextWithoutDeltas(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeTestCodexAuth(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, `data: {"type":"response.completed","response":{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hello"}]}]}}`)
+		fmt.Fprintln(w)
+	}))
+	defer server.Close()
+	t.Setenv("MAI_CODEX_URL", server.URL)
+
+	var ordinary, ordinaryErr bytes.Buffer
+	if code := Main([]string{"hello"}, &ordinary, &ordinaryErr); code != 0 || ordinary.String() != "hello\n" {
+		t.Fatalf("default code=%d stdout=%q stderr=%q", code, ordinary.String(), ordinaryErr.String())
+	}
+
+	var output, stderr bytes.Buffer
+	if code := Main([]string{"hello", "--jsonl"}, &output, &stderr); code != 0 {
+		t.Fatalf("jsonl code=%d stderr=%q", code, stderr.String())
+	}
+	var texts []string
+	for _, line := range strings.Split(strings.TrimSpace(output.String()), "\n") {
+		var event struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatalf("invalid JSONL line %q: %v", line, err)
+		}
+		if event.Type == "model.delta" {
+			texts = append(texts, event.Text)
+		}
+	}
+	if strings.Join(texts, "") != "hello" || len(texts) != 1 {
+		t.Fatalf("model text events=%v, stream=%s", texts, output.String())
+	}
+}
+
 func TestMainJSONLReportsToolCalls(t *testing.T) {
 	t.Chdir(t.TempDir())
 	writeTestCodexAuth(t)

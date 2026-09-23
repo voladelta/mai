@@ -84,7 +84,7 @@ func buildSkillContext(root, userPrompt string) (skillContext, error) {
 		case 0:
 			continue
 		case 1:
-			file, readErr := readSkill(root, matches[0].ID)
+			file, readErr := readSkill(root, matches[0].ID, "")
 			if readErr != nil {
 				warnings = append(warnings, fmt.Sprintf("explicit skill $%s could not be read: %v", mention, readErr))
 				continue
@@ -98,9 +98,9 @@ func buildSkillContext(root, userPrompt string) (skillContext, error) {
 	var instructions strings.Builder
 	instructions.WriteString(`Skills
 - Available skills are listed as name, description, and directory id.
-- If the request clearly matches an available skill description, you must call read_skill with its id and follow the complete SKILL.md before acting.
+- If the request clearly matches an available skill description, call read_skill({"path":"<id>"}) and follow the complete SKILL.md before acting.
 - Catalog metadata is only for selection. Never use it as a substitute for reading a matching SKILL.md.
-- Use read_skill_file only for supporting files required by the selected SKILL.md.
+- To read a supporting file required by the selected SKILL.md, call read_skill({"path":"<id>","file":"<relative file path>"}) with the same skill id.
 - A $name mention is explicit. Its complete instructions appear below when it resolves uniquely; do not call read_skill again for that explicit skill.
 `)
 	if catalog == "" {
@@ -277,21 +277,16 @@ func renderSkillCatalog(skills []skillSummary) string {
 	return strings.Join(lines, "\n")
 }
 
-func readSkill(root, id string) (skillFileResult, error) {
+func readSkill(root, id, file string) (skillFileResult, error) {
 	dir, err := secureSkillDir(root, id)
 	if err != nil {
 		return skillFileResult{}, err
 	}
-	return readSkillPath(id, dir, "SKILL.md")
-}
-
-func readSkillFile(root, id, path string) (skillFileResult, error) {
-	dir, err := secureSkillDir(root, id)
-	if err != nil {
-		return skillFileResult{}, err
+	if file == "" {
+		file = "SKILL.md"
 	}
-	clean := filepath.Clean(path)
-	if filepath.IsAbs(path) || clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+	clean := filepath.Clean(file)
+	if filepath.IsAbs(file) || clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return skillFileResult{}, errors.New("skill file path must stay inside the selected skill")
 	}
 	return readSkillPath(id, dir, clean)

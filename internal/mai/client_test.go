@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -98,6 +100,88 @@ func TestReadSSEUsesCompletedResponseOutputAsFallback(t *testing.T) {
 	}
 	if len(result.items) != 1 || !bytes.Contains(result.items[0], []byte(`"type":"message"`)) {
 		t.Fatalf("unexpected fallback output: %#v", result.items)
+	}
+}
+
+func TestReadSSEPrintsCompletedTextWithoutDuplicatingDeltas(t *testing.T) {
+	message := `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hello"}]}`
+	for _, stream := range []string{
+		"data: " + `{"type":"response.completed","response":{"status":"completed","output":[` + message + `]}}` + "\n\n",
+		"data: " + `{"type":"response.output_item.done","output_index":0,"item":` + message + `}` + "\n\n" +
+			"data: " + `{"type":"response.completed","response":{"status":"completed","output":[` + message + `]}}` + "\n\n",
+		"data: " + `{"type":"response.output_text.delta","delta":"hello"}` + "\n\n" +
+			"data: " + `{"type":"response.completed","response":{"status":"completed","output":[` + message + `]}}` + "\n\n",
+	} {
+		var output bytes.Buffer
+		client := &codexClient{stdout: &output}
+		result, err := client.readSSE(strings.NewReader(stream))
+		if err != nil || output.String() != "hello" || !result.wrote || len(result.items) != 1 {
+			t.Fatalf("output=%q result=%#v err=%v", output.String(), result, err)
+		}
+	}
+}
+
+func TestCodexClientRetriesInBandTransientFailureOnlyBeforeText(t *testing.T) {
+	for _, scenario := range []string{"rate_limit", "slow_down", "overload", "server_is_overloaded", "quota", "auth", "printed"} {
+		t.Run(scenario, func(t *testing.T) {
+			attempts := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				attempts++
+				if attempts == 1 {
+					if scenario == "printed" {
+						fmt.Fprintln(w, `data: {"type":"response.output_text.delta","delta":"partial"}`)
+						fmt.Fprintln(w)
+					}
+					code := map[string]string{
+						"rate_limit": "rate_limit_exceeded", "slow_down": "slow_down",
+						"overload": "server_error", "server_is_overloaded": "server_is_overloaded",
+						"quota": "insufficient_quota", "auth": "invalid_api_key", "printed": "rate_limit_exceeded",
+					}[scenario]
+					if scenario == "overload" {
+						fmt.Fprintf(w, "data: {\"type\":\"error\",\"code\":%q,\"message\":\"busy\"}\n\n", code)
+					} else {
+						fmt.Fprintf(w, "data: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"error\":{\"code\":%q}}}\n\n", code)
+					}
+					return
+				}
+				fmt.Fprintln(w, `data: {"type":"response.completed","response":{"status":"completed","output":[{"type":"message"}]}}`)
+				fmt.Fprintln(w)
+			}))
+			defer server.Close()
+
+			var output bytes.Buffer
+			client := newCodexClient(&output, time.Second)
+			client.endpoint = server.URL
+			_, err := client.streamWithCredentials(context.Background(), &session{ID: "session", Model: "luna", Effort: "m"}, "instructions", credentials{AccessToken: "token"})
+			wantAttempts := 1
+			if scenario == "rate_limit" || scenario == "slow_down" || scenario == "overload" || scenario == "server_is_overloaded" {
+				wantAttempts = 2
+			}
+			if attempts != wantAttempts || (err == nil) != (wantAttempts == 2) || (scenario == "printed" && output.String() != "partial") {
+				t.Fatalf("attempts=%d output=%q err=%v", attempts, output.String(), err)
+			}
+		})
+	}
+}
+
+type eofWriter struct{}
+
+func (eofWriter) Write([]byte) (int, error) { return 0, io.EOF }
+
+func TestCodexClientDoesNotRetryOutputWriterFailure(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		fmt.Fprintln(w, `data: {"type":"response.output_text.delta","delta":"hello"}`)
+		fmt.Fprintln(w)
+	}))
+	defer server.Close()
+
+	client := newCodexClient(eofWriter{}, time.Second)
+	client.endpoint = server.URL
+	_, err := client.streamWithCredentials(context.Background(), &session{ID: "session", Model: "luna", Effort: "m"}, "instructions", credentials{AccessToken: "token"})
+	if attempts != 1 || !errors.Is(err, errOutputWrite) {
+		t.Fatalf("attempts=%d err=%v", attempts, err)
 	}
 }
 
