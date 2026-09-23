@@ -22,6 +22,16 @@ func TestParseOptionsInterspersed(t *testing.T) {
 			want: options{prompt: "hello", persist: true, effort: "x", effortExplicit: true, timeout: defaultHTTPTimeout},
 		},
 		{
+			name: "model selection",
+			args: []string{"hello", "-m", "LUNA"},
+			want: options{prompt: "hello", model: "luna", modelExplicit: true, timeout: defaultHTTPTimeout},
+		},
+		{
+			name: "full model ID",
+			args: []string{"hello", "--model=gpt-6-sol"},
+			want: options{prompt: "hello", model: "sol", modelExplicit: true, timeout: defaultHTTPTimeout},
+		},
+		{
 			name: "end of options",
 			args: []string{"--", "-m", "is", "part", "of", "the", "prompt"},
 			want: options{prompt: "-m is part of the prompt", timeout: defaultHTTPTimeout},
@@ -94,10 +104,10 @@ func TestParseOptionsHelpOverridesOtherArguments(t *testing.T) {
 	}
 }
 
-func TestModelSelectionRemoved(t *testing.T) {
-	for _, flag := range []string{"-m", "--model", "--model=astra"} {
-		if _, err := parseOptions([]string{"hello", flag, "astra"}); err == nil || !strings.Contains(err.Error(), "unknown option") {
-			t.Fatalf("%s: error = %v", flag, err)
+func TestModelSelectionRejectsOtherModels(t *testing.T) {
+	for _, model := range []string{"astra", "terra", "gpt-6-astra", "unknown", ""} {
+		if _, err := parseOptions([]string{"hello", "--model=" + model}); err == nil || !strings.Contains(err.Error(), "invalid model") {
+			t.Fatalf("%q: error = %v", model, err)
 		}
 	}
 }

@@ -52,7 +52,7 @@ func TestLoadCustomAgentParsesCodexAgentFile(t *testing.T) {
 	}
 	writeAgentConfig(t, root, "repo_scout", `name = "repo_scout"
 description = "Map the repository."
-model = "gpt-5.6-terra"
+model = "gpt-6-luna"
 model_reasoning_effort = "medium"
 sandbox_mode = "read-only"
 
@@ -71,7 +71,7 @@ enabled = true
 		t.Fatal(err)
 	}
 	if agent.Name != "repo_scout" || agent.Description != "Map the repository." ||
-		agent.Effort != "m" {
+		agent.Model != "luna" || agent.Effort != "m" {
 		t.Fatalf("custom agent = %#v", agent)
 	}
 	if agent.DeveloperInstructions != "Map the minimum context.\nKeep quoted \"symbols\" exact." {
@@ -265,7 +265,7 @@ func TestDirectSubagentUsesConfiguredRoleAndDisablesSpawn(t *testing.T) {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
 	body := <-requestBody
-	if body["model"] != "gpt-6-astra" {
+	if body["model"] != "gpt-6-luna" {
 		t.Fatalf("request model = %#v", body["model"])
 	}
 	reasoning, _ := body["reasoning"].(map[string]any)
@@ -297,7 +297,7 @@ func TestDirectSubagentUsesConfiguredRoleAndDisablesSpawn(t *testing.T) {
 func validAgentConfig(name string) string {
 	return `name = "` + name + `"
 description = "Test agent ` + name + `."
-model = "gpt-5.6-terra"
+model = "gpt-6-luna"
 model_reasoning_effort = "medium"
 developer_instructions = "Instructions for ` + name + `."
 `
@@ -330,9 +330,20 @@ func hasTool(definitions []map[string]any, name string) bool {
 
 func TestCustomAgentDoesNotRequireModel(t *testing.T) {
 	root := t.TempDir()
-	config := strings.ReplaceAll(validAgentConfig("repo_scout"), "model = \"gpt-5.6-terra\"\n", "")
+	config := strings.ReplaceAll(validAgentConfig("repo_scout"), "model = \"gpt-6-luna\"\n", "")
 	writeAgentConfig(t, root, "repo_scout", config)
-	if _, err := loadCustomAgent(root, "repo_scout"); err != nil {
+	agent, err := loadCustomAgent(root, "repo_scout")
+	if err != nil {
 		t.Fatal(err)
+	}
+	if agent.Model != "sol" {
+		t.Fatalf("default model = %q", agent.Model)
+	}
+}
+
+func TestCustomAgentRejectsUnsupportedModel(t *testing.T) {
+	config := strings.ReplaceAll(validAgentConfig("repo_scout"), "gpt-6-luna", "gpt-5.6-terra")
+	if _, err := parseCustomAgent(config); err == nil || !strings.Contains(err.Error(), "unsupported model") {
+		t.Fatalf("unsupported model error = %v", err)
 	}
 }

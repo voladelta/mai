@@ -16,6 +16,7 @@ import (
 const stateVersion = 1
 
 type taskConfig struct {
+	Model  string
 	Effort string
 }
 
@@ -152,9 +153,7 @@ func loadSession(path string) (*session, error) {
 	if out.Version != stateVersion || !validSessionID(out.ID) || out.CWD == "" || out.RepoRoot == "" || out.ContextTokens < 0 {
 		return nil, fmt.Errorf("saved session is incomplete or unsupported")
 	}
-	switch out.Model {
-	case "astra", "sol", "luna", "terra":
-	default:
+	if !supportedModel(out.Model) && out.Model != "astra" && out.Model != "terra" {
 		return nil, fmt.Errorf("saved session has invalid model %q", out.Model)
 	}
 	if _, ok := effortIDs[out.Effort]; !ok {

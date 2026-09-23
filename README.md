@@ -31,9 +31,9 @@ Run a custom agent directly with:
 mai --subagent repo_scout "map the parser"
 ```
 
-This mode uses the effort and developer instructions from
+This mode uses the model, effort, and developer instructions from
 `repo_scout.toml`. It implies `--no-input` and cannot be combined with
-`--persist`, `--last`, or `--effort`. A custom subagent does not
+`--persist`, `--last`, `--effort`, or `--model`. A custom subagent does not
 receive the general skill catalog. Its developer instructions must identify any
 required skills.
 
@@ -54,7 +54,7 @@ Log in before you run `mai`:
 codex login
 ```
 
-## Build mai
+## Build and install mai
 
 ```bash
 cd ~/Codehub/mai
@@ -63,6 +63,12 @@ go build -o mai ./cmd/mai
 
 Move the `mai` binary to a directory in your `PATH` if you want to run it from
 any directory.
+
+To install it into your Go binary directory instead, run:
+
+```bash
+go install ./cmd/mai
+```
 
 ## Start a task
 
@@ -87,12 +93,27 @@ Resume the current saved task in that project with `--last`:
 mai "now fix the failing test" --last
 ```
 
-`--last` restores the original working directory, effort and conversation
+`--last` restores the original working directory, model, effort, and conversation
 history. Two processes cannot use the same saved task at the same time. Other
 saved tasks can run at the same time.
 
 Run `mai` without a prompt to show concise usage text. Run `mai --help` for all
 options.
+
+## Choose a model
+
+New tasks use `gpt-6-sol` by default. Select `gpt-6-luna` with `-m luna` or
+`--model gpt-6-luna`. Saved tasks retain their selected model; pass `-m` with
+`--last` to change it. Older saved tasks that used another model switch to Sol
+when resumed.
+
+Custom agents may set `model` to `gpt-6-sol` or `gpt-6-luna` in their TOML
+file. When omitted, they use Sol.
+
+```bash
+mai "quick review" -m luna
+mai "continue the review" --last -m sol
+```
 
 ## Choose reasoning effort
 

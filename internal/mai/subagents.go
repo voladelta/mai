@@ -25,6 +25,7 @@ type customAgent struct {
 	Name                  string
 	Description           string
 	DeveloperInstructions string
+	Model                 string
 	Effort                string
 }
 
@@ -163,6 +164,7 @@ func parseCustomAgent(content string) (customAgent, error) {
 		Name:                  strings.TrimSpace(values["name"]),
 		Description:           strings.TrimSpace(values["description"]),
 		DeveloperInstructions: strings.TrimSpace(values["developer_instructions"]),
+		Model:                 defaultModel,
 	}
 	if agent.Name == "" || agent.Description == "" || agent.DeveloperInstructions == "" ||
 		strings.TrimSpace(values["model_reasoning_effort"]) == "" {
@@ -170,6 +172,12 @@ func parseCustomAgent(content string) (customAgent, error) {
 	}
 	if err := validateSubagentName(agent.Name); err != nil {
 		return customAgent{}, fmt.Errorf("invalid name: %w", err)
+	}
+	if value, specified := values["model"]; specified {
+		agent.Model = normalizeModel(value)
+		if !supportedModel(agent.Model) {
+			return customAgent{}, fmt.Errorf("unsupported model %q", value)
+		}
 	}
 	agent.Effort = normalizeEffort(values["model_reasoning_effort"])
 	if _, ok := effortIDs[agent.Effort]; !ok {

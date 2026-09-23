@@ -16,7 +16,7 @@ func TestMainWithoutPromptShowsBuiltInDefault(t *testing.T) {
 	if code := Main(nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "Built-in default: astra/low.") {
+	if !strings.Contains(stdout.String(), "Built-in default: sol/low.") {
 		t.Fatalf("stdout does not show the built-in default:\n%s", stdout.String())
 	}
 }
@@ -51,7 +51,7 @@ func TestPersistCreatesProjectSessionAndCurrentPointer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sess.ID != id || sess.Model != "astra" || sess.Effort != "h" || len(sess.History) != 1 {
+	if sess.ID != id || sess.Model != "sol" || sess.Effort != "h" || len(sess.History) != 1 {
 		t.Fatalf("saved session = %#v", sess)
 	}
 }
@@ -146,7 +146,7 @@ func TestMainHelpDocumentsPersistenceOptions(t *testing.T) {
 	if code := Main([]string{"--unknown", "--help"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
-	for _, text := range []string{"--effort", "--persist", "--last", "--timeout", "--no-input", "--subagent", "Documentation and support"} {
+	for _, text := range []string{"--effort", "--model", "--persist", "--last", "--timeout", "--no-input", "--subagent", "Documentation and support"} {
 		if !strings.Contains(stdout.String(), text) {
 			t.Fatalf("help is missing %q:\n%s", text, stdout.String())
 		}
@@ -156,7 +156,7 @@ func TestMainHelpDocumentsPersistenceOptions(t *testing.T) {
 	}
 }
 
-func TestAstraResumePreservesRequestPrefix(t *testing.T) {
+func TestModelSelectionAndResumePreserveRequestPrefix(t *testing.T) {
 	t.Chdir(t.TempDir())
 	writeTestCodexAuth(t)
 	var requests []map[string]any
@@ -173,9 +173,9 @@ func TestAstraResumePreservesRequestPrefix(t *testing.T) {
 	t.Setenv("MAI_CODEX_URL", server.URL)
 	for _, args := range [][]string{
 		{"first", "--persist"},
-		{"second", "--last", "-e", "h"},
+		{"second", "--last", "-e", "h", "-m", "luna"},
 		{"third", "--last"},
-		{"fourth", "--last", "-e", "l"},
+		{"fourth", "--last", "-e", "l", "-m", "sol"},
 	} {
 		var stdout, stderr bytes.Buffer
 		if code := Main(args, &stdout, &stderr); code != 0 {
@@ -183,7 +183,7 @@ func TestAstraResumePreservesRequestPrefix(t *testing.T) {
 		}
 	}
 	for i, request := range requests {
-		wantModel, wantEffort := "gpt-6-astra", "low"
+		wantModel, wantEffort := []string{"gpt-6-sol", "gpt-6-luna", "gpt-6-luna", "gpt-6-sol"}[i], "low"
 		if request["model"] != wantModel || request["reasoning"].(map[string]any)["effort"] != wantEffort {
 			t.Fatalf("request %d model/effort = %v / %v", i, request["model"], request["reasoning"])
 		}
@@ -214,13 +214,13 @@ func TestAstraResumePreservesRequestPrefix(t *testing.T) {
 	}
 }
 
-func TestLastMigratesOlderModelToAstra(t *testing.T) {
+func TestLastMigratesOlderModelToSol(t *testing.T) {
 	t.Chdir(t.TempDir())
 	active, err := startSession(taskConfig{Effort: "m"}, options{persist: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	active.session.Model = "luna"
+	active.session.Model = "astra"
 	if err := appendUserPrompt(active.session, "original"); err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +244,7 @@ func TestLastMigratesOlderModelToAstra(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if saved.Model != "astra" || saved.Effort != "h" || saved.RequestEffort != "h" || len(saved.History) != 2 || compactJSON(saved.History[0]) != compactJSON(original) {
+	if saved.Model != "sol" || saved.Effort != "h" || saved.RequestEffort != "h" || len(saved.History) != 2 || compactJSON(saved.History[0]) != compactJSON(original) {
 		t.Fatalf("migrated session = %#v", saved)
 	}
 }

@@ -149,7 +149,7 @@ func TestAstraCompactionKeepsSelectedEffort(t *testing.T) {
 	defer server.Close()
 	sess := &session{
 		Version: stateVersion, ID: "01234567-89ab-cdef-0123-456789abcdef",
-		CWD: t.TempDir(), RepoRoot: t.TempDir(), Model: "astra", Effort: "h", RequestEffort: "l",
+		CWD: t.TempDir(), RepoRoot: t.TempDir(), Model: "sol", Effort: "h", RequestEffort: "l",
 		ContextTokens: 244_800,
 		History: []json.RawMessage{
 			json.RawMessage(`{"role":"user","content":"first"}`),

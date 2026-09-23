@@ -27,6 +27,7 @@ Examples:
   mai "start a saved task" --persist
   mai "now fix the failing test" --last
   mai "refactor this" -e h
+  mai "quick review" -m luna
 
 Options:
   -h, --help             Show this help text.
@@ -34,12 +35,13 @@ Options:
   --persist              Save this new task in the current project.
   --last                 Resume the current saved task in the current project.
   -e, --effort EFFORT    Use l, m, h, x, or max for this task.
+  -m, --model MODEL      Use sol or luna for this task.
   --timeout DURATION     Set the request timeout (default: 10m).
   --no-input             Do not ask for interactive approval.
   --subagent NAME        Run with an installed custom agent.
 
 Tasks are stateless unless you use --persist or --last.
-The built-in default is astra/low.
+The built-in default is sol/low.
 
 Documentation and support: https://github.com/voladelta/mai
 `
@@ -77,7 +79,7 @@ Usage:
 Example:
   mai "add tests for the parser"
 
-Built-in default: astra/low.
+Built-in default: sol/low.
 Run 'mai --help' for more information.
 `)
 	return 0
@@ -98,6 +100,7 @@ func runTask(opts options, stdout, stderr io.Writer) int {
 			return 1
 		}
 		selectedAgent = &loaded
+		taskCfg.Model = loaded.Model
 		taskCfg.Effort = loaded.Effort
 	}
 	active, err := startSession(taskCfg, opts)
@@ -161,7 +164,10 @@ func (task *activeTask) close() {
 }
 
 func configForTask(opts options) taskConfig {
-	cfg := taskConfig{Effort: "l"}
+	cfg := taskConfig{Model: defaultModel, Effort: "l"}
+	if opts.modelExplicit {
+		cfg.Model = opts.model
+	}
 	if opts.effortExplicit {
 		cfg.Effort = opts.effort
 	}
@@ -214,10 +220,13 @@ func startSession(cfg taskConfig, opts options) (*activeTask, error) {
 		lock.Close()
 		return nil, errors.New("saved task does not belong to this project")
 	}
-	if sess.Model != "astra" {
-		// Old saved tasks switch to Astra with a new request prefix.
-		sess.Model = "astra"
+	if !supportedModel(sess.Model) {
+		// Older saved tasks use the current default on resume.
+		sess.Model = defaultModel
 		sess.RequestEffort = ""
+	}
+	if opts.modelExplicit {
+		sess.Model = opts.model
 	}
 	if opts.effortExplicit {
 		sess.Effort = opts.effort
@@ -270,6 +279,9 @@ func appendUserPrompt(sess *session, prompt string) error {
 }
 
 func createSession(cfg taskConfig) (*session, error) {
+	if cfg.Model == "" {
+		cfg.Model = defaultModel
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, fmt.Errorf("get current directory: %w", err)
@@ -285,7 +297,7 @@ func createSession(cfg taskConfig) (*session, error) {
 	}
 	return &session{
 		Version: stateVersion, ID: id, CWD: cwd, RepoRoot: root,
-		Model: "astra", Effort: cfg.Effort,
+		Model: cfg.Model, Effort: cfg.Effort,
 	}, nil
 }
 

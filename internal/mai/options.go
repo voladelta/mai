@@ -13,6 +13,8 @@ type options struct {
 	persist        bool
 	effort         string
 	effortExplicit bool
+	model          string
+	modelExplicit  bool
 	help           bool
 	version        bool
 	noInput        bool
@@ -30,6 +32,7 @@ const (
 	optionNoInput
 	optionSubagent
 	optionEffort
+	optionModel
 	optionTimeout
 )
 
@@ -41,6 +44,7 @@ var optionKinds = map[string]optionKind{
 	"--no-input": optionNoInput,
 	"--subagent": optionSubagent,
 	"-e":         optionEffort, "--effort": optionEffort,
+	"-m": optionModel, "--model": optionModel,
 	"--timeout": optionTimeout,
 }
 
@@ -107,7 +111,7 @@ func parseOptionTokens(args []string, out *options) ([]string, error) {
 }
 
 func (kind optionKind) takesValue() bool {
-	return kind == optionSubagent || kind == optionEffort || kind == optionTimeout
+	return kind == optionSubagent || kind == optionEffort || kind == optionModel || kind == optionTimeout
 }
 
 func (out *options) setOption(kind optionKind, value string) error {
@@ -124,6 +128,8 @@ func (out *options) setOption(kind optionKind, value string) error {
 		out.subagent = value
 	case optionEffort:
 		out.effort, out.effortExplicit = value, true
+	case optionModel:
+		out.model, out.modelExplicit = value, true
 	case optionTimeout:
 		timeout, err := parseTimeout(value)
 		if err != nil {
@@ -155,6 +161,12 @@ func (out *options) normalizeSelections() error {
 			return fmt.Errorf("invalid effort %q (use l, m, h, x, or max)", out.effort)
 		}
 	}
+	if out.modelExplicit {
+		out.model = normalizeModel(out.model)
+		if !supportedModel(out.model) {
+			return fmt.Errorf("invalid model %q (use sol or luna)", out.model)
+		}
+	}
 	return nil
 }
 
@@ -168,6 +180,8 @@ func (out options) validateMode(argCount int) error {
 			return errors.New("--subagent cannot be used with --last or --persist")
 		case out.effortExplicit:
 			return errors.New("--subagent cannot be used with --effort")
+		case out.modelExplicit:
+			return errors.New("--subagent cannot be used with --model")
 		case len(out.prompt) > maxSubagentPromptBytes:
 			return fmt.Errorf("subagent prompt exceeds %d bytes", maxSubagentPromptBytes)
 		}
@@ -202,7 +216,20 @@ func normalizeEffort(value string) string {
 	}
 }
 
-const modelID = "gpt-6-astra"
+const defaultModel = "sol"
+
+func normalizeModel(model string) string {
+	model = strings.ToLower(strings.TrimSpace(model))
+	return strings.TrimPrefix(model, "gpt-6-")
+}
+
+func supportedModel(model string) bool {
+	return model == "sol" || model == "luna"
+}
+
+func modelID(model string) string {
+	return "gpt-6-" + model
+}
 
 // Keep the conservative input budget for the private Codex backend.
 const modelContextWindow int64 = 272_000

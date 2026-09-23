@@ -156,7 +156,7 @@ func (c *codexClient) requestWithCredentials(ctx context.Context, sess *session,
 		effort = sess.RequestEffort
 	}
 	body := map[string]any{
-		"model":               modelID,
+		"model":               modelID(sess.Model),
 		"store":               false,
 		"stream":              true,
 		"instructions":        instructions,
