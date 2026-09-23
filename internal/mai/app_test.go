@@ -3,6 +3,7 @@ package mai
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,6 +19,78 @@ func TestMainWithoutPromptShowsBuiltInDefault(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "Built-in default: luna/medium.") {
 		t.Fatalf("stdout does not show the built-in default:\n%s", stdout.String())
+	}
+}
+
+func TestMainJSONLProducesOnlyEventsOnStdout(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeTestCodexAuth(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, `data: {"type":"response.output_text.delta","delta":"hello"}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, `data: {"type":"response.completed","response":{"status":"completed","output":[{"type":"message"}],"usage":{"total_tokens":7}}}`)
+		fmt.Fprintln(w)
+	}))
+	defer server.Close()
+	t.Setenv("MAI_CODEX_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	if code := Main([]string{"hello", "--jsonl"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit code=%d stderr=%s", code, stderr.String())
+	}
+	var types []string
+	for _, line := range strings.Split(strings.TrimSpace(stdout.String()), "\n") {
+		var event struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatalf("non-JSONL stdout %q: %v", line, err)
+		}
+		types = append(types, event.Type)
+	}
+	if strings.Join(types, ",") != "task.started,model.delta,model.completed,task.completed" {
+		t.Fatalf("event types=%v", types)
+	}
+}
+
+func TestMainJSONLReportsToolCalls(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeTestCodexAuth(t)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests == 1 {
+			fmt.Fprintln(w, `data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","call_id":"call-1","name":"bash","arguments":"{\"command\":\"printf ok\"}"}}`)
+			fmt.Fprintln(w)
+		} else {
+			fmt.Fprintln(w, `data: {"type":"response.output_item.done","output_index":0,"item":{"type":"message"}}`)
+			fmt.Fprintln(w)
+		}
+		fmt.Fprintln(w, `data: {"type":"response.completed","response":{"status":"completed"}}`)
+		fmt.Fprintln(w)
+	}))
+	defer server.Close()
+	t.Setenv("MAI_CODEX_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	if code := Main([]string{"run tool", "--jsonl"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit code=%d stderr=%s", code, stderr.String())
+	}
+	var started, completed bool
+	for _, line := range strings.Split(strings.TrimSpace(stdout.String()), "\n") {
+		var event map[string]any
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatalf("non-JSONL stdout %q: %v", line, err)
+		}
+		if event["type"] == "tool.started" {
+			started = event["name"] == "bash" && event["call_id"] == "call-1"
+		}
+		if event["type"] == "tool.completed" {
+			completed = event["name"] == "bash" && event["call_id"] == "call-1" && event["output"] != nil
+		}
+	}
+	if requests != 2 || !started || !completed {
+		t.Fatalf("requests=%d started=%t completed=%t events=%s", requests, started, completed, stdout.String())
 	}
 }
 

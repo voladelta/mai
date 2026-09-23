@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -14,9 +16,10 @@ import (
 )
 
 const (
-	defaultBashTimeout = 120 * time.Second
-	maxBashTimeout     = 10 * time.Minute
-	maxToolStreamBytes = 64 << 10
+	defaultBashTimeout  = 120 * time.Second
+	maxBashTimeout      = 10 * time.Minute
+	maxToolStreamBytes  = 64 << 10
+	maxBashCaptureBytes = 32 << 20
 )
 
 type approvalFunc func(context.Context, string, string) (bool, error)
@@ -30,16 +33,20 @@ type bashRequest struct {
 }
 
 type bashResult struct {
-	OK           bool   `json:"ok"`
-	Stdout       string `json:"stdout"`
-	Stderr       string `json:"stderr"`
-	ExitCode     int    `json:"exit_code"`
-	TimedOut     bool   `json:"timed_out"`
-	Truncated    bool   `json:"truncated"`
-	DurationMS   int64  `json:"duration_ms"`
-	StdoutBytes  int64  `json:"stdout_bytes"`
-	StderrBytes  int64  `json:"stderr_bytes"`
-	OmittedBytes int64  `json:"omitted_bytes"`
+	OK                bool   `json:"ok"`
+	Stdout            string `json:"stdout"`
+	Stderr            string `json:"stderr"`
+	ExitCode          int    `json:"exit_code"`
+	TimedOut          bool   `json:"timed_out"`
+	Truncated         bool   `json:"truncated"`
+	DurationMS        int64  `json:"duration_ms"`
+	StdoutBytes       int64  `json:"stdout_bytes"`
+	StderrBytes       int64  `json:"stderr_bytes"`
+	OmittedBytes      int64  `json:"omitted_bytes"`
+	StdoutCapturePath string `json:"stdout_capture_path,omitempty"`
+	StderrCapturePath string `json:"stderr_capture_path,omitempty"`
+	CaptureTruncated  bool   `json:"capture_truncated,omitempty"`
+	CaptureError      string `json:"capture_error,omitempty"`
 }
 
 func runBash(parent context.Context, req bashRequest) string {
@@ -79,13 +86,34 @@ func runBash(parent context.Context, req bashRequest) string {
 	defer cleanup()
 	cmd.Dir = req.CWD
 	cmd.Env = cleanShellEnv(cmd.Environ())
+	captureDir, err := os.MkdirTemp("", "mai-bash-")
+	if err != nil {
+		return toolError("prepare bash capture", err)
+	}
+	stdoutPath := filepath.Join(captureDir, "stdout")
+	stderrPath := filepath.Join(captureDir, "stderr")
+	stdoutFile, err := os.OpenFile(stdoutPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		_ = os.RemoveAll(captureDir)
+		return toolError("prepare bash capture", err)
+	}
+	stderrFile, err := os.OpenFile(stderrPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		_ = stdoutFile.Close()
+		_ = os.RemoveAll(captureDir)
+		return toolError("prepare bash capture", err)
+	}
 	var stdout, stderr cappedBuffer
 	stdout.max = maxToolStreamBytes
 	stderr.max = maxToolStreamBytes
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	stdoutCapture := &boundedCapture{file: stdoutFile, limit: maxBashCaptureBytes}
+	stderrCapture := &boundedCapture{file: stderrFile, limit: maxBashCaptureBytes}
+	cmd.Stdout = io.MultiWriter(&stdout, stdoutCapture)
+	cmd.Stderr = io.MultiWriter(&stderr, stderrCapture)
 	started := time.Now()
 	err = cmd.Run()
+	stdoutCloseErr := stdoutFile.Close()
+	stderrCloseErr := stderrFile.Close()
 
 	result := bashResult{
 		OK: err == nil, Stdout: stdout.String(), Stderr: stderr.String(),
@@ -93,7 +121,30 @@ func runBash(parent context.Context, req bashRequest) string {
 		Truncated:   stdout.Truncated() || stderr.Truncated(),
 		DurationMS:  time.Since(started).Milliseconds(),
 		StdoutBytes: stdout.TotalBytes(), StderrBytes: stderr.TotalBytes(),
-		OmittedBytes: stdout.OmittedBytes() + stderr.OmittedBytes(),
+		OmittedBytes:     stdout.OmittedBytes() + stderr.OmittedBytes(),
+		CaptureTruncated: stdoutCapture.truncated || stderrCapture.truncated,
+	}
+	if stdoutCapture.err != nil || stdoutCloseErr != nil || stderrCapture.err != nil || stderrCloseErr != nil {
+		result.CaptureError = "full output capture failed"
+	}
+	if result.Truncated {
+		if stdout.Truncated() && stdoutCapture.err == nil && stdoutCloseErr == nil {
+			result.StdoutCapturePath = stdoutPath
+		}
+		if stderr.Truncated() && stderrCapture.err == nil && stderrCloseErr == nil {
+			result.StderrCapturePath = stderrPath
+		}
+		if result.StdoutCapturePath == "" {
+			_ = os.Remove(stdoutPath)
+		}
+		if result.StderrCapturePath == "" {
+			_ = os.Remove(stderrPath)
+		}
+		if result.StdoutCapturePath == "" && result.StderrCapturePath == "" {
+			_ = os.Remove(captureDir)
+		}
+	} else {
+		_ = os.RemoveAll(captureDir)
 	}
 	if err != nil {
 		var exitErr *exec.ExitError
@@ -111,6 +162,36 @@ func runBash(parent context.Context, req bashRequest) string {
 		return toolError("encode bash result", marshalErr)
 	}
 	return string(b)
+}
+
+type boundedCapture struct {
+	file      *os.File
+	limit     int64
+	written   int64
+	truncated bool
+	err       error
+}
+
+func (capture *boundedCapture) Write(p []byte) (int, error) {
+	length := len(p)
+	remaining := capture.limit - capture.written
+	if remaining <= 0 {
+		capture.truncated = true
+		return length, nil
+	}
+	if int64(length) > remaining {
+		p = p[:remaining]
+		capture.truncated = true
+	}
+	if capture.err == nil {
+		written, err := capture.file.Write(p)
+		capture.written += int64(written)
+		capture.err = err
+		if written < len(p) && err == nil {
+			capture.err = io.ErrShortWrite
+		}
+	}
+	return length, nil
 }
 
 type cappedBuffer struct {

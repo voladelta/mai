@@ -34,6 +34,7 @@ type agent struct {
 	timeout       time.Duration
 	python        pythonKernel
 	children      *childRegistry
+	events        io.Writer
 }
 
 type functionCall struct {
@@ -150,7 +151,7 @@ func (a *agent) runTurn(ctx context.Context, sess *session, instructions string)
 		return false, err
 	}
 	result, err := a.client.stream(ctx, sess, instructions)
-	if result.wrote {
+	if result.wrote && a.events == nil {
 		fmt.Fprintln(a.stdout)
 	}
 	if err != nil {
@@ -158,6 +159,11 @@ func (a *agent) runTurn(ctx context.Context, sess *session, instructions string)
 	}
 	if len(result.items) == 0 {
 		return false, errors.New("Codex response contained no output items")
+	}
+	if a.events != nil {
+		if err := writeJSONLEvent(a.events, map[string]any{"type": "model.completed", "total_tokens": result.totalTokens}); err != nil {
+			return false, err
+		}
 	}
 	sess.History = append(sess.History, result.items...)
 	if result.totalTokens > 0 {
@@ -239,7 +245,24 @@ func compactedHistory(history []json.RawMessage, compaction json.RawMessage) ([]
 
 func (a *agent) executeCalls(ctx context.Context, sess *session, calls []functionCall) error {
 	for _, call := range calls {
+		if a.events != nil {
+			if err := writeJSONLEvent(a.events, map[string]any{"type": "tool.started", "name": call.Name, "call_id": call.CallID}); err != nil {
+				return err
+			}
+		}
 		output := a.executeTool(ctx, sess, call)
+		if a.events != nil {
+			event := map[string]any{"type": "tool.completed", "name": call.Name, "call_id": call.CallID}
+			if len(output) <= 256<<10 {
+				event["output"] = output
+			} else {
+				event["output_bytes"] = len(output)
+				event["output_omitted"] = true
+			}
+			if err := writeJSONLEvent(a.events, event); err != nil {
+				return err
+			}
+		}
 		item, err := json.Marshal(struct {
 			Type   string          `json:"type"`
 			CallID string          `json:"call_id"`
@@ -307,6 +330,8 @@ func (a *agent) executeTool(ctx context.Context, sess *session, call functionCal
 		return a.executeReadSkill(call.Arguments)
 	case "read_skill_file":
 		return a.executeReadSkillFile(call.Arguments)
+	case "view_image":
+		return a.executeViewImage(sess, call.Arguments)
 	case "spawn_subagent":
 		return a.executeSpawnSubagent(ctx, sess, call.Arguments)
 	case "bash":
@@ -397,6 +422,21 @@ func (a *agent) executeReadSkillFile(arguments string) json.RawMessage {
 	return skillFileToolOutput(result)
 }
 
+func (a *agent) executeViewImage(sess *session, arguments string) json.RawMessage {
+	var args struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+		return textToolOutput(toolError("invalid view_image arguments", err))
+	}
+	fmt.Fprintf(a.stderr, "→ view_image: %s\n", args.Path)
+	result, err := viewImage(sess.RepoRoot, sess.CWD, args.Path)
+	if err != nil {
+		return textToolOutput(toolError("view_image failed", err))
+	}
+	return imageContentToolOutput(marshalToolResult(result), result.imageURL)
+}
+
 func (a *agent) executeBash(ctx context.Context, sess *session, arguments string) json.RawMessage {
 	var args struct {
 		Command   string `json:"command"`
@@ -458,9 +498,13 @@ func skillFileToolOutput(file skillFileResult) json.RawMessage {
 	if file.imageURL == "" {
 		return textToolOutput(metadata)
 	}
+	return imageContentToolOutput(metadata, file.imageURL)
+}
+
+func imageContentToolOutput(metadata, imageURL string) json.RawMessage {
 	b, _ := json.Marshal([]map[string]string{
 		{"type": "input_text", "text": metadata},
-		{"type": "input_image", "image_url": file.imageURL, "detail": "auto"},
+		{"type": "input_image", "image_url": imageURL, "detail": "auto"},
 	})
 	return b
 }

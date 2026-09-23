@@ -169,3 +169,95 @@ func TestCodexClientReportsTimeoutWithNextStep(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestCodexClientRetriesTransientStatusAndIncompleteStream(t *testing.T) {
+	for _, first := range []string{"status", "incomplete"} {
+		t.Run(first, func(t *testing.T) {
+			attempts := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				attempts++
+				if attempts == 1 {
+					if first == "status" {
+						w.Header().Set("Retry-After", "0")
+						w.WriteHeader(http.StatusServiceUnavailable)
+						return
+					}
+					fmt.Fprint(w, "data: [DONE]\n\n")
+					return
+				}
+				fmt.Fprintln(w, `data: {"type":"response.output_text.delta","delta":"done"}`)
+				fmt.Fprintln(w)
+				fmt.Fprintln(w, `data: {"type":"response.completed","response":{"status":"completed","output":[{"type":"message"}]}}`)
+				fmt.Fprintln(w)
+			}))
+			defer server.Close()
+
+			var output bytes.Buffer
+			client := newCodexClient(&output, time.Second)
+			client.endpoint = server.URL
+			result, err := client.streamWithCredentials(context.Background(), &session{ID: "session", Model: "luna", Effort: "m"}, "instructions", credentials{AccessToken: "token"})
+			if err != nil || attempts != 2 || output.String() != "done" || len(result.items) != 1 {
+				t.Fatalf("attempts=%d output=%q result=%#v err=%v", attempts, output.String(), result, err)
+			}
+		})
+	}
+}
+
+func TestCodexClientDoesNotRetryAuthQuotaOrPrintedPartialStream(t *testing.T) {
+	for _, scenario := range []string{"auth", "quota", "credits", "partial"} {
+		t.Run(scenario, func(t *testing.T) {
+			attempts := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				attempts++
+				if scenario == "auth" {
+					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
+				if scenario == "quota" {
+					w.WriteHeader(http.StatusTooManyRequests)
+					fmt.Fprint(w, `{"code":"insufficient_quota"}`)
+					return
+				}
+				if scenario == "credits" {
+					w.WriteHeader(http.StatusTooManyRequests)
+					fmt.Fprint(w, `{"code":"credit_balance_exhausted"}`)
+					return
+				}
+				fmt.Fprintln(w, `data: {"type":"response.output_text.delta","delta":"partial"}`)
+				fmt.Fprintln(w)
+			}))
+			defer server.Close()
+
+			var output bytes.Buffer
+			client := newCodexClient(&output, time.Second)
+			client.endpoint = server.URL
+			_, err := client.streamWithCredentials(context.Background(), &session{ID: "session", Model: "luna", Effort: "m"}, "instructions", credentials{AccessToken: "token"})
+			if err == nil || attempts != 1 {
+				t.Fatalf("attempts=%d output=%q err=%v", attempts, output.String(), err)
+			}
+		})
+	}
+}
+
+func TestCodexClientHonorsRetryAfter(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		fmt.Fprintln(w, `data: {"type":"response.completed","response":{"status":"completed","output":[{"type":"message"}]}}`)
+		fmt.Fprintln(w)
+	}))
+	defer server.Close()
+
+	client := newCodexClient(&bytes.Buffer{}, time.Second)
+	client.endpoint = server.URL
+	started := time.Now()
+	_, err := client.streamWithCredentials(context.Background(), &session{ID: "session", Model: "luna", Effort: "m"}, "instructions", credentials{AccessToken: "token"})
+	if err != nil || attempts != 2 || time.Since(started) < 900*time.Millisecond {
+		t.Fatalf("attempts=%d elapsed=%s err=%v", attempts, time.Since(started), err)
+	}
+}

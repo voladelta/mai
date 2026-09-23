@@ -5,13 +5,14 @@
 `mai` is a small coding agent for macOS and Linux. It uses your existing Codex
 ChatGPT login, so you do not need an OpenAI API key.
 
-The agent has 6 tools:
+The agent has 7 tools:
 
 - `bash` reads files, searches code and runs commands
 - `python` explores data in a persistent Python namespace
 - `apply_patch` creates, changes, moves and deletes files
 - `read_skill` loads the complete instructions for one skill
 - `read_skill_file` loads a required supporting file from that skill
+- `view_image` shows a local image to the model
 - `spawn_subagent` runs one installed custom agent and returns its final output
 
 Skills are read only from `~/.agents/skills`. Each main-agent request includes
@@ -100,6 +101,21 @@ saved tasks can run at the same time.
 Run `mai` without a prompt to show concise usage text. Run `mai --help` for all
 options.
 
+## JSONL events
+
+Use `--jsonl` to write one JSON event per line on standard output:
+
+```bash
+mai "add tests for the parser" --jsonl > run.jsonl
+```
+
+Events include `task.started`, `model.delta`, `model.completed`,
+`tool.started`, `tool.completed`, `task.completed`, and `error`. Model text is
+reported in `model.delta` events instead of being printed directly. Progress
+messages remain on standard error. A `tool.completed` event includes its output
+up to 256 KiB; larger outputs report `output_bytes` and `output_omitted` instead.
+The default output remains human-readable.
+
 ## Choose a model
 
 New tasks use `gpt-6-luna` by default. Select `gpt-6-sol` with `-m sol` or
@@ -144,6 +160,11 @@ duration when necessary:
 mai "investigate the failure" --timeout 20m
 ```
 
+Mai retries transient Codex request failures with a bounded delay. It respects
+the server's `Retry-After` header up to a five-second cap. Authentication,
+quota, and other permanent failures are returned without retrying. A failed
+stream is not retried after Mai has printed any of its text.
+
 The same timeout limits the full lifetime of a spawned child process. A parent
 runs one child at a time. The child uses the parent's working directory, starts
 with new in-memory history, and cannot spawn another child. The parent receives
@@ -152,10 +173,18 @@ standard error.
 
 Each `bash` result reports its duration and original output byte counts. Mai
 keeps at most 64 KiB from each stream. For longer output, it preserves the
-beginning and end and reports the omitted byte count.
+beginning and end and reports the omitted byte count. When a stream is
+truncated, the result includes a `stdout_capture_path` or
+`stderr_capture_path` to a private temporary file containing the complete
+stream up to a 32 MiB per-stream capture limit. `capture_truncated` reports
+when that limit is reached, and `capture_error` reports a disk capture failure.
 
 Use `--no-input` in scripts and other non-interactive environments. If a command
 needs approval, `mai` rejects it instead of opening a terminal prompt.
+
+The `view_image` tool reads a PNG, JPEG, or GIF inside the repository and sends
+it as typed image content to the model. Files are limited to 8 MiB and 8,192
+pixels per side.
 
 ### Persistent Python
 

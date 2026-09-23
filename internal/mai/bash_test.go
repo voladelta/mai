@@ -39,6 +39,27 @@ func TestCappedBufferUpdatesTailAcrossWrites(t *testing.T) {
 	}
 }
 
+func TestBoundedCaptureStopsAtDiskLimit(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "capture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	capture := &boundedCapture{file: file, limit: 4}
+	if written, err := capture.Write([]byte("abcdef")); written != 6 || err != nil {
+		t.Fatalf("write=%d err=%v", written, err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(file.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "abcd" || !capture.truncated {
+		t.Fatalf("capture=%q truncated=%t", data, capture.truncated)
+	}
+}
+
 func TestRunBashCapturesResult(t *testing.T) {
 	root := t.TempDir()
 	raw := runBash(context.Background(), bashRequest{Command: "printf out; printf err >&2; exit 7", CWD: root, RepoRoot: root})
@@ -68,6 +89,17 @@ func TestRunBashBoundsLargeOutputAndKeepsBothEnds(t *testing.T) {
 	if !strings.HasPrefix(result.Stdout, "HEAD") || !strings.HasSuffix(result.Stdout, "TAIL") || !strings.Contains(result.Stdout, "bytes omitted") {
 		t.Fatalf("large output lost its boundaries: %q", result.Stdout)
 	}
+	if result.StdoutCapturePath == "" || result.CaptureTruncated {
+		t.Fatalf("missing complete capture: %#v", result)
+	}
+	captured, err := os.ReadFile(result.StdoutCapturePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(captured) != 70008 || !bytes.HasPrefix(captured, []byte("HEAD")) || !bytes.HasSuffix(captured, []byte("TAIL")) {
+		t.Fatalf("capture lost output: length=%d", len(captured))
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(filepath.Dir(result.StdoutCapturePath)) })
 }
 
 func TestRunBashRejectsApprovalWhenInputIsUnavailable(t *testing.T) {

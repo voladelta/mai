@@ -9,9 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -19,6 +21,8 @@ import (
 const (
 	defaultCodexURL    = "https://chatgpt.com/backend-api/codex/responses"
 	defaultHTTPTimeout = 10 * time.Minute
+	maxRequestAttempts = 3
+	maxRetryDelay      = 5 * time.Second
 )
 
 type codexClient struct {
@@ -63,9 +67,14 @@ type sseCollector struct {
 }
 
 type httpStatusError struct {
-	status int
-	body   string
+	status        int
+	body          string
+	retryAfter    time.Duration
+	hasRetryAfter bool
 }
+
+var errIncompleteStream = errors.New("Codex stream ended before response.completed")
+var errStreamRead = errors.New("read Codex stream")
 
 func (e *httpStatusError) Error() string {
 	if e.body == "" {
@@ -151,6 +160,48 @@ func (c *codexClient) streamWithCredentials(ctx context.Context, sess *session, 
 }
 
 func (c *codexClient) requestWithCredentials(ctx context.Context, sess *session, instructions string, creds credentials, compaction bool) (streamResult, error) {
+	for attempt := 0; attempt < maxRequestAttempts; attempt++ {
+		result, err := c.requestOnce(ctx, sess, instructions, creds, compaction)
+		if err == nil || result.wrote || attempt == maxRequestAttempts-1 || !retryableRequestError(err) {
+			return result, err
+		}
+		delay := time.Duration(200<<attempt) * time.Millisecond
+		var statusErr *httpStatusError
+		if errors.As(err, &statusErr) && statusErr.hasRetryAfter {
+			delay = statusErr.retryAfter
+		}
+		if delay > maxRetryDelay {
+			delay = maxRetryDelay
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return streamResult{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return streamResult{}, errors.New("Codex request retry limit reached")
+}
+
+func retryableRequestError(err error) bool {
+	var statusErr *httpStatusError
+	if errors.As(err, &statusErr) {
+		body := strings.ToLower(statusErr.body)
+		quotaFailure := strings.Contains(body, "quota") ||
+			strings.Contains(body, "usage_limit") ||
+			strings.Contains(body, "credit_balance_exhausted") ||
+			strings.Contains(body, "billing_hard_limit")
+		if statusErr.status == http.StatusTooManyRequests && quotaFailure {
+			return false
+		}
+		return statusErr.status == http.StatusRequestTimeout || statusErr.status == http.StatusTooManyRequests || statusErr.status >= 500
+	}
+	var netErr net.Error
+	return errors.Is(err, errIncompleteStream) || errors.Is(err, errStreamRead) || errors.Is(err, io.EOF) || (errors.As(err, &netErr) && netErr.Temporary())
+}
+
+func (c *codexClient) requestOnce(ctx context.Context, sess *session, instructions string, creds credentials, compaction bool) (streamResult, error) {
 	effort := sess.Effort
 	if sess.RequestEffort != "" {
 		effort = sess.RequestEffort
@@ -204,13 +255,30 @@ func (c *codexClient) requestWithCredentials(ctx context.Context, sess *session,
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-		return streamResult{}, &httpStatusError{status: resp.StatusCode, body: strings.TrimSpace(string(b))}
+		retryAfter, hasRetryAfter := parseRetryAfter(resp.Header.Get("Retry-After"))
+		return streamResult{}, &httpStatusError{
+			status: resp.StatusCode, body: strings.TrimSpace(string(b)),
+			retryAfter: retryAfter, hasRetryAfter: hasRetryAfter,
+		}
 	}
 	result, err := c.readSSE(resp.Body)
 	if errors.Is(err, context.DeadlineExceeded) {
-		return streamResult{}, fmt.Errorf("Codex request timed out after %s; use --timeout to change the limit", c.httpClient.Timeout)
+		return result, fmt.Errorf("Codex request timed out after %s; use --timeout to change the limit", c.httpClient.Timeout)
 	}
 	return result, err
+}
+
+func parseRetryAfter(value string) (time.Duration, bool) {
+	if seconds, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64); err == nil && seconds >= 0 {
+		if seconds > int64(maxRetryDelay/time.Second) {
+			return maxRetryDelay, true
+		}
+		return time.Duration(seconds) * time.Second, true
+	}
+	if when, err := http.ParseTime(value); err == nil {
+		return max(0, time.Until(when)), true
+	}
+	return 0, false
 }
 
 func (c *codexClient) compactWithCredentials(ctx context.Context, sess *session, instructions string, creds credentials) (streamResult, error) {
@@ -237,7 +305,7 @@ func (c *codexClient) readSSE(r io.Reader) (streamResult, error) {
 			line = strings.TrimSuffix(line, "\r")
 			if line == "" {
 				if dispatchErr := collector.dispatch(&dataLines); dispatchErr != nil {
-					return streamResult{}, dispatchErr
+					return streamResult{wrote: collector.wrote}, dispatchErr
 				}
 			} else if strings.HasPrefix(line, "data:") {
 				dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
@@ -245,16 +313,16 @@ func (c *codexClient) readSSE(r io.Reader) (streamResult, error) {
 		}
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
-				return streamResult{}, fmt.Errorf("read Codex stream: %w", err)
+				return streamResult{wrote: collector.wrote}, fmt.Errorf("%w: %w", errStreamRead, err)
 			}
 			if dispatchErr := collector.dispatch(&dataLines); dispatchErr != nil {
-				return streamResult{}, dispatchErr
+				return streamResult{wrote: collector.wrote}, dispatchErr
 			}
 			break
 		}
 	}
 	if !collector.completed {
-		return streamResult{}, errors.New("Codex stream ended before response.completed")
+		return streamResult{wrote: collector.wrote}, errIncompleteStream
 	}
 	return collector.result(), nil
 }
@@ -385,8 +453,19 @@ func toolDefinitions(allowSubagents ...bool) []map[string]any {
 			},
 		},
 		{
+			"type": "function", "name": "view_image",
+			"description": "View a PNG, JPEG, or GIF image inside the repository. Returns image content and dimensions. Files are limited to 8 MiB and 8192 pixels per side.",
+			"parameters": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"path": map[string]string{"type": "string", "description": "Absolute path or path relative to the task working directory."},
+				},
+				"required": []string{"path"},
+			},
+		},
+		{
 			"type": "function", "name": "bash",
-			"description": "Run Bash in the task working directory. Returns bounded head-and-tail output, exit code, timeout, duration, original byte counts, and truncation state.",
+			"description": "Run Bash in the task working directory. Returns bounded head-and-tail output, exit code, timeout, duration, byte counts, and truncation state. Truncated streams also return private capture file paths; each capture has a 32 MiB limit.",
 			"parameters": map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{

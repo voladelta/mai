@@ -38,6 +38,7 @@ Options:
   -m, --model MODEL      Use sol or luna for this task.
   --timeout DURATION     Set the request timeout (default: 10m).
   --no-input             Do not ask for interactive approval.
+  --jsonl                 Write task, model, and tool events as JSON Lines.
   --subagent NAME        Run with an installed custom agent.
 
 Tasks are stateless unless you use --persist or --last.
@@ -49,6 +50,12 @@ Documentation and support: https://github.com/voladelta/mai
 func Main(args []string, stdout, stderr io.Writer) int {
 	opts, err := parseOptions(args)
 	if err != nil {
+		for _, arg := range args {
+			if arg == "--jsonl" {
+				_ = writeJSONLEvent(stdout, map[string]any{"type": "error", "message": err.Error()})
+				break
+			}
+		}
 		fmt.Fprintf(stderr, "mai: %v\nRun 'mai --help' for usage.\n", err)
 		return 2
 	}
@@ -86,18 +93,23 @@ Run 'mai --help' for more information.
 }
 
 func runTask(opts options, stdout, stderr io.Writer) int {
+	reportError := func(err error) int {
+		if opts.jsonl {
+			_ = writeJSONLEvent(stdout, map[string]any{"type": "error", "message": err.Error()})
+		}
+		fmt.Fprintf(stderr, "mai: %v\n", err)
+		return 1
+	}
 	taskCfg := configForTask(opts)
 	var selectedAgent *customAgent
 	if opts.subagent != "" {
 		root, err := defaultAgentsRoot()
 		if err != nil {
-			fmt.Fprintf(stderr, "mai: %v\n", err)
-			return 1
+			return reportError(err)
 		}
 		loaded, err := loadCustomAgent(root, opts.subagent)
 		if err != nil {
-			fmt.Fprintf(stderr, "mai: %v\n", err)
-			return 1
+			return reportError(err)
 		}
 		selectedAgent = &loaded
 		taskCfg.Model = loaded.Model
@@ -105,34 +117,49 @@ func runTask(opts options, stdout, stderr io.Writer) int {
 	}
 	active, err := startSession(taskCfg, opts)
 	if err != nil {
-		fmt.Fprintf(stderr, "mai: %v\n", err)
-		return 1
+		return reportError(err)
 	}
 	defer active.close()
 	if err := repairInterruptedToolCalls(active.session); err != nil {
-		fmt.Fprintf(stderr, "mai: repair interrupted task: %v\n", err)
-		return 1
+		return reportError(fmt.Errorf("repair interrupted task: %w", err))
 	}
 
 	if err := appendUserPrompt(active.session, opts.prompt); err != nil {
-		fmt.Fprintf(stderr, "mai: save task: %v\n", err)
-		return 1
+		return reportError(fmt.Errorf("save task: %w", err))
 	}
 	if err := active.saveInitial(); err != nil {
-		fmt.Fprintf(stderr, "mai: save task: %v\n", err)
-		return 1
+		return reportError(fmt.Errorf("save task: %w", err))
+	}
+	if opts.jsonl {
+		if err := writeJSONLEvent(stdout, map[string]any{
+			"type": "task.started", "session_id": active.session.ID,
+			"model": active.session.Model, "effort": active.session.Effort,
+		}); err != nil {
+			return reportError(err)
+		}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	runner := newAgent(stdout, stderr, active.path, opts.timeout, !opts.noInput && isTerminal(os.Stdin), selectedAgent)
+	if opts.jsonl {
+		runner.events = stdout
+		runner.client.stdout = jsonlTextWriter{output: stdout}
+	}
 	if err := runner.run(ctx, active.session, opts.prompt); err != nil {
 		if ctx.Err() != nil {
+			if opts.jsonl {
+				_ = writeJSONLEvent(stdout, map[string]any{"type": "error", "message": "interrupted"})
+			}
 			fmt.Fprintln(stderr, "mai: interrupted")
 			return 130
 		}
-		fmt.Fprintf(stderr, "mai: %v\n", err)
-		return 1
+		return reportError(err)
+	}
+	if opts.jsonl {
+		if err := writeJSONLEvent(stdout, map[string]any{"type": "task.completed", "session_id": active.session.ID}); err != nil {
+			return reportError(err)
+		}
 	}
 	return 0
 }
