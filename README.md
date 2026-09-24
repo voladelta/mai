@@ -25,14 +25,15 @@ Custom agents are read from `$CODEX_HOME/agents`, or `~/.codex/agents` when
 `CODEX_HOME` is not set. Each `<name>.toml` file must define matching `name`,
 `description`, and `developer_instructions` fields, plus a reasoning effort.
 
-Run a custom agent directly with:
+Choose an installed agent, such as `implementor` for an assigned code change or
+`verifier` for an independent review. Run a custom agent directly with:
 
 ```bash
-mai --subagent repo_scout "map the parser"
+mai --subagent verifier "Review the current diff against the task contract"
 ```
 
-This mode uses the model, effort, and developer instructions from
-`repo_scout.toml`. It implies `--no-input` and cannot be combined with
+This mode uses the model, effort, and developer instructions from the selected
+agent's TOML file. It implies `--no-input` and cannot be combined with
 `--persist`, `--last`, `--effort`, or `--model`. A custom subagent does not
 receive the general skill catalog. Its developer instructions must identify any
 required skills.
@@ -228,8 +229,8 @@ Python calls.
 Use `mai.spawn` for background work when subagent use is authorized:
 
 ```python
-first = await mai.spawn("repo_scout", "Inspect the storage code")
-second = await mai.spawn("repo_scout", "Inspect the API code")
+first = await mai.spawn("verifier", "Review the storage changes against the task contract")
+second = await mai.spawn("verifier", "Review the API changes against the task contract")
 # Both children run independently, including between cells.
 first_result = await first.wait()
 second_result = await second.wait()

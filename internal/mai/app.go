@@ -23,7 +23,7 @@ Usage:
 
 Examples:
   mai "add tests for the parser"
-  mai --subagent repo_scout "map the affected code"
+  mai --subagent verifier "review the current diff"
   mai "start a saved task" --persist
   mai "now fix the failing test" --last
   mai "refactor this" -e h
