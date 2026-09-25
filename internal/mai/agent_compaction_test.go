@@ -130,7 +130,7 @@ func mustJSON(t *testing.T, value any) []byte {
 	return out
 }
 
-func TestAstraCompactionKeepsSelectedEffort(t *testing.T) {
+func TestSolCompactionKeepsSelectedEffort(t *testing.T) {
 	writeTestCodexAuth(t)
 	var requests []map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

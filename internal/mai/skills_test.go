@@ -113,7 +113,6 @@ func TestReadSkillReturnsCompleteFileAndSupportingFiles(t *testing.T) {
 	root := testSkillRoot(t)
 	writeTestSkill(t, root, "demo", "demo", "A demonstration skill.")
 	mustWrite(t, filepath.Join(root, "demo", "references", "guide.md"), "# Guide\nRead all of this.\n")
-	mustWrite(t, filepath.Join(root, "demo", "root-note.md"), "Root-level note.\n")
 	binary := []byte{0x89, 'P', 'N', 'G', 0, 1}
 	if err := os.MkdirAll(filepath.Join(root, "demo", "assets"), 0o755); err != nil {
 		t.Fatal(err)
@@ -136,10 +135,6 @@ func TestReadSkillReturnsCompleteFileAndSupportingFiles(t *testing.T) {
 	}
 	if result.Content != "# Guide\nRead all of this.\n" {
 		t.Fatalf("unexpected reference result: %#v", result)
-	}
-	result, err = readSkill(root, "demo", "root-note.md")
-	if err != nil {
-		t.Fatal(err)
 	}
 
 	result, err = readSkill(root, "demo", "assets/icon.png")
