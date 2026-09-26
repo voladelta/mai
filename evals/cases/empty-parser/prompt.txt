@@ -1,0 +1,1 @@
+Fix ParsePairs so an empty input returns an empty map instead of crashing. Preserve parsing of ordinary key=value lines. Add a regression test and run the Go tests.

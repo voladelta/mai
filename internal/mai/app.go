@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 )
 
 const version = "0.1.0"
@@ -146,6 +147,7 @@ func runTask(opts options, stdout, stderr io.Writer) int {
 		runner.events = stdout
 		runner.client.stdout = jsonlTextWriter{output: stdout}
 	}
+	taskStarted := time.Now()
 	if err := runner.run(ctx, active.session, opts.prompt); err != nil {
 		if ctx.Err() != nil {
 			if opts.jsonl {
@@ -157,7 +159,7 @@ func runTask(opts options, stdout, stderr io.Writer) int {
 		return reportError(err)
 	}
 	if opts.jsonl {
-		if err := writeJSONLEvent(stdout, map[string]any{"type": "task.completed", "session_id": active.session.ID}); err != nil {
+		if err := writeJSONLEvent(stdout, map[string]any{"type": "task.completed", "session_id": active.session.ID, "duration_ms": time.Since(taskStarted).Milliseconds()}); err != nil {
 			return reportError(err)
 		}
 	}

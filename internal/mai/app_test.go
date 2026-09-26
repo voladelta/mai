@@ -39,17 +39,63 @@ func TestMainJSONLProducesOnlyEventsOnStdout(t *testing.T) {
 		t.Fatalf("exit code=%d stderr=%s", code, stderr.String())
 	}
 	var types []string
+	var modelTimed, taskTimed bool
 	for _, line := range strings.Split(strings.TrimSpace(stdout.String()), "\n") {
 		var event struct {
-			Type string `json:"type"`
+			Type       string `json:"type"`
+			DurationMS *int64 `json:"duration_ms"`
 		}
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
 			t.Fatalf("non-JSONL stdout %q: %v", line, err)
 		}
 		types = append(types, event.Type)
+		if event.Type == "model.completed" {
+			modelTimed = event.DurationMS != nil
+		}
+		if event.Type == "task.completed" {
+			taskTimed = event.DurationMS != nil
+		}
 	}
-	if strings.Join(types, ",") != "task.started,model.delta,model.completed,task.completed" {
+	if strings.Join(types, ",") != "task.started,model.started,model.delta,model.completed,task.completed" {
 		t.Fatalf("event types=%v", types)
+	}
+	if !modelTimed || !taskTimed {
+		t.Fatalf("missing elapsed times: model=%t task=%t", modelTimed, taskTimed)
+	}
+}
+
+func TestMainJSONLReportsFailedModelDuration(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeTestCodexAuth(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+	t.Setenv("MAI_CODEX_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	if code := Main([]string{"hello", "--jsonl"}, &stdout, &stderr); code != 1 {
+		t.Fatalf("exit code=%d stderr=%s", code, stderr.String())
+	}
+
+	var types []string
+	var failedTimed bool
+	for _, line := range strings.Split(strings.TrimSpace(stdout.String()), "\n") {
+		var event struct {
+			Type       string `json:"type"`
+			DurationMS *int64 `json:"duration_ms"`
+		}
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatalf("non-JSONL stdout %q: %v", line, err)
+		}
+
+		types = append(types, event.Type)
+		if event.Type == "model.failed" {
+			failedTimed = event.DurationMS != nil
+		}
+	}
+	if strings.Join(types, ",") != "task.started,model.started,model.failed,error" || !failedTimed {
+		t.Fatalf("events=%v failed_timed=%t", types, failedTimed)
 	}
 }
 
@@ -123,7 +169,8 @@ func TestMainJSONLReportsToolCalls(t *testing.T) {
 			started = event["name"] == "bash" && event["call_id"] == "call-1"
 		}
 		if event["type"] == "tool.completed" {
-			completed = event["name"] == "bash" && event["call_id"] == "call-1" && event["output"] != nil
+			_, timed := event["duration_ms"].(float64)
+			completed = event["name"] == "bash" && event["call_id"] == "call-1" && event["output"] != nil && timed
 		}
 	}
 	if requests != 2 || !started || !completed {

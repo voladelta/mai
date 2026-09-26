@@ -69,6 +69,26 @@ func TestPatchEOFMatchesSuffix(t *testing.T) {
 	}
 }
 
+func TestPatchRejectsAmbiguousContextBeforeWriting(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "file.go")
+	original := "func retry() int {\n\treturn 30\n}\n\nfunc startup() int {\n\treturn 30\n}\n"
+	mustWrite(t, file, original)
+
+	ambiguous := "*** Begin Patch\n*** Update File: file.go\n@@\n-\treturn 30\n+\treturn 45\n*** End Patch"
+	_, err := applyPatch(root, ambiguous)
+	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("ambiguous patch error = %v", err)
+	}
+	assertContent(t, file, original)
+
+	anchored := "*** Begin Patch\n*** Update File: file.go\n@@\n func startup() int {\n-\treturn 30\n+\treturn 45\n*** End Patch"
+	if _, err := applyPatch(root, anchored); err != nil {
+		t.Fatal(err)
+	}
+	assertContent(t, file, "func retry() int {\n\treturn 30\n}\n\nfunc startup() int {\n\treturn 45\n}\n")
+}
+
 func TestApplyChunksPreservesForwardMatchingAndNewlines(t *testing.T) {
 	for _, trailing := range []string{"", "\n"} {
 		content := "head\na\nb\nanchor\nc\ntail" + trailing

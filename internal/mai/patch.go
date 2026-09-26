@@ -503,6 +503,9 @@ func applyChunks(content string, chunks []patchChunk) (string, error) {
 		if chunk.endOfFile && at+len(chunk.oldLines) != len(lines) {
 			return "", fmt.Errorf("chunk %d does not reach end of file", index+1)
 		}
+		if len(chunk.oldLines) > 0 && !chunk.endOfFile && findSequence(lines, chunk.oldLines, at+1) >= 0 {
+			return "", fmt.Errorf("chunk %d context is ambiguous; include more surrounding lines", index+1)
+		}
 
 		output = append(output, lines[cursor:at]...)
 		output = append(output, chunk.newLines...)

@@ -109,11 +109,15 @@ Use `--jsonl` to write one JSON event per line on standard output:
 mai "add tests for the parser" --jsonl > run.jsonl
 ```
 
-Events include `task.started`, `model.delta`, `model.completed`,
-`tool.started`, `tool.completed`, `task.completed`, and `error`. Model text is
+Events include `task.started`, `model.started`, `model.delta`,
+`model.completed`, `model.failed`, `tool.started`, `tool.completed`,
+`task.completed`, and `error`. Model text is
 reported in `model.delta` events instead of being printed directly. Progress
 messages remain on standard error. A `tool.completed` event includes its output
 up to 256 KiB; larger outputs report `output_bytes` and `output_omitted` instead.
+Completed model, tool, and task events include `duration_ms` for elapsed time.
+Model duration covers the full Codex request, including any internal retry.
+Tool duration covers execution of that call; task duration covers the agent run.
 The default output remains human-readable.
 
 ## Choose a model

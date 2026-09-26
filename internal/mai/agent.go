@@ -150,18 +150,35 @@ func (a *agent) runTurn(ctx context.Context, sess *session, instructions string)
 	if err := a.compactIfNeeded(ctx, sess, instructions); err != nil {
 		return false, err
 	}
+	if a.events != nil {
+		if err := writeJSONLEvent(a.events, map[string]any{"type": "model.started"}); err != nil {
+			return false, err
+		}
+	}
+	modelStarted := time.Now()
 	result, err := a.client.stream(ctx, sess, instructions)
+	modelDuration := time.Since(modelStarted).Milliseconds()
 	if result.wrote && a.events == nil {
 		fmt.Fprintln(a.stdout)
 	}
 	if err != nil {
+		if a.events != nil {
+			if eventErr := writeJSONLEvent(a.events, map[string]any{"type": "model.failed", "duration_ms": modelDuration}); eventErr != nil {
+				return false, eventErr
+			}
+		}
 		return false, err
 	}
 	if len(result.items) == 0 {
+		if a.events != nil {
+			if eventErr := writeJSONLEvent(a.events, map[string]any{"type": "model.failed", "duration_ms": modelDuration}); eventErr != nil {
+				return false, eventErr
+			}
+		}
 		return false, errors.New("Codex response contained no output items")
 	}
 	if a.events != nil {
-		if err := writeJSONLEvent(a.events, map[string]any{"type": "model.completed", "total_tokens": result.totalTokens}); err != nil {
+		if err := writeJSONLEvent(a.events, map[string]any{"type": "model.completed", "total_tokens": result.totalTokens, "duration_ms": modelDuration}); err != nil {
 			return false, err
 		}
 	}
@@ -250,9 +267,10 @@ func (a *agent) executeCalls(ctx context.Context, sess *session, calls []functio
 				return err
 			}
 		}
+		toolStarted := time.Now()
 		output := a.executeTool(ctx, sess, call)
 		if a.events != nil {
-			event := map[string]any{"type": "tool.completed", "name": call.Name, "call_id": call.CallID}
+			event := map[string]any{"type": "tool.completed", "name": call.Name, "call_id": call.CallID, "duration_ms": time.Since(toolStarted).Milliseconds()}
 			if len(output) <= 256<<10 {
 				event["output"] = output
 			} else {
