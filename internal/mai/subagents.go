@@ -45,6 +45,19 @@ type subagentResult struct {
 	OmittedBytes int64  `json:"omitted_bytes"`
 }
 
+func (result subagentResult) status(setupErr error) string {
+	if result.TimedOut {
+		return "timed_out"
+	}
+	if result.Cancelled {
+		return "cancelled"
+	}
+	if setupErr != nil || !result.OK {
+		return "failed"
+	}
+	return "completed"
+}
+
 func defaultAgentsRoot() (string, error) {
 	codexHome := os.Getenv("CODEX_HOME")
 	if codexHome == "" {

@@ -208,16 +208,7 @@ func (r *childRegistry) spawn(parent context.Context, generation int, executable
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		run.record.Result = result
-		run.record.Status = "completed"
-		if setupErr != nil || !outcome.OK {
-			run.record.Status = "failed"
-		}
-		if outcome.Cancelled {
-			run.record.Status = "cancelled"
-		}
-		if outcome.TimedOut {
-			run.record.Status = "timed_out"
-		}
+		run.record.Status = outcome.status(setupErr)
 		if err := r.saveLocked(); err != nil {
 			run.record.Status = "unknown"
 			run.record.Result = nil

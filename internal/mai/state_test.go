@@ -86,7 +86,7 @@ func TestSeparateSessionsUseSeparateFiles(t *testing.T) {
 	}
 	for _, id := range ids {
 		sess, err := loadSession(sessionPath(paths, id))
-		if err != nil || sess.ID != id {
+		if err != nil || sess.ID != id || sess.RequestEffort != sess.Effort {
 			t.Fatalf("load session %s: %#v, %v", id, sess, err)
 		}
 	}

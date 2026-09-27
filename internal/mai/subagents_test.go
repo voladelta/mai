@@ -28,6 +28,29 @@ func TestSubagentResultWireCompatibility(t *testing.T) {
 	}
 }
 
+func TestSubagentResultStatus(t *testing.T) {
+	setupErr := errors.New("setup failed")
+	tests := []struct {
+		name   string
+		result subagentResult
+		err    error
+		want   string
+	}{
+		{name: "completed", result: subagentResult{OK: true}, want: "completed"},
+		{name: "failed", result: subagentResult{}, want: "failed"},
+		{name: "setup failure", result: subagentResult{OK: true}, err: setupErr, want: "failed"},
+		{name: "cancelled", result: subagentResult{Cancelled: true}, want: "cancelled"},
+		{name: "timed out", result: subagentResult{TimedOut: true, Cancelled: true}, want: "timed_out"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.result.status(tt.err); got != tt.want {
+				t.Fatalf("status = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRunSubagentMissingExecutableReturnsFailedResult(t *testing.T) {
 	root := t.TempDir()
 	result, err := runSubagentProcess(context.Background(), filepath.Join(root, "missing"), testSubagentLimits(time.Second), root, "scout", "test")

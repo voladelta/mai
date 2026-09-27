@@ -653,36 +653,14 @@ func atomicWriteRootFile(root *os.Root, path string, content []byte, mode os.Fil
 }
 
 func atomicWriteFile(path string, content []byte, mode os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create directory for %s: %w", path, err)
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".mai-*")
+	root, err := os.OpenRoot(dir)
 	if err != nil {
-		return fmt.Errorf("create temporary file for %s: %w", path, err)
+		return fmt.Errorf("open directory for %s: %w", path, err)
 	}
-	tmpPath := tmp.Name()
-	keep := false
-	defer func() {
-		_ = tmp.Close()
-		if !keep {
-			_ = os.Remove(tmpPath)
-		}
-	}()
-	if err := tmp.Chmod(mode); err != nil {
-		return fmt.Errorf("set mode for %s: %w", path, err)
-	}
-	if _, err := tmp.Write(content); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	if err := tmp.Sync(); err != nil {
-		return fmt.Errorf("sync %s: %w", path, err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close %s: %w", path, err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("replace %s: %w", path, err)
-	}
-	keep = true
-	return nil
+	defer root.Close()
+	return atomicWriteRootFile(root, filepath.Base(path), content, mode)
 }

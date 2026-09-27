@@ -255,16 +255,19 @@ func startSession(cfg taskConfig, opts options) (*activeTask, error) {
 		lock.Close()
 		return nil, errors.New("saved task does not belong to this project")
 	}
-	if !supportedModel(sess.Model) {
+	legacyModel := !supportedModel(sess.Model)
+	if legacyModel {
 		// Older saved tasks use the current default on resume.
 		sess.Model = defaultModel
-		sess.RequestEffort = ""
 	}
 	if opts.modelExplicit {
 		sess.Model = opts.model
 	}
 	if opts.effortExplicit {
 		sess.Effort = opts.effort
+	}
+	if legacyModel {
+		sess.RequestEffort = sess.Effort
 	}
 	if err := os.Chdir(sess.CWD); err != nil {
 		lock.Close()
@@ -280,9 +283,6 @@ func appendUserPrompt(sess *session, prompt string) error {
 	})
 	if err != nil {
 		return fmt.Errorf("encode prompt: %w", err)
-	}
-	if sess.RequestEffort == "" {
-		sess.RequestEffort = sess.Effort
 	}
 	effective := effortIDs[sess.RequestEffort]
 	for _, raw := range sess.History {
@@ -332,7 +332,7 @@ func createSession(cfg taskConfig) (*session, error) {
 	}
 	return &session{
 		Version: stateVersion, ID: id, CWD: cwd, RepoRoot: root,
-		Model: cfg.Model, Effort: cfg.Effort,
+		Model: cfg.Model, Effort: cfg.Effort, RequestEffort: cfg.Effort,
 	}, nil
 }
 

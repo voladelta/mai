@@ -243,10 +243,6 @@ func retryableRequestError(err error) bool {
 }
 
 func (c *codexClient) requestOnce(ctx context.Context, sess *session, instructions string, creds credentials, compaction bool) (streamResult, error) {
-	effort := sess.Effort
-	if sess.RequestEffort != "" {
-		effort = sess.RequestEffort
-	}
 	body := map[string]any{
 		"model":               modelID(sess.Model),
 		"store":               false,
@@ -257,7 +253,7 @@ func (c *codexClient) requestOnce(ctx context.Context, sess *session, instructio
 		"tool_choice":         "auto",
 		"parallel_tool_calls": false,
 		"reasoning": map[string]any{
-			"effort":  effortIDs[effort],
+			"effort":  effortIDs[sess.RequestEffort],
 			"summary": "auto",
 		},
 		"text":             map[string]string{"verbosity": "low"},

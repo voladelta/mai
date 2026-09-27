@@ -35,7 +35,7 @@ func TestRunTurnCompactsBeforeSamplingAndSavesReplacement(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.json")
 	sess := &session{
 		Version: stateVersion, ID: "01234567-89ab-cdef-0123-456789abcdef",
-		CWD: t.TempDir(), RepoRoot: t.TempDir(), Model: "luna", Effort: "m",
+		CWD: t.TempDir(), RepoRoot: t.TempDir(), Model: "luna", Effort: "m", RequestEffort: "m",
 		ContextTokens: 244_800,
 		Transcript:    []transcriptEntry{{Kind: "user", Text: "legacy fact"}},
 		History: []json.RawMessage{
@@ -163,7 +163,7 @@ func TestFailedCompactionLeavesHistoryUnchanged(t *testing.T) {
 	defer server.Close()
 
 	before := []json.RawMessage{json.RawMessage(`{"role":"user","content":"keep"}`)}
-	sess := &session{ID: "session", Model: "luna", Effort: "m", ContextTokens: 244_800, History: append([]json.RawMessage(nil), before...)}
+	sess := &session{ID: "session", Model: "luna", Effort: "m", RequestEffort: "m", ContextTokens: 244_800, History: append([]json.RawMessage(nil), before...)}
 	a := newAgent(&bytes.Buffer{}, &bytes.Buffer{}, "", time.Second, false, nil)
 	a.client.endpoint = server.URL
 	if err := a.compactIfNeeded(context.Background(), sess, "instructions"); err == nil {

@@ -208,7 +208,7 @@ func TestPersistCreatesProjectSessionAndCurrentPointer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sess.ID != id || sess.Model != "luna" || sess.Effort != "h" || len(sess.History) != 1 {
+	if sess.ID != id || sess.Model != "luna" || sess.Effort != "h" || sess.RequestEffort != "h" || len(sess.History) != 1 {
 		t.Fatalf("saved session = %#v", sess)
 	}
 }

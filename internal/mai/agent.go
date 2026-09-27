@@ -412,11 +412,7 @@ func (a *agent) executeSpawnSubagent(ctx context.Context, sess *session, argumen
 	}
 	fmt.Fprintf(a.stderr, "→ subagent: %s\n", args.Name)
 	result, setupErr := runSubagentProcess(ctx, a.executable, subagentLimits{request: a.requestTimeout, cell: a.cellTimeout, wall: a.subagentTimeout}, sess.CWD, args.Name, args.Prompt)
-	status := "completed"
-	if setupErr != nil || !result.OK {
-		status = "failed"
-	}
-	fmt.Fprintf(a.stderr, "← subagent: %s %s (%s)\n", args.Name, status, time.Duration(result.DurationMS)*time.Millisecond)
+	fmt.Fprintf(a.stderr, "← subagent: %s %s (%s)\n", args.Name, result.status(setupErr), time.Duration(result.DurationMS)*time.Millisecond)
 	return textToolOutput(encodeSubagentResult(result, setupErr))
 }
 

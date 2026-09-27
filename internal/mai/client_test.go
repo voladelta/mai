@@ -84,7 +84,7 @@ func TestCompactAddsTriggerAndSuppressesOtherOutput(t *testing.T) {
 	client := newCodexClient(&stdout, time.Second)
 	client.endpoint = server.URL
 	item, err := client.compact(context.Background(), &session{
-		ID: "session", Model: "luna", Effort: "m",
+		ID: "session", Model: "luna", Effort: "m", RequestEffort: "m",
 		History: []json.RawMessage{json.RawMessage(`{"role":"user","content":"hello"}`)},
 	}, "instructions")
 	if err != nil {
@@ -165,7 +165,7 @@ func TestCodexClientRetriesInBandTransientFailureOnlyBeforeText(t *testing.T) {
 			var output bytes.Buffer
 			client := newCodexClient(&output, time.Second)
 			client.endpoint = server.URL
-			_, err := client.streamWithCredentials(context.Background(), &session{ID: "session", Model: "luna", Effort: "m"}, "instructions", credentials{AccessToken: "token"})
+			_, err := client.streamWithCredentials(context.Background(), &session{ID: "session", Model: "luna", Effort: "m", RequestEffort: "m"}, "instructions", credentials{AccessToken: "token"})
 			wantAttempts := 1
 			if scenario == "rate_limit" || scenario == "slow_down" || scenario == "overload" || scenario == "server_is_overloaded" {
 				wantAttempts = 2
@@ -192,7 +192,7 @@ func TestCodexClientDoesNotRetryOutputWriterFailure(t *testing.T) {
 
 	client := newCodexClient(eofWriter{}, time.Second)
 	client.endpoint = server.URL
-	_, err := client.streamWithCredentials(context.Background(), &session{ID: "session", Model: "luna", Effort: "m"}, "instructions", credentials{AccessToken: "token"})
+	_, err := client.streamWithCredentials(context.Background(), &session{ID: "session", Model: "luna", Effort: "m", RequestEffort: "m"}, "instructions", credentials{AccessToken: "token"})
 	if attempts != 1 || !errors.Is(err, errOutputWrite) {
 		t.Fatalf("attempts=%d err=%v", attempts, err)
 	}
@@ -238,7 +238,7 @@ func TestAgentDoesNotExecuteUnconfirmedToolCall(t *testing.T) {
 		}))
 		a := newAgent(&bytes.Buffer{}, &bytes.Buffer{}, "", time.Second, false, nil)
 		a.client.endpoint = server.URL
-		sess := &session{ID: "test", Model: "luna", Effort: "l", CWD: root, RepoRoot: root}
+		sess := &session{ID: "test", Model: "luna", Effort: "l", RequestEffort: "l", CWD: root, RepoRoot: root}
 
 		_, err := a.runTurn(context.Background(), sess, "test")
 		server.Close()
@@ -260,7 +260,7 @@ func TestCodexClientReportsTimeoutWithNextStep(t *testing.T) {
 	client := newCodexClient(&bytes.Buffer{}, 10*time.Millisecond)
 	client.endpoint = server.URL
 	_, err := client.streamWithCredentials(context.Background(), &session{
-		ID: "session", Model: "luna", Effort: "max",
+		ID: "session", Model: "luna", Effort: "max", RequestEffort: "max",
 	}, "instructions", credentials{AccessToken: "token", AccountID: "account"})
 	if err == nil || !strings.Contains(err.Error(), "use --timeout") {
 		t.Fatalf("unexpected error: %v", err)
@@ -283,7 +283,7 @@ func TestCodexClientAllowsActiveStreamPastRequestTimeout(t *testing.T) {
 	client := newCodexClient(&output, 150*time.Millisecond)
 	client.endpoint = server.URL
 	started := time.Now()
-	_, err := client.streamWithCredentials(context.Background(), &session{ID: "session", Model: "luna", Effort: "m"}, "instructions", credentials{AccessToken: "token"})
+	_, err := client.streamWithCredentials(context.Background(), &session{ID: "session", Model: "luna", Effort: "m", RequestEffort: "m"}, "instructions", credentials{AccessToken: "token"})
 	if err != nil || output.String() != "xxxx" {
 		t.Fatalf("active stream output=%q err=%v", output.String(), err)
 	}
@@ -303,7 +303,7 @@ func TestCodexClientStopsIdleStream(t *testing.T) {
 	var output bytes.Buffer
 	client := newCodexClient(&output, 50*time.Millisecond)
 	client.endpoint = server.URL
-	_, err := client.streamWithCredentials(context.Background(), &session{ID: "session", Model: "luna", Effort: "m"}, "instructions", credentials{AccessToken: "token"})
+	_, err := client.streamWithCredentials(context.Background(), &session{ID: "session", Model: "luna", Effort: "m", RequestEffort: "m"}, "instructions", credentials{AccessToken: "token"})
 	if output.String() != "x" || err == nil || !strings.Contains(err.Error(), "use --timeout") {
 		t.Fatalf("idle stream output=%q err=%v", output.String(), err)
 	}
@@ -334,7 +334,7 @@ func TestCodexClientRetriesTransientStatusAndIncompleteStream(t *testing.T) {
 			var output bytes.Buffer
 			client := newCodexClient(&output, time.Second)
 			client.endpoint = server.URL
-			result, err := client.streamWithCredentials(context.Background(), &session{ID: "session", Model: "luna", Effort: "m"}, "instructions", credentials{AccessToken: "token"})
+			result, err := client.streamWithCredentials(context.Background(), &session{ID: "session", Model: "luna", Effort: "m", RequestEffort: "m"}, "instructions", credentials{AccessToken: "token"})
 			if err != nil || attempts != 2 || output.String() != "done" || len(result.items) != 1 {
 				t.Fatalf("attempts=%d output=%q result=%#v err=%v", attempts, output.String(), result, err)
 			}
@@ -370,7 +370,7 @@ func TestCodexClientDoesNotRetryAuthQuotaOrPrintedPartialStream(t *testing.T) {
 			var output bytes.Buffer
 			client := newCodexClient(&output, time.Second)
 			client.endpoint = server.URL
-			_, err := client.streamWithCredentials(context.Background(), &session{ID: "session", Model: "luna", Effort: "m"}, "instructions", credentials{AccessToken: "token"})
+			_, err := client.streamWithCredentials(context.Background(), &session{ID: "session", Model: "luna", Effort: "m", RequestEffort: "m"}, "instructions", credentials{AccessToken: "token"})
 			if err == nil || attempts != 1 {
 				t.Fatalf("attempts=%d output=%q err=%v", attempts, output.String(), err)
 			}
@@ -395,7 +395,7 @@ func TestCodexClientHonorsRetryAfter(t *testing.T) {
 	client := newCodexClient(&bytes.Buffer{}, time.Second)
 	client.endpoint = server.URL
 	started := time.Now()
-	_, err := client.streamWithCredentials(context.Background(), &session{ID: "session", Model: "luna", Effort: "m"}, "instructions", credentials{AccessToken: "token"})
+	_, err := client.streamWithCredentials(context.Background(), &session{ID: "session", Model: "luna", Effort: "m", RequestEffort: "m"}, "instructions", credentials{AccessToken: "token"})
 	if err != nil || attempts != 2 || time.Since(started) < 900*time.Millisecond {
 		t.Fatalf("attempts=%d elapsed=%s err=%v", attempts, time.Since(started), err)
 	}
