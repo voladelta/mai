@@ -523,7 +523,7 @@ func patchToolOutput(result string, err error) json.RawMessage {
 		"failed":                  commitErr.failed,
 		"pending":                 commitErr.pending,
 		"reconciliation_required": true,
-		"instruction":             "Inspect the repository and reconcile the requested patch with the current files before you retry apply_patch.",
+		"instruction":             interruptedToolInstruction("apply_patch"),
 	})
 	return textToolOutput(string(b))
 }
