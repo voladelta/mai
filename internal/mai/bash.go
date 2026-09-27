@@ -273,9 +273,13 @@ func (a *agent) terminalApproval(ctx context.Context, command, reason string) (b
 	stop := context.AfterFunc(ctx, func() { _ = tty.Close() })
 	defer stop()
 	fmt.Fprintf(tty, "\nmai wants to run rm outside the repository.\nReason: %s\nCommand: %s\nApprove? [y/N] ", reason, command)
+	return readApproval(ctx, tty, 20*time.Millisecond)
+}
+
+func readApproval(ctx context.Context, r io.Reader, poll time.Duration) (bool, error) {
 	// Some terminals cannot use Go's runtime poller. Nonblocking reads keep
 	// cancellation bounded on those terminals without leaving a reader behind.
-	ticker := time.NewTicker(20 * time.Millisecond)
+	ticker := time.NewTicker(poll)
 	defer ticker.Stop()
 	var answer strings.Builder
 	var buffer [256]byte
@@ -283,7 +287,7 @@ func (a *agent) terminalApproval(ctx context.Context, command, reason string) (b
 		if err := ctx.Err(); err != nil {
 			return false, err
 		}
-		n, err := tty.Read(buffer[:])
+		n, err := r.Read(buffer[:])
 		if n > 0 {
 			part := string(buffer[:n])
 			line, _, complete := strings.Cut(part, "\n")

@@ -112,6 +112,66 @@ func TestLoadSessionEstimatesTokensForOlderState(t *testing.T) {
 	}
 }
 
+func TestLoadSessionRejectsInvalidState(t *testing.T) {
+	root := t.TempDir()
+	for name, test := range map[string]struct {
+		mutate  func(*session)
+		wantErr string
+	}{
+		"unsupported version":    {mutate: func(s *session) { s.Version = 2 }, wantErr: "incomplete or unsupported"},
+		"invalid id":             {mutate: func(s *session) { s.ID = "not-an-id" }, wantErr: "incomplete or unsupported"},
+		"missing cwd":            {mutate: func(s *session) { s.CWD = "" }, wantErr: "incomplete or unsupported"},
+		"negative tokens":        {mutate: func(s *session) { s.ContextTokens = -1 }, wantErr: "incomplete or unsupported"},
+		"negative skip":          {mutate: func(s *session) { s.TranscriptSkip = -1 }, wantErr: "invalid transcript position"},
+		"skip beyond history":    {mutate: func(s *session) { s.TranscriptSkip = 1 }, wantErr: "invalid transcript position"},
+		"negative transcript":    {mutate: func(s *session) { s.TranscriptEnd = -1 }, wantErr: "invalid transcript position"},
+		"invalid model":          {mutate: func(s *session) { s.Model = "bogus" }, wantErr: `invalid model "bogus"`},
+		"invalid effort":         {mutate: func(s *session) { s.Effort = "bogus" }, wantErr: `invalid effort "bogus"`},
+		"invalid request effort": {mutate: func(s *session) { s.RequestEffort = "bogus" }, wantErr: `invalid request effort "bogus"`},
+		"missing transcript":     {mutate: func(s *session) { s.TranscriptEnd = 10 }, wantErr: "open saved transcript"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "session.json")
+			sess := session{
+				Version: stateVersion, ID: "01234567-89ab-cdef-0123-456789abcdef",
+				CWD: root, RepoRoot: root, Model: "luna", Effort: "m",
+			}
+			test.mutate(&sess)
+			if err := saveJSON(path, sess); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := loadSession(path); err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("loadSession error = %v, want %q", err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestLoadSessionChecksSavedTranscriptPosition(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "session.json")
+	sess := session{
+		Version: stateVersion, ID: "01234567-89ab-cdef-0123-456789abcdef",
+		CWD: root, RepoRoot: root, Model: "luna", Effort: "m", TranscriptEnd: 100,
+	}
+	if err := saveJSON(path, sess); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(transcriptPath(path), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadSession(path); err == nil || !strings.Contains(err.Error(), "shorter than its committed position") {
+		t.Fatalf("short transcript error = %v", err)
+	}
+	if err := os.WriteFile(transcriptPath(path), []byte(strings.Repeat("x", 100)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := loadSession(path)
+	if err != nil || loaded.TranscriptEnd != 100 {
+		t.Fatalf("complete transcript rejected: %#v, %v", loaded, err)
+	}
+}
+
 func TestEstimateHistoryItemTokensCountsImageAsImageAndKeepsText(t *testing.T) {
 	imageURL := "data:image/png;base64," + strings.Repeat("A", 1<<20)
 	imageOutput := imageContentToolOutput("metadata", imageURL)

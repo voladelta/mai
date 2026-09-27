@@ -128,22 +128,24 @@ func (k *pythonKernel) writeFrame(value any) error {
 	return err
 }
 
-func (k *pythonKernel) runProtocol(ctx context.Context, code, marker string, operations map[string]pythonOperation) (bool, error) {
-	if k.runtime == nil {
-		select {
-		case message, open := <-k.messages:
-			frame := message.frame
-			if !open || message.err != nil {
-				return false, fmt.Errorf("Python startup protocol: %v", message.err)
-			}
-			if frame.Type != "ready" || frame.Generation != k.generation || frame.Version == "" || frame.Executable == "" || frame.GILEnabled == nil {
-				return false, errors.New("invalid Python ready message")
-			}
-			k.runtime = &pythonRuntime{frame.Version, frame.Executable, *frame.GILEnabled}
-		case <-ctx.Done():
-			return false, ctx.Err()
+func (k *pythonKernel) awaitReady(ctx context.Context) error {
+	select {
+	case message, open := <-k.messages:
+		frame := message.frame
+		if !open || message.err != nil {
+			return fmt.Errorf("Python startup protocol: %v", message.err)
 		}
+		if frame.Type != "ready" || frame.Generation != k.generation || frame.Version == "" || frame.Executable == "" || frame.GILEnabled == nil {
+			return errors.New("invalid Python ready message")
+		}
+		k.runtime = &pythonRuntime{frame.Version, frame.Executable, *frame.GILEnabled}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
+}
+
+func exemptCalls(operations map[string]pythonOperation) []string {
 	exempt := []string{}
 	for name, operation := range operations {
 		if !operation.budgeted {
@@ -151,46 +153,110 @@ func (k *pythonKernel) runProtocol(ctx context.Context, code, marker string, ope
 		}
 	}
 	sort.Strings(exempt)
-	if err := k.writeFrame(map[string]any{"type": "execute", "generation": k.generation, "cell": k.cell, "code": code, "marker": marker, "exempt_calls": exempt}); err != nil {
+	return exempt
+}
+
+type pythonHostResult struct {
+	frame  pythonFrame
+	result json.RawMessage
+	err    error
+}
+
+type pythonHostCalls struct {
+	operations  map[string]pythonOperation
+	active      chan pythonHostResult
+	queued      []pythonFrame
+	lastCall    int
+	effectCalls int
+}
+
+func (h *pythonHostCalls) enqueue(frame pythonFrame) error {
+	count := len(h.queued)
+	if h.active != nil {
+		count++
+	}
+	operation, known := h.operations[frame.Name]
+	if known && operation.budgeted {
+		h.effectCalls++
+	}
+	if frame.Call != h.lastCall+1 || !known || h.effectCalls > maxPythonCalls || count >= maxPythonPending || len(frame.Arguments) == 0 || frame.Arguments[0] != '{' {
+		return errors.New("invalid or excessive Python host call")
+	}
+	h.lastCall = frame.Call
+	h.queued = append(h.queued, frame)
+	return nil
+}
+
+func (h *pythonHostCalls) startNext(ctx context.Context) {
+	if h.active != nil || len(h.queued) == 0 {
+		return
+	}
+	frame := h.queued[0]
+	h.queued = h.queued[1:]
+	h.active = make(chan pythonHostResult, 1)
+	resultChan := h.active
+	go func() {
+		result := json.RawMessage(`{"ok":false,"error":"Python host bridge is unavailable"}`)
+		var err error
+		if operation, ok := h.operations[frame.Name]; ok {
+			result, err = operation.handler(ctx, frame.Generation, frame.Cell, frame.Call, frame.Name, frame.Arguments)
+		}
+		resultChan <- pythonHostResult{frame, result, err}
+	}()
+}
+
+func (k *pythonKernel) handleControl(message pythonMessage, open bool, calls *pythonHostCalls) (finished, ok bool, err error) {
+	if !open {
+		return false, false, io.EOF
+	}
+	if message.err != nil {
+		return false, false, message.err
+	}
+	frame := message.frame
+	if frame.Generation != k.generation || frame.Cell != k.cell {
+		return false, false, errors.New("stale Python control message")
+	}
+	switch frame.Type {
+	case "host_call":
+		if err := calls.enqueue(frame); err != nil {
+			return false, false, err
+		}
+	case "done":
+		if frame.OK == nil || calls.active != nil || len(calls.queued) != 0 {
+			return false, false, errors.New("Python cell ended with outstanding host operations")
+		}
+		return true, *frame.OK, nil
+	default:
+		return false, false, errors.New("unexpected Python control message")
+	}
+	return false, false, nil
+}
+
+func (k *pythonKernel) runProtocol(ctx context.Context, code, marker string, operations map[string]pythonOperation) (bool, error) {
+	if k.runtime == nil {
+		if err := k.awaitReady(ctx); err != nil {
+			return false, err
+		}
+	}
+	if err := k.writeFrame(map[string]any{"type": "execute", "generation": k.generation, "cell": k.cell, "code": code, "marker": marker, "exempt_calls": exemptCalls(operations)}); err != nil {
 		return false, err
 	}
 
 	hostCtx, cancel := context.WithCancel(ctx)
-	type hostResult struct {
-		frame  pythonFrame
-		result json.RawMessage
-		err    error
-	}
-	var active chan hostResult
-	var queued []pythonFrame
-	lastCall := 0
-	effectCalls := 0
+	calls := &pythonHostCalls{operations: operations}
 	defer func() {
 		cancel()
 		// No host operation can outlive this cell, including a cancelled
 		// Python awaiter or an operation that is finishing an atomic write.
-		if active != nil {
-			<-active
+		if calls.active != nil {
+			<-calls.active
 		}
 	}()
 	for {
-		if active == nil && len(queued) > 0 {
-			frame := queued[0]
-			queued = queued[1:]
-			active = make(chan hostResult, 1)
-			resultChan := active
-			go func() {
-				result := json.RawMessage(`{"ok":false,"error":"Python host bridge is unavailable"}`)
-				var err error
-				if operation, ok := operations[frame.Name]; ok {
-					result, err = operation.handler(hostCtx, frame.Generation, frame.Cell, frame.Call, frame.Name, frame.Arguments)
-				}
-				resultChan <- hostResult{frame, result, err}
-			}()
-		}
+		calls.startNext(hostCtx)
 		select {
-		case reply := <-active:
-			active = nil
+		case reply := <-calls.active:
+			calls.active = nil
 			if reply.err != nil {
 				return false, reply.err
 			}
@@ -198,38 +264,12 @@ func (k *pythonKernel) runProtocol(ctx context.Context, code, marker string, ope
 				return false, err
 			}
 		case message, open := <-k.messages:
-			if !open {
-				return false, io.EOF
+			finished, ok, err := k.handleControl(message, open, calls)
+			if err != nil {
+				return false, err
 			}
-			if message.err != nil {
-				return false, message.err
-			}
-			frame := message.frame
-			if frame.Generation != k.generation || frame.Cell != k.cell {
-				return false, errors.New("stale Python control message")
-			}
-			switch frame.Type {
-			case "host_call":
-				count := len(queued)
-				if active != nil {
-					count++
-				}
-				operation, known := operations[frame.Name]
-				if known && operation.budgeted {
-					effectCalls++
-				}
-				if frame.Call != lastCall+1 || !known || effectCalls > maxPythonCalls || count >= maxPythonPending || len(frame.Arguments) == 0 || frame.Arguments[0] != '{' {
-					return false, errors.New("invalid or excessive Python host call")
-				}
-				lastCall = frame.Call
-				queued = append(queued, frame)
-			case "done":
-				if frame.OK == nil || active != nil || len(queued) != 0 {
-					return false, errors.New("Python cell ended with outstanding host operations")
-				}
-				return *frame.OK, nil
-			default:
-				return false, errors.New("unexpected Python control message")
+			if finished {
+				return ok, nil
 			}
 		case <-ctx.Done():
 			return false, ctx.Err()

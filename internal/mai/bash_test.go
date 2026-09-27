@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -185,6 +187,95 @@ func TestRunBashRejectsPipedRMWithoutApproval(t *testing.T) {
 		t.Fatalf("piped rm was not rejected: %s", raw)
 	}
 	assertContent(t, target, "keep")
+}
+
+type approvalReadStep struct {
+	data string
+	err  error
+	do   func()
+}
+
+type scriptedApprovalReader struct {
+	steps   []approvalReadStep
+	pending string
+	err     error
+}
+
+func (r *scriptedApprovalReader) Read(p []byte) (int, error) {
+	if len(r.pending) == 0 {
+		if r.err != nil {
+			err := r.err
+			r.err = nil
+			return 0, err
+		}
+		if len(r.steps) == 0 {
+			return 0, syscall.EAGAIN
+		}
+		step := r.steps[0]
+		r.steps = r.steps[1:]
+		if step.do != nil {
+			step.do()
+		}
+		r.pending = step.data
+		r.err = step.err
+	}
+	n := copy(p, r.pending)
+	r.pending = r.pending[n:]
+	return n, nil
+}
+
+func TestReadApproval(t *testing.T) {
+	for name, test := range map[string]struct {
+		steps   []approvalReadStep
+		want    bool
+		wantErr string
+	}{
+		"approve":            {steps: []approvalReadStep{{data: "y\n"}}, want: true},
+		"approve yes padded": {steps: []approvalReadStep{{data: "  YES \n"}}, want: true},
+		"deny":               {steps: []approvalReadStep{{data: "n\n"}}, want: false},
+		"empty denies":       {steps: []approvalReadStep{{data: "\n"}}, want: false},
+		"split answer":       {steps: []approvalReadStep{{data: "y"}, {data: "es\n"}}, want: true},
+		"eagain retries":     {steps: []approvalReadStep{{err: syscall.EAGAIN}, {data: "y\n"}}, want: true},
+		"eintr retries":      {steps: []approvalReadStep{{err: syscall.EINTR}, {data: "y\n"}}, want: true},
+		"overlong answer": {
+			steps: []approvalReadStep{
+				{data: strings.Repeat("x", 300)}, {data: strings.Repeat("x", 300)},
+				{data: strings.Repeat("x", 300)}, {data: strings.Repeat("x", 300)},
+			},
+			wantErr: "exceeds 1024 bytes",
+		},
+		"read error": {steps: []approvalReadStep{{err: errors.New("read failed")}}, wantErr: "read failed"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			approved, err := readApproval(context.Background(), &scriptedApprovalReader{steps: test.steps}, time.Millisecond)
+			if test.wantErr == "" {
+				if err != nil || approved != test.want {
+					t.Fatalf("readApproval = %t, %v; want %t", approved, err, test.want)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("readApproval error = %v, want %q", err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestReadApprovalReturnsContextErrorWhenCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	approved, err := readApproval(ctx, &scriptedApprovalReader{}, time.Millisecond)
+	if approved || !errors.Is(err, context.Canceled) {
+		t.Fatalf("readApproval = %t, %v; want context.Canceled", approved, err)
+	}
+
+	ctx, cancel = context.WithCancel(context.Background())
+	defer cancel()
+	reader := &scriptedApprovalReader{steps: []approvalReadStep{{err: errors.New("read failed"), do: cancel}}}
+	approved, err = readApproval(ctx, reader, time.Millisecond)
+	if approved || !errors.Is(err, context.Canceled) {
+		t.Fatalf("readApproval after cancellation = %t, %v; want context.Canceled", approved, err)
+	}
 }
 
 func TestRunBashTimesOutProcessGroup(t *testing.T) {

@@ -155,43 +155,64 @@ func loadSession(path string) (*session, error) {
 	if err := json.Unmarshal(b, &out); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
-	if out.Version != stateVersion || !validSessionID(out.ID) || out.CWD == "" || out.RepoRoot == "" || out.ContextTokens < 0 {
-		return nil, fmt.Errorf("saved session is incomplete or unsupported")
-	}
-	if out.TranscriptSkip < 0 || out.TranscriptSkip > len(out.History) || out.TranscriptEnd < 0 {
-		return nil, errors.New("saved session has invalid transcript position")
+	if err := validateSessionHeader(&out); err != nil {
+		return nil, err
 	}
 	out.transcriptPath = transcriptPath(path)
 	if out.TranscriptEnd > 0 {
-		file, err := openTranscript(out.transcriptPath, os.O_RDONLY)
-		if err != nil {
-			return nil, fmt.Errorf("open saved transcript: %w", err)
-		}
-		info, err := file.Stat()
-		file.Close()
-		if err != nil {
-			return nil, fmt.Errorf("inspect saved transcript: %w", err)
-		}
-		if info.Size() < out.TranscriptEnd {
-			return nil, errors.New("saved transcript is shorter than its committed position")
+		if err := checkSavedTranscript(out.transcriptPath, out.TranscriptEnd); err != nil {
+			return nil, err
 		}
 	}
-	if !supportedModel(out.Model) && out.Model != "astra" && out.Model != "terra" {
-		return nil, fmt.Errorf("saved session has invalid model %q", out.Model)
-	}
-	if _, ok := effortIDs[out.Effort]; !ok {
-		return nil, fmt.Errorf("saved session has invalid effort %q", out.Effort)
-	}
-	if out.RequestEffort == "" {
-		out.RequestEffort = out.Effort
-	}
-	if _, ok := effortIDs[out.RequestEffort]; !ok {
-		return nil, fmt.Errorf("saved session has invalid request effort %q", out.RequestEffort)
+	if err := normalizeSessionSettings(&out); err != nil {
+		return nil, err
 	}
 	if out.ContextTokens == 0 && len(out.History) > 0 {
 		out.ContextTokens = estimateHistoryTokens(out.History)
 	}
 	return &out, nil
+}
+
+func validateSessionHeader(out *session) error {
+	if out.Version != stateVersion || !validSessionID(out.ID) || out.CWD == "" || out.RepoRoot == "" || out.ContextTokens < 0 {
+		return fmt.Errorf("saved session is incomplete or unsupported")
+	}
+	if out.TranscriptSkip < 0 || out.TranscriptSkip > len(out.History) || out.TranscriptEnd < 0 {
+		return errors.New("saved session has invalid transcript position")
+	}
+	return nil
+}
+
+func checkSavedTranscript(path string, end int64) error {
+	file, err := openTranscript(path, os.O_RDONLY)
+	if err != nil {
+		return fmt.Errorf("open saved transcript: %w", err)
+	}
+	info, err := file.Stat()
+	file.Close()
+	if err != nil {
+		return fmt.Errorf("inspect saved transcript: %w", err)
+	}
+	if info.Size() < end {
+		return errors.New("saved transcript is shorter than its committed position")
+	}
+	return nil
+}
+
+func normalizeSessionSettings(out *session) error {
+	if !supportedModel(out.Model) && out.Model != "astra" && out.Model != "terra" {
+		return fmt.Errorf("saved session has invalid model %q", out.Model)
+	}
+	if _, ok := effortIDs[out.Effort]; !ok {
+		return fmt.Errorf("saved session has invalid effort %q", out.Effort)
+	}
+	if out.RequestEffort == "" {
+		out.RequestEffort = out.Effort
+	}
+	if _, ok := effortIDs[out.RequestEffort]; !ok {
+		return fmt.Errorf("saved session has invalid request effort %q", out.RequestEffort)
+	}
+	return nil
 }
 
 func readRegularFile(path string) ([]byte, error) {
