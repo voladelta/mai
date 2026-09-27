@@ -1,6 +1,7 @@
 package mai
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -305,6 +306,9 @@ func estimateHistoryTokens(items []json.RawMessage) int64 {
 	return total
 }
 
+// Matches Codex's high/auto image estimate (about 1844 tokens at four bytes each).
+const estimatedImageBytes int64 = 7373
+
 func estimateHistoryItemTokens(item json.RawMessage) int64 {
 	var envelope struct {
 		Type             string `json:"type"`
@@ -313,13 +317,58 @@ func estimateHistoryItemTokens(item json.RawMessage) int64 {
 	if json.Unmarshal(item, &envelope) == nil &&
 		(envelope.Type == "compaction" || envelope.Type == "compaction_summary") {
 		// Codex estimates the decoded encrypted payload, less fixed envelope overhead.
-		bytes := int64(len(envelope.EncryptedContent))*3/4 - 650
-		if bytes < 0 {
-			bytes = 0
+		estimatedBytes := int64(len(envelope.EncryptedContent))*3/4 - 650
+		if estimatedBytes < 0 {
+			estimatedBytes = 0
 		}
-		return (bytes + 3) / 4
+		return (estimatedBytes + 3) / 4
 	}
-	return (int64(len(item)) + 3) / 4
+
+	estimatedBytes := int64(len(item))
+	if !bytes.Contains(item, []byte("input_image")) {
+		return (estimatedBytes + 3) / 4
+	}
+
+	var imageItem struct {
+		Type    string            `json:"type"`
+		Content []json.RawMessage `json:"content"`
+		Output  json.RawMessage   `json:"output"`
+	}
+	if err := json.Unmarshal(item, &imageItem); err != nil {
+		return (estimatedBytes + 3) / 4
+	}
+
+	var parts []json.RawMessage
+	switch imageItem.Type {
+	case "message":
+		parts = imageItem.Content
+	case "function_call_output":
+		if err := json.Unmarshal(imageItem.Output, &parts); err != nil {
+			return (estimatedBytes + 3) / 4
+		}
+	default:
+		return (estimatedBytes + 3) / 4
+	}
+
+	for _, part := range parts {
+		var content struct {
+			Type     string          `json:"type"`
+			ImageURL json.RawMessage `json:"image_url"`
+		}
+		if err := json.Unmarshal(part, &content); err != nil {
+			return (int64(len(item)) + 3) / 4
+		}
+		if content.Type != "input_image" {
+			continue
+		}
+		if len(content.ImageURL) < 2 || content.ImageURL[0] != '"' || content.ImageURL[len(content.ImageURL)-1] != '"' {
+			return (int64(len(item)) + 3) / 4
+		}
+
+		// The model sees an image, not the base64 text in its data URL.
+		estimatedBytes += estimatedImageBytes - int64(len(content.ImageURL))
+	}
+	return (estimatedBytes + 3) / 4
 }
 
 func interruptedToolInstruction(name string) string {

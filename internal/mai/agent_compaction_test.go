@@ -95,6 +95,51 @@ assert "old output" in found["matches"][0]["text"]`)
 	}
 }
 
+func TestRunTurnDoesNotCompactAfterLargeImageOutput(t *testing.T) {
+	writeTestCodexAuth(t)
+
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var body struct {
+			Input []json.RawMessage `json:"input"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if len(body.Input) != 1 || historyItemType(body.Input[0]) != "function_call_output" {
+			t.Fatalf("unexpected model input: %d items", len(body.Input))
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		writeSSEItem(t, w, `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}`, 12_345)
+	}))
+	defer server.Close()
+
+	imageURL := "data:image/png;base64," + strings.Repeat("A", 1<<20)
+	output := imageContentToolOutput("metadata", imageURL)
+	item, err := json.Marshal(struct {
+		Type   string          `json:"type"`
+		CallID string          `json:"call_id"`
+		Output json.RawMessage `json:"output"`
+	}{Type: "function_call_output", CallID: "image", Output: output})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sess := &session{Model: "luna", Effort: "m", ContextTokens: 20_000}
+	sess.appendEstimatedHistory(item)
+	a := newAgent(&bytes.Buffer{}, &bytes.Buffer{}, "", time.Second, false, nil)
+	a.client.endpoint = server.URL
+	done, err := a.runTurn(context.Background(), sess, "instructions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !done || requests != 1 {
+		t.Fatalf("done=%v model requests=%d, want one request without compaction", done, requests)
+	}
+}
+
 func TestFailedCompactionLeavesHistoryUnchanged(t *testing.T) {
 	writeTestCodexAuth(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

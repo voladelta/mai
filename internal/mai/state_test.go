@@ -112,6 +112,54 @@ func TestLoadSessionEstimatesTokensForOlderState(t *testing.T) {
 	}
 }
 
+func TestEstimateHistoryItemTokensCountsImageAsImageAndKeepsText(t *testing.T) {
+	imageURL := "data:image/png;base64," + strings.Repeat("A", 1<<20)
+	imageOutput := imageContentToolOutput("metadata", imageURL)
+	item, err := json.Marshal(struct {
+		Type   string          `json:"type"`
+		CallID string          `json:"call_id"`
+		Output json.RawMessage `json:"output"`
+	}{Type: "function_call_output", CallID: "image", Output: imageOutput})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	imageTokens := estimateHistoryItemTokens(item)
+	if imageTokens < 1800 || imageTokens > 2000 {
+		t.Fatalf("image estimate = %d tokens, want an image-sized estimate", imageTokens)
+	}
+
+	withText := imageContentToolOutput(strings.Repeat("x", 4000), imageURL)
+	textItem, err := json.Marshal(struct {
+		Type   string          `json:"type"`
+		CallID string          `json:"call_id"`
+		Output json.RawMessage `json:"output"`
+	}{Type: "function_call_output", CallID: "image", Output: withText})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delta := estimateHistoryItemTokens(textItem) - imageTokens; delta < 900 || delta > 1100 {
+		t.Fatalf("text increased image estimate by %d tokens, want about 1000", delta)
+	}
+
+	message, err := json.Marshal(struct {
+		Type    string          `json:"type"`
+		Role    string          `json:"role"`
+		Content json.RawMessage `json:"content"`
+	}{Type: "message", Role: "user", Content: imageOutput})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := estimateHistoryItemTokens(message); got < 1800 || got > 2000 {
+		t.Fatalf("message image estimate = %d tokens, want an image-sized estimate", got)
+	}
+
+	plainText := json.RawMessage(`{"type":"function_call_output","output":"` + strings.Repeat("A", 1<<20) + `"}`)
+	if got := estimateHistoryItemTokens(plainText); got < 250_000 {
+		t.Fatalf("ordinary text estimate = %d tokens, want payload bytes counted", got)
+	}
+}
+
 func TestSessionLockRejectsConcurrentOwner(t *testing.T) {
 	paths := projectSessionPaths(t.TempDir())
 	if err := prepareSessionPaths(paths); err != nil {
