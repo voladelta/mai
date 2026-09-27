@@ -49,9 +49,8 @@ assert result['stderr'] == 'error'`)
 		t.Fatalf("child restriction: %#v", result)
 	}
 
-	raw, err := a.pythonHost(sess, "outer")(context.Background(), 1, 99, 1, "python", json.RawMessage(`{"code":"1"}`))
-	if err != nil || !strings.Contains(string(raw), "not available through the bridge") || sess.PythonActivities[len(sess.PythonActivities)-1].Status != "rejected" {
-		t.Fatalf("recursive Python was accepted: %s, %v", raw, err)
+	if _, ok := a.pythonOperations(context.Background(), sess, "outer")["python"]; ok {
+		t.Fatal("recursive Python was accepted")
 	}
 }
 
@@ -99,6 +98,13 @@ for _ in range(64):
     assert (await mai.bash(':'))['ok']`)
 	if !result.OK || len(result.Activities) != maxPythonCalls {
 		t.Fatalf("history consumed effectful call budget: ok=%t, stderr=%q, activities=%d", result.OK, result.Stderr, len(result.Activities))
+	}
+
+	result = pythonCell(t, a, sess, `for _ in range(64):
+    assert (await mai.history('quota marker'))['total'] == 1
+assert (await mai.bash(':'))['ok']`)
+	if !result.OK || len(result.Activities) != 1 {
+		t.Fatalf("repeated history consumed effectful call budget: ok=%t, stderr=%q, activities=%d", result.OK, result.Stderr, len(result.Activities))
 	}
 }
 
@@ -266,7 +272,7 @@ func TestPythonCancellationDuringHostApproval(t *testing.T) {
 	done := make(chan pythonResult, 1)
 	go func() {
 		code := fmt.Sprintf("await mai.bash(%q)", "rm "+outside)
-		done <- a.python.execute(ctx, sess.CWD, code, false, 5*time.Second, a.pythonHost(sess, "outer"))
+		done <- a.python.execute(ctx, sess.CWD, code, false, 5*time.Second, a.pythonOperations(ctx, sess, "outer"))
 	}()
 	select {
 	case <-started:

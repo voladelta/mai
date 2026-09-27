@@ -66,6 +66,51 @@ func summarizePythonActivities(activities []pythonActivity) ([]pythonActivitySum
 	return summaries, len(activities) - len(summaries)
 }
 
+func (a *agent) pythonOperations(ctx context.Context, sess *session, outerCall string) map[string]pythonOperation {
+	tool := a.pythonHost(sess, outerCall)
+	history := func(_ context.Context, _, _, _ int, _ string, arguments json.RawMessage) (json.RawMessage, error) {
+		return searchTranscript(sess, arguments, outerCall), nil
+	}
+	child := func(_ context.Context, generation, cell, call int, name string, arguments json.RawMessage) (json.RawMessage, error) {
+		activity := pythonActivity{
+			OuterCallID: outerCall,
+			Generation:  generation,
+			Cell:        cell,
+			Call:        call,
+			Name:        name,
+			Arguments:   arguments,
+		}
+		raw, err := a.childHost(ctx, sess, activity)
+		if name == "child_status" {
+			return raw, err
+		}
+
+		activity.Status = "admitted"
+		if name == "child_cancel" {
+			activity.Status = "cancel_requested"
+		}
+		var outcome struct {
+			Error string `json:"error"`
+		}
+		if err != nil || json.Unmarshal(raw, &outcome) != nil || outcome.Error != "" {
+			activity.Status = "failed"
+		}
+		activity.Result = raw
+		sess.PythonActivities = append(sess.PythonActivities, activity)
+		return raw, err
+	}
+
+	return map[string]pythonOperation{
+		"bash":           {budgeted: true, handler: tool},
+		"apply_patch":    {budgeted: true, handler: tool},
+		"spawn_subagent": {budgeted: true, handler: tool},
+		"history":        {handler: history},
+		"spawn":          {budgeted: true, handler: child},
+		"child_status":   {handler: child},
+		"child_cancel":   {budgeted: true, handler: child},
+	}
+}
+
 func (a *agent) pythonHost(sess *session, outerCall string) pythonHostHandler {
 	return func(ctx context.Context, generation, cell, call int, name string, arguments json.RawMessage) (json.RawMessage, error) {
 		if err := ctx.Err(); err != nil {
@@ -89,13 +134,7 @@ func (a *agent) pythonHost(sess *session, outerCall string) pythonHostHandler {
 			raw = textToolOutput(toolError("Python host call cancelled before dispatch", err))
 			status = "not_started"
 		} else {
-			switch name {
-			case "bash", "apply_patch", "spawn_subagent":
-				raw = a.executeTool(ctx, sess, functionCall{Name: name, Arguments: string(arguments)})
-			default:
-				raw = textToolOutput(toolError("Python host call rejected", fmt.Errorf("%s is not available through the bridge", name)))
-				status = "rejected"
-			}
+			raw = a.executeTool(ctx, sess, functionCall{Name: name, Arguments: string(arguments)})
 		}
 		var text string
 		if err := json.Unmarshal(raw, &text); err != nil {

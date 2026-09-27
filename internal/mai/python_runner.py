@@ -45,6 +45,7 @@ def main():
     pending = {}
     call_id = 0
     effect_calls = 0
+    exempt_calls = frozenset()
     closing = False
     cell_context = contextvars.ContextVar("mai_cell", default=None)
     owner_thread = threading.get_ident()
@@ -84,9 +85,12 @@ def main():
                 if type(message.get("cell")) is not int or message["cell"] <= 0:
                     protocol_error()
                 if message.get("type") == "execute":
-                    if set(message) != {"type", "generation", "cell", "code", "marker"}:
+                    if set(message) != {"type", "generation", "cell", "code", "marker", "exempt_calls"}:
                         protocol_error()
                     if not isinstance(message["code"], str) or not isinstance(message["marker"], str):
+                        protocol_error()
+                    exempt = message["exempt_calls"]
+                    if not isinstance(exempt, list) or any(type(name) is not str for name in exempt) or len(exempt) != len(set(exempt)):
                         protocol_error()
                     with lock:
                         if active is not None or message["cell"] <= last_cell:
@@ -118,10 +122,10 @@ def main():
         with lock:
             if active is None or closing or cell_context.get() != active:
                 raise RuntimeError("Host calls are only available inside an active cell")
-            if len(pending) >= MAX_PENDING or name not in ("child_status", "history") and effect_calls >= MAX_CALLS:
+            if len(pending) >= MAX_PENDING or name not in exempt_calls and effect_calls >= MAX_CALLS:
                 raise RuntimeError("Python host call limit reached (8 pending, 64 per cell)")
             call_id += 1
-            if name not in ("child_status", "history"):
+            if name not in exempt_calls:
                 effect_calls += 1
             identifier = call_id
             pending[identifier] = (future, target_loop)
@@ -242,6 +246,7 @@ def main():
     while True:
         request = cells.get()
         cell_context.set(request["cell"])
+        exempt_calls = frozenset(request["exempt_calls"])
         with lock:
             call_id = 0
             effect_calls = 0

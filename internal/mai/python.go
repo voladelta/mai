@@ -179,7 +179,7 @@ func drainPythonOutput(file *os.File, marker []byte, output *cappedBuffer) error
 	}
 }
 
-func (k *pythonKernel) execute(parent context.Context, cwd, code string, reset bool, timeout time.Duration, hosts ...pythonHostHandler) pythonResult {
+func (k *pythonKernel) execute(parent context.Context, cwd, code string, reset bool, timeout time.Duration, hosts ...map[string]pythonOperation) pythonResult {
 	started := time.Now()
 	result := pythonResult{Generation: k.generation}
 	if reset {
@@ -219,9 +219,9 @@ func (k *pythonKernel) execute(parent context.Context, cwd, code string, reset b
 	defer cancel()
 	k.cell++
 	result.Cell = k.cell
-	var host pythonHostHandler
+	var operations map[string]pythonOperation
 	if len(hosts) > 0 {
-		host = hosts[0]
+		operations = hosts[0]
 	}
 	var random [24]byte
 	_, _ = rand.Read(random[:])
@@ -234,7 +234,7 @@ func (k *pythonKernel) execute(parent context.Context, cwd, code string, reset b
 	var status bool
 	go func() {
 		var err error
-		status, err = k.runProtocol(ctx, code, marker, host)
+		status, err = k.runProtocol(ctx, code, marker, operations)
 		done <- err
 	}()
 	var failure error
@@ -314,32 +314,7 @@ func (a *agent) executePython(ctx context.Context, sess *session, arguments stri
 	}
 	a.python.children = a.children
 	start := len(sess.PythonActivities)
-	host := a.pythonHost(sess, outerCall)
-	result := a.python.execute(ctx, sess.CWD, code, reset, a.cellTimeout, func(cellCtx context.Context, generation, cell, call int, name string, args json.RawMessage) (json.RawMessage, error) {
-		if name == "history" {
-			return searchTranscript(sess, args, outerCall), nil
-		}
-		if name == "spawn" || name == "child_status" || name == "child_cancel" {
-			activity := pythonActivity{OuterCallID: outerCall, Generation: generation, Cell: cell, Call: call, Name: name, Arguments: args}
-			raw, err := a.childHost(ctx, sess, activity)
-			if name != "child_status" {
-				activity.Status = "admitted"
-				if name == "child_cancel" {
-					activity.Status = "cancel_requested"
-				}
-				var outcome struct {
-					Error string `json:"error"`
-				}
-				if err != nil || json.Unmarshal(raw, &outcome) != nil || outcome.Error != "" {
-					activity.Status = "failed"
-				}
-				activity.Result = raw
-				sess.PythonActivities = append(sess.PythonActivities, activity)
-			}
-			return raw, err
-		}
-		return host(cellCtx, generation, cell, call, name, args)
-	})
+	result := a.python.execute(ctx, sess.CWD, code, reset, a.cellTimeout, a.pythonOperations(ctx, sess, outerCall))
 	result.Activities, result.ActivitiesOmitted = summarizePythonActivities(sess.PythonActivities[start:])
 	return textToolOutput(marshalToolResult(result))
 }

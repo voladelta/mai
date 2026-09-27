@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 )
 
 const (
@@ -41,6 +42,11 @@ type pythonMessage struct {
 }
 
 type pythonHostHandler func(context.Context, int, int, int, string, json.RawMessage) (json.RawMessage, error)
+
+type pythonOperation struct {
+	budgeted bool
+	handler  pythonHostHandler
+}
 
 func decodePythonFrame(data []byte) (pythonFrame, error) {
 	var frame pythonFrame
@@ -122,7 +128,7 @@ func (k *pythonKernel) writeFrame(value any) error {
 	return err
 }
 
-func (k *pythonKernel) runProtocol(ctx context.Context, code, marker string, host pythonHostHandler) (bool, error) {
+func (k *pythonKernel) runProtocol(ctx context.Context, code, marker string, operations map[string]pythonOperation) (bool, error) {
 	if k.runtime == nil {
 		select {
 		case message, open := <-k.messages:
@@ -138,7 +144,14 @@ func (k *pythonKernel) runProtocol(ctx context.Context, code, marker string, hos
 			return false, ctx.Err()
 		}
 	}
-	if err := k.writeFrame(map[string]any{"type": "execute", "generation": k.generation, "cell": k.cell, "code": code, "marker": marker}); err != nil {
+	exempt := []string{}
+	for name, operation := range operations {
+		if !operation.budgeted {
+			exempt = append(exempt, name)
+		}
+	}
+	sort.Strings(exempt)
+	if err := k.writeFrame(map[string]any{"type": "execute", "generation": k.generation, "cell": k.cell, "code": code, "marker": marker, "exempt_calls": exempt}); err != nil {
 		return false, err
 	}
 
@@ -169,8 +182,8 @@ func (k *pythonKernel) runProtocol(ctx context.Context, code, marker string, hos
 			go func() {
 				result := json.RawMessage(`{"ok":false,"error":"Python host bridge is unavailable"}`)
 				var err error
-				if host != nil {
-					result, err = host(hostCtx, frame.Generation, frame.Cell, frame.Call, frame.Name, frame.Arguments)
+				if operation, ok := operations[frame.Name]; ok {
+					result, err = operation.handler(hostCtx, frame.Generation, frame.Cell, frame.Call, frame.Name, frame.Arguments)
 				}
 				resultChan <- hostResult{frame, result, err}
 			}()
@@ -201,10 +214,11 @@ func (k *pythonKernel) runProtocol(ctx context.Context, code, marker string, hos
 				if active != nil {
 					count++
 				}
-				if frame.Name != "child_status" && frame.Name != "history" {
+				operation, known := operations[frame.Name]
+				if known && operation.budgeted {
 					effectCalls++
 				}
-				if frame.Call != lastCall+1 || effectCalls > maxPythonCalls || count >= maxPythonPending || frame.Name == "" || len(frame.Name) > 64 || len(frame.Arguments) == 0 || frame.Arguments[0] != '{' {
+				if frame.Call != lastCall+1 || !known || effectCalls > maxPythonCalls || count >= maxPythonPending || len(frame.Arguments) == 0 || frame.Arguments[0] != '{' {
 					return false, errors.New("invalid or excessive Python host call")
 				}
 				lastCall = frame.Call
