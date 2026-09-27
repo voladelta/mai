@@ -216,10 +216,6 @@ func (plan *patchPlan) loadFile(rel string) (*pendingFile, error) {
 	return file, nil
 }
 
-func (plan *patchPlan) commit() error {
-	return plan.commitWithIO(atomicWriteRootFile, (*os.Root).Remove)
-}
-
 func (plan *patchPlan) commitWithIO(write patchWriteFunc, remove patchRemoveFunc) error {
 	actions, err := plan.commitActions()
 	if err != nil {

@@ -7,6 +7,40 @@ import (
 	"testing"
 )
 
+func TestVisibleTranscriptEntryExtractsAllowedTextParts(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  json.RawMessage
+		kind string
+		text string
+	}{
+		{
+			name: "message",
+			raw:  json.RawMessage(`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"first"},{"type":"input_image","image_url":"hidden"},{"type":"input_text","text":"second"}]}`),
+			kind: "assistant",
+			text: "first\nsecond",
+		},
+		{
+			name: "tool result",
+			raw:  json.RawMessage(`{"type":"function_call_output","call_id":"tool","output":[{"type":"input_text","text":"visible"},{"type":"output_text","text":"excluded"}]}`),
+			kind: "tool_result",
+			text: "visible",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			entry, visible, err := visibleTranscriptEntry(test.raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !visible || entry.Kind != test.kind || entry.Text != test.text {
+				t.Fatalf("entry = %#v, visible = %t", entry, visible)
+			}
+		})
+	}
+}
+
 func TestPythonHistoryIncludesVisibleItemsAndExcludesOpaqueItems(t *testing.T) {
 	a, sess := pythonTestAgent(t)
 	sess.History = []json.RawMessage{

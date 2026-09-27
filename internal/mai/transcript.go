@@ -31,61 +31,58 @@ func visibleTranscriptEntry(raw json.RawMessage) (transcriptEntry, bool, error) 
 
 	switch {
 	case (item.Type == "message" || item.Type == "") && (item.Role == "user" || item.Role == "assistant"):
-		var content string
-		if len(item.Content) > 0 && item.Content[0] == '"' {
-			if err := json.Unmarshal(item.Content, &content); err != nil {
-				return transcriptEntry{}, false, err
-			}
-		} else if len(item.Content) > 0 && item.Content[0] == '[' {
-			var parts []json.RawMessage
-			if err := json.Unmarshal(item.Content, &parts); err != nil {
-				return transcriptEntry{}, false, err
-			}
-			var texts []string
-			for _, rawPart := range parts {
-				var part struct {
-					Type string `json:"type"`
-					Text string `json:"text"`
-				}
-				if json.Unmarshal(rawPart, &part) != nil {
-					continue
-				}
-				if part.Type == "input_text" || part.Type == "output_text" {
-					texts = append(texts, part.Text)
-				}
-			}
-			content = strings.Join(texts, "\n")
+		content, err := transcriptText(item.Content, true)
+		if err != nil {
+			return transcriptEntry{}, false, err
 		}
 		return transcriptEntry{Kind: item.Role, Text: content}, content != "", nil
 	case item.Type == "function_call":
 		return transcriptEntry{Kind: "tool_call", Name: item.Name, CallID: item.CallID, Text: item.Arguments}, true, nil
 	case item.Type == "function_call_output":
-		var output string
-		if len(item.Output) > 0 && item.Output[0] == '"' {
-			if err := json.Unmarshal(item.Output, &output); err != nil {
-				return transcriptEntry{}, false, err
-			}
-		} else if len(item.Output) > 0 && item.Output[0] == '[' {
-			var parts []json.RawMessage
-			if err := json.Unmarshal(item.Output, &parts); err != nil {
-				return transcriptEntry{}, false, err
-			}
-			var texts []string
-			for _, rawPart := range parts {
-				var part struct {
-					Type string `json:"type"`
-					Text string `json:"text"`
-				}
-				if json.Unmarshal(rawPart, &part) == nil && part.Type == "input_text" {
-					texts = append(texts, part.Text)
-				}
-			}
-			output = strings.Join(texts, "\n")
+		output, err := transcriptText(item.Output, false)
+		if err != nil {
+			return transcriptEntry{}, false, err
 		}
 		return transcriptEntry{Kind: "tool_result", CallID: item.CallID, Text: output}, output != "", nil
 	default:
 		return transcriptEntry{}, false, nil
 	}
+}
+
+func transcriptText(raw json.RawMessage, includeOutputText bool) (string, error) {
+	if len(raw) == 0 {
+		return "", nil
+	}
+	if raw[0] == '"' {
+		var text string
+		if err := json.Unmarshal(raw, &text); err != nil {
+			return "", err
+		}
+		return text, nil
+	}
+	if raw[0] != '[' {
+		return "", nil
+	}
+
+	var parts []json.RawMessage
+	if err := json.Unmarshal(raw, &parts); err != nil {
+		return "", err
+	}
+
+	var texts []string
+	for _, rawPart := range parts {
+		var part struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		if json.Unmarshal(rawPart, &part) != nil {
+			continue
+		}
+		if part.Type == "input_text" || (includeOutputText && part.Type == "output_text") {
+			texts = append(texts, part.Text)
+		}
+	}
+	return strings.Join(texts, "\n"), nil
 }
 
 func searchTranscript(sess *session, arguments json.RawMessage, activeCallID string) json.RawMessage {

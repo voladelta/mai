@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -162,7 +161,7 @@ func (c *codexClient) withCredentials(request func(credentials) (streamResult, e
 	if reloadErr != nil {
 		return streamResult{}, reloadErr
 	}
-	if sha256.Sum256([]byte(first.AccessToken)) == sha256.Sum256([]byte(second.AccessToken)) {
+	if first.AccessToken == second.AccessToken {
 		return streamResult{}, loginError(second.Source)
 	}
 	return request(second)
@@ -506,7 +505,7 @@ func compactJSON(raw json.RawMessage) string {
 	return b.String()
 }
 
-func toolDefinitions(allowSubagents ...bool) []map[string]any {
+func toolDefinitions(allowSubagents bool) []map[string]any {
 	definitions := []map[string]any{
 		{
 			"type": "function", "name": "read_skill",
@@ -570,7 +569,7 @@ func toolDefinitions(allowSubagents ...bool) []map[string]any {
 			},
 		},
 	}
-	if len(allowSubagents) > 0 && allowSubagents[0] {
+	if allowSubagents {
 		definitions = append(definitions, map[string]any{
 			"type": "function", "name": "spawn_subagent",
 			"description": "Run one installed custom agent synchronously in a stateless mai subprocess. The call returns after the child completes.",

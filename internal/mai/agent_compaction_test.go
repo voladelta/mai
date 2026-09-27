@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -111,6 +112,27 @@ func TestFailedCompactionLeavesHistoryUnchanged(t *testing.T) {
 	}
 	if string(sess.History[0]) != string(before[0]) || sess.ContextTokens != 244_800 {
 		t.Fatalf("failed compaction changed session: %#v", sess)
+	}
+}
+
+func TestCompactedHistoryStopsAtOversizedUserMessage(t *testing.T) {
+	older := json.RawMessage(`{"role":"user","content":"older"}`)
+	oversized := json.RawMessage(`{"role":"user","content":"` + strings.Repeat("x", retainedMessageTokenLimit*4) + `"}`)
+	recent := json.RawMessage(`{"role":"user","content":"recent"}`)
+	compaction := json.RawMessage(`{"type":"compaction","encrypted_content":"summary"}`)
+	history := []json.RawMessage{
+		older,
+		oversized,
+		json.RawMessage(`{"type":"message","role":"assistant","content":"reply"}`),
+		recent,
+	}
+
+	retained, err := compactedHistory(history, compaction)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(retained) != 2 || !bytes.Equal(retained[0], recent) || !bytes.Equal(retained[1], compaction) {
+		t.Fatalf("retained history has a gap: %s", mustJSON(t, retained))
 	}
 }
 

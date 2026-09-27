@@ -188,7 +188,7 @@ func TestRunSubagentProcessTimesOutWholeChild(t *testing.T) {
 }
 
 func TestSpawnSubagentToolRegistrationAndNestedRejection(t *testing.T) {
-	if hasTool(toolDefinitions(), "spawn_subagent") {
+	if hasTool(toolDefinitions(false), "spawn_subagent") {
 		t.Fatal("spawn_subagent was registered without available custom agents")
 	}
 	if !hasTool(toolDefinitions(true), "spawn_subagent") {

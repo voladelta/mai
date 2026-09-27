@@ -367,7 +367,7 @@ func TestPatchCommitRejectsChangedFilesBeforeWriting(t *testing.T) {
 			t.Fatal(err)
 		}
 		mustWrite(t, filepath.Join(rootPath, "source.txt"), "concurrent\n")
-		if err := plan.commit(); err == nil {
+		if err := plan.commitWithIO(atomicWriteRootFile, (*os.Root).Remove); err == nil {
 			t.Fatal("expected changed source error")
 		}
 		assertContent(t, filepath.Join(rootPath, "source.txt"), "concurrent\n")
@@ -392,7 +392,7 @@ func TestPatchCommitRejectsChangedFilesBeforeWriting(t *testing.T) {
 			t.Fatal(err)
 		}
 		mustWrite(t, filepath.Join(rootPath, "added.txt"), "concurrent\n")
-		if err := plan.commit(); err == nil {
+		if err := plan.commitWithIO(atomicWriteRootFile, (*os.Root).Remove); err == nil {
 			t.Fatal("expected changed destination error")
 		}
 		assertContent(t, filepath.Join(rootPath, "added.txt"), "concurrent\n")
@@ -425,7 +425,7 @@ func TestPatchCommitDoesNotFollowReplacedParentOutsideRepository(t *testing.T) {
 	if err := os.Symlink(outside, parent); err != nil {
 		t.Fatal(err)
 	}
-	if err := plan.commit(); err == nil {
+	if err := plan.commitWithIO(atomicWriteRootFile, (*os.Root).Remove); err == nil {
 		t.Fatal("expected commit to reject the replaced parent")
 	}
 	if _, err := os.Stat(filepath.Join(outside, "escape.txt")); !errors.Is(err, os.ErrNotExist) {

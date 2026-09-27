@@ -95,7 +95,7 @@ func (a *agent) run(ctx context.Context, sess *session, userPrompt string) error
 	)
 	instructions += a.children.recoveryInstructions()
 	if sess.ContextTokens == 0 {
-		sess.ContextTokens = estimateHistoryTokens(sess.History) + (int64(len(instructions))+3)/4
+		sess.ContextTokens = estimateHistoryTokens(sess.History) + estimateInstructionTokens(instructions)
 	}
 	for turn := 0; turn < maxAgentTurns; turn++ {
 		if interactive && turn > 0 {
@@ -236,7 +236,7 @@ func (a *agent) compactIfNeeded(ctx context.Context, sess *session, instructions
 	// Compaction replaces the prompt prefix and removes configuration updates.
 	// Start the replacement prefix at the current effort.
 	next.RequestEffort = next.Effort
-	next.ContextTokens = estimateHistoryTokens(history) + (int64(len(instructions))+3)/4
+	next.ContextTokens = estimateHistoryTokens(history) + estimateInstructionTokens(instructions)
 	if a.sessionPath != "" {
 		if err := saveJSON(a.sessionPath, &next); err != nil {
 			return fmt.Errorf("save compacted conversation: %w", err)
@@ -244,6 +244,10 @@ func (a *agent) compactIfNeeded(ctx context.Context, sess *session, instructions
 	}
 	*sess = next
 	return nil
+}
+
+func estimateInstructionTokens(instructions string) int64 {
+	return (int64(len(instructions)) + 3) / 4
 }
 
 func compactedHistory(history []json.RawMessage, compaction json.RawMessage) ([]json.RawMessage, error) {
@@ -261,7 +265,7 @@ func compactedHistory(history []json.RawMessage, compaction json.RawMessage) ([]
 		}
 		tokens := estimateHistoryItemTokens(history[i])
 		if tokens > remaining {
-			continue
+			break
 		}
 		remaining -= tokens
 		retained = append(retained, history[i])
