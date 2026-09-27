@@ -16,6 +16,19 @@ import (
 	"time"
 )
 
+func TestApplyPatchToolDescribesRepositoryRootPaths(t *testing.T) {
+	for _, definition := range toolDefinitions(false) {
+		if definition["name"] != "apply_patch" {
+			continue
+		}
+		if !strings.Contains(definition["description"].(string), "Paths are relative to the repository root.") {
+			t.Fatalf("apply_patch path base is undocumented: %s", definition["description"])
+		}
+		return
+	}
+	t.Fatal("apply_patch tool is missing")
+}
+
 func TestReadSSEStreamsTextAndCollectsItems(t *testing.T) {
 	stream := strings.Join([]string{
 		`data: {"type":"response.output_text.delta","delta":"hello"}`,

@@ -19,6 +19,7 @@ func TestSystemInstructionsAreLeanAndComplete(t *testing.T) {
 		"including --last, starts fresh",
 		"Never replay uncertain cells automatically",
 		"apply_patch:",
+		"Paths are relative to the repository root.",
 		"unknown outcome",
 		"reconcile the requested patch",
 		"non-idempotent effects without user confirmation",

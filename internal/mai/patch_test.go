@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -182,6 +183,26 @@ func TestApplyPatchCreateUpdateMoveDelete(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "delete.txt")); !os.IsNotExist(err) {
 		t.Fatalf("delete.txt still exists: %v", err)
 	}
+}
+
+func TestExecutePatchUsesRepositoryRootWhenWorkingInSubdirectory(t *testing.T) {
+	root := t.TempDir()
+	subdir := filepath.Join(root, "subdir")
+	mustWrite(t, filepath.Join(root, "file.txt"), "root\n")
+	mustWrite(t, filepath.Join(subdir, "file.txt"), "subdir\n")
+	sess := &session{CWD: subdir, RepoRoot: root}
+
+	args, err := json.Marshal(map[string]string{
+		"patch": "*** Begin Patch\n*** Update File: file.txt\n@@\n-root\n+updated\n*** End Patch",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &agent{stderr: io.Discard}
+	a.executePatch(sess, string(args))
+
+	assertContent(t, filepath.Join(root, "file.txt"), "updated\n")
+	assertContent(t, filepath.Join(subdir, "file.txt"), "subdir\n")
 }
 
 func TestApplyPatchRejectsEscape(t *testing.T) {

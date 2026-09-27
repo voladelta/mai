@@ -584,7 +584,7 @@ func toolDefinitions(allowSubagents bool) []map[string]any {
 		},
 		{
 			"type": "function", "name": "apply_patch",
-			"description": "Create, update, move, or delete repository files with a Codex-style patch bounded by *** Begin Patch and *** End Patch.",
+			"description": "Create, update, move, or delete repository files with a Codex-style patch bounded by *** Begin Patch and *** End Patch. Paths are relative to the repository root.",
 			"parameters": map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
