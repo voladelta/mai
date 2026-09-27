@@ -8,7 +8,6 @@ import (
 	"os"
 	"sync"
 	"syscall"
-	"time"
 )
 
 const maxActiveChildren = 4
@@ -161,7 +160,7 @@ func (r *childRegistry) stop() {
 	}
 }
 
-func (r *childRegistry) spawn(parent context.Context, generation int, executable, cwd, name, prompt string, timeout time.Duration, provenance ...pythonActivity) (childRecord, error) {
+func (r *childRegistry) spawn(parent context.Context, generation int, executable, cwd, name, prompt string, limits subagentLimits, provenance ...pythonActivity) (childRecord, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.failure != nil {
@@ -204,7 +203,7 @@ func (r *childRegistry) spawn(parent context.Context, generation int, executable
 	go func() {
 		defer close(run.done)
 		defer cancel()
-		outcome, setupErr := runSubagentProcess(ctx, executable, timeout, cwd, name, prompt)
+		outcome, setupErr := runSubagentProcess(ctx, executable, limits, cwd, name, prompt)
 		result := json.RawMessage(encodeSubagentResult(outcome, setupErr))
 		r.mu.Lock()
 		defer r.mu.Unlock()
@@ -258,7 +257,7 @@ func (a *agent) childHost(parent context.Context, sess *session, activity python
 	var err error
 	if activity.Name == "spawn" {
 		if err = a.validateChild(args.Name, args.Prompt); err == nil {
-			record, err = a.children.spawn(parent, activity.Generation, a.executable, sess.CWD, args.Name, args.Prompt, a.timeout, activity)
+			record, err = a.children.spawn(parent, activity.Generation, a.executable, sess.CWD, args.Name, args.Prompt, subagentLimits{request: a.requestTimeout, cell: a.cellTimeout, wall: a.subagentTimeout}, activity)
 		}
 	} else {
 		record, err = a.children.inspect(activity.Generation, args.ID, activity.Name == "child_cancel")

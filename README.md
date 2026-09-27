@@ -161,8 +161,9 @@ mai "continue the refactor" --last -e max
 
 ## Timeouts and interactive input
 
-Each Codex request has a 10-minute timeout. Set a different positive Go-style
-duration when necessary:
+Each Codex request has a 10-minute time-to-first-byte and idle timeout. Each
+received stream chunk restarts the idle timer, so an active response can run
+longer than 10 minutes. Set a different positive Go-style duration when necessary:
 
 ```bash
 mai "investigate the failure" --timeout 20m
@@ -173,7 +174,9 @@ the server's `Retry-After` header up to a five-second cap. Authentication,
 quota, and other permanent failures are returned without retrying. A failed
 stream is not retried after Mai has printed any of its text.
 
-The same timeout limits the full lifetime of a spawned child process. A parent
+Each Python cell has a separate 10-minute wall-clock limit, and each subagent
+has a separate one-hour wall-clock limit. Change them with `--cell-timeout` and
+`--subagent-timeout`; `--timeout` still controls each subagent request. A parent
 runs one child at a time. The child uses the parent's working directory, starts
 with new in-memory history, and cannot spawn another child. The parent receives
 the child's final standard output. Failed calls also include the child's
@@ -208,7 +211,7 @@ environment. Imports, variables, functions, and SQLite connections remain betwee
 cells. The last expression is printed unless its value is `None`. Use standard
 library `csv` and `sqlite3`, or packages already installed in the chosen environment.
 For exploration, prefer read-only SQLite connections and selected summaries of
-large datasets. Each cell uses the `--timeout` limit and the same 64 KiB per-stream
+large datasets. Each cell uses the `--cell-timeout` limit and the same 64 KiB per-stream
 head-and-tail output limits as Bash. Tracebacks are part of stderr.
 
 Cells support top-level `await`, `async for`, and `async with`. Sync and async
@@ -289,7 +292,7 @@ resumes. Admission rejects overload; it never queues or retries a child. Start a
 new task after the retained record limit is reached. Handles survive cells,
 ordinary Python exceptions, and conversation compaction. Reset, kernel loss, parent
 cancellation, and shutdown cancel and reap children. Each child has its own
-`--timeout` deadline, independent of its spawning cell. Ordinary leftover Python
+`--subagent-timeout` deadline, independent of its spawning cell. Ordinary leftover Python
 tasks are still cancelled at cell completion.
 
 Persisted tasks keep a bounded `.children.json` journal beside the session file.

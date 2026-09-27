@@ -37,7 +37,9 @@ Options:
   --last                 Resume the current saved task in the current project.
   -e, --effort EFFORT    Use l, m, h, x, or max for this task.
   -m, --model MODEL      Use sol or luna for this task.
-  --timeout DURATION     Set the request timeout (default: 10m).
+  --timeout DURATION     Set the per-request first-byte/idle timeout (default: 10m).
+  --cell-timeout DURATION      Set the wall-clock limit for each Python cell (default: 10m).
+  --subagent-timeout DURATION  Set the wall-clock limit for each subagent run (default: 1h).
   --no-input             Do not ask for interactive approval.
   -s, --skip-skills      Skip skill discovery for this run.
   --jsonl                 Write task, model, and tool events as JSON Lines.
@@ -144,6 +146,8 @@ func runTask(opts options, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	runner := newAgent(stdout, stderr, active.path, opts.timeout, !opts.noInput && isTerminal(os.Stdin), selectedAgent)
+	runner.cellTimeout = opts.cellTimeout
+	runner.subagentTimeout = opts.subagentTimeout
 	runner.skipSkills = opts.skipSkills
 	if opts.jsonl {
 		runner.events = stdout

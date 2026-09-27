@@ -3,7 +3,24 @@ package mai
 import (
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestParseIndependentTimeouts(t *testing.T) {
+	got, err := parseOptions([]string{"work", "--timeout", "3s", "--cell-timeout=4m", "--subagent-timeout", "2h"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.timeout != 3*time.Second || got.cellTimeout != 4*time.Minute || got.subagentTimeout != 2*time.Hour {
+		t.Fatalf("timeouts = request %s, cell %s, subagent %s", got.timeout, got.cellTimeout, got.subagentTimeout)
+	}
+
+	for _, flag := range []string{"--timeout", "--cell-timeout", "--subagent-timeout"} {
+		if _, err := parseOptions([]string{"work", flag, "0s"}); err == nil {
+			t.Fatalf("%s accepted a zero duration", flag)
+		}
+	}
+}
 
 func TestParseOptionsInterspersed(t *testing.T) {
 	for _, test := range []struct {
@@ -53,6 +70,8 @@ func TestParseOptionsInterspersed(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			test.want.cellTimeout = defaultCellTimeout
+			test.want.subagentTimeout = defaultSubagentTimeout
 			got, err := parseOptions(test.args)
 			if err != nil {
 				t.Fatal(err)

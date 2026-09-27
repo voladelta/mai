@@ -254,6 +254,48 @@ func TestCodexClientReportsTimeoutWithNextStep(t *testing.T) {
 	}
 }
 
+func TestCodexClientAllowsActiveStreamPastRequestTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		flusher := w.(http.Flusher)
+		for i := 0; i < 4; i++ {
+			fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"x\"}\n\n")
+			flusher.Flush()
+			time.Sleep(60 * time.Millisecond)
+		}
+		fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n")
+	}))
+	defer server.Close()
+
+	var output bytes.Buffer
+	client := newCodexClient(&output, 150*time.Millisecond)
+	client.endpoint = server.URL
+	started := time.Now()
+	_, err := client.streamWithCredentials(context.Background(), &session{ID: "session", Model: "luna", Effort: "m"}, "instructions", credentials{AccessToken: "token"})
+	if err != nil || output.String() != "xxxx" {
+		t.Fatalf("active stream output=%q err=%v", output.String(), err)
+	}
+	if elapsed := time.Since(started); elapsed <= 150*time.Millisecond {
+		t.Fatalf("stream did not outlast request timeout: %s", elapsed)
+	}
+}
+
+func TestCodexClientStopsIdleStream(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"x\"}\n\n")
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	var output bytes.Buffer
+	client := newCodexClient(&output, 50*time.Millisecond)
+	client.endpoint = server.URL
+	_, err := client.streamWithCredentials(context.Background(), &session{ID: "session", Model: "luna", Effort: "m"}, "instructions", credentials{AccessToken: "token"})
+	if output.String() != "x" || err == nil || !strings.Contains(err.Error(), "use --timeout") {
+		t.Fatalf("idle stream output=%q err=%v", output.String(), err)
+	}
+}
+
 func TestCodexClientRetriesTransientStatusAndIncompleteStream(t *testing.T) {
 	for _, first := range []string{"status", "incomplete"} {
 		t.Run(first, func(t *testing.T) {

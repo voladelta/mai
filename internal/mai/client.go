@@ -26,6 +26,7 @@ const (
 
 type codexClient struct {
 	httpClient     *http.Client
+	requestTimeout time.Duration
 	endpoint       string
 	stdout         io.Writer
 	allowSubagents bool
@@ -87,6 +88,21 @@ func (e *providerFailure) Error() string {
 var errIncompleteStream = errors.New("Codex stream ended before response.completed")
 var errStreamRead = errors.New("read Codex stream")
 var errOutputWrite = errors.New("write Codex output")
+var errRequestIdleTimeout = errors.New("Codex request idle timeout")
+
+type idleResetReader struct {
+	reader  io.Reader
+	timer   *time.Timer
+	timeout time.Duration
+}
+
+func (r idleResetReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if n > 0 {
+		r.timer.Reset(r.timeout)
+	}
+	return n, err
+}
 
 func (e *httpStatusError) Error() string {
 	if e.body == "" {
@@ -101,9 +117,10 @@ func newCodexClient(stdout io.Writer, timeout time.Duration) *codexClient {
 		endpoint = defaultCodexURL
 	}
 	return &codexClient{
-		httpClient: &http.Client{Timeout: timeout},
-		endpoint:   endpoint,
-		stdout:     stdout,
+		httpClient:     &http.Client{},
+		requestTimeout: timeout,
+		endpoint:       endpoint,
+		stdout:         stdout,
 	}
 }
 
@@ -269,25 +286,33 @@ func (c *codexClient) requestOnce(ctx context.Context, sess *session, instructio
 		req.Header.Set("x-codex-turn-metadata", `{"request_kind":"compaction"}`)
 	}
 
+	requestCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	idleTimer := time.AfterFunc(c.requestTimeout, func() { cancel(errRequestIdleTimeout) })
+	defer idleTimer.Stop()
+	req = req.WithContext(requestCtx)
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			return streamResult{}, fmt.Errorf("Codex request timed out after %s; use --timeout to change the limit", c.httpClient.Timeout)
+		if errors.Is(context.Cause(requestCtx), errRequestIdleTimeout) {
+			return streamResult{}, fmt.Errorf("Codex request idle timed out after %s; use --timeout to change the limit", c.requestTimeout)
 		}
 		return streamResult{}, fmt.Errorf("call Codex backend: %w", err)
 	}
 	defer resp.Body.Close()
+	idleTimer.Reset(c.requestTimeout)
+	responseBody := idleResetReader{reader: resp.Body, timer: idleTimer, timeout: c.requestTimeout}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		b, _ := io.ReadAll(io.LimitReader(responseBody, 64<<10))
 		retryAfter, hasRetryAfter := parseRetryAfter(resp.Header.Get("Retry-After"))
 		return streamResult{}, &httpStatusError{
 			status: resp.StatusCode, body: strings.TrimSpace(string(b)),
 			retryAfter: retryAfter, hasRetryAfter: hasRetryAfter,
 		}
 	}
-	result, err := c.readSSE(resp.Body)
-	if errors.Is(err, context.DeadlineExceeded) {
-		return result, fmt.Errorf("Codex request timed out after %s; use --timeout to change the limit", c.httpClient.Timeout)
+	result, err := c.readSSE(responseBody)
+	if err != nil && errors.Is(context.Cause(requestCtx), errRequestIdleTimeout) {
+		return result, fmt.Errorf("Codex request idle timed out after %s; use --timeout to change the limit", c.requestTimeout)
 	}
 	return result, err
 }

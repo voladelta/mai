@@ -14,28 +14,35 @@ import (
 const maxAgentTurns = 64
 
 const (
+	defaultCellTimeout     = 10 * time.Minute
+	defaultSubagentTimeout = time.Hour
+)
+
+const (
 	autoCompactPercent        = 90
 	retainedMessageTokenLimit = 64_000
 )
 
 type agent struct {
-	client        *codexClient
-	stdout        io.Writer
-	stderr        io.Writer
-	sessionPath   string
-	approve       approvalFunc
-	skillsRoot    string
-	skillsError   error
-	skipSkills    bool
-	customAgent   *customAgent
-	customAgents  map[string]customAgent
-	agentWarnings []string
-	agentsError   error
-	executable    string
-	timeout       time.Duration
-	python        pythonKernel
-	children      *childRegistry
-	events        io.Writer
+	client          *codexClient
+	stdout          io.Writer
+	stderr          io.Writer
+	sessionPath     string
+	approve         approvalFunc
+	skillsRoot      string
+	skillsError     error
+	skipSkills      bool
+	customAgent     *customAgent
+	customAgents    map[string]customAgent
+	agentWarnings   []string
+	agentsError     error
+	executable      string
+	requestTimeout  time.Duration
+	cellTimeout     time.Duration
+	subagentTimeout time.Duration
+	python          pythonKernel
+	children        *childRegistry
+	events          io.Writer
 }
 
 type functionCall struct {
@@ -45,7 +52,7 @@ type functionCall struct {
 	Arguments string `json:"arguments"`
 }
 
-func newAgent(stdout, stderr io.Writer, sessionPath string, timeout time.Duration, inputAllowed bool, customRole *customAgent) *agent {
+func newAgent(stdout, stderr io.Writer, sessionPath string, requestTimeout time.Duration, inputAllowed bool, customRole *customAgent) *agent {
 	root, err := defaultSkillsRoot()
 	var customAgents map[string]customAgent
 	var agentWarnings []string
@@ -69,9 +76,10 @@ func newAgent(stdout, stderr io.Writer, sessionPath string, timeout time.Duratio
 		skillsRoot: root, skillsError: err,
 		customAgent:  customRole,
 		customAgents: customAgents, agentWarnings: agentWarnings, agentsError: agentsErr,
-		executable: executable, timeout: timeout,
+		executable: executable, requestTimeout: requestTimeout,
+		cellTimeout: defaultCellTimeout, subagentTimeout: defaultSubagentTimeout,
 	}
-	a.client = newCodexClient(stdout, timeout)
+	a.client = newCodexClient(stdout, requestTimeout)
 	a.client.allowSubagents = agentsErr == nil && len(customAgents) > 0
 	if inputAllowed {
 		a.approve = a.terminalApproval
@@ -389,7 +397,7 @@ func (a *agent) executeSpawnSubagent(ctx context.Context, sess *session, argumen
 		return textToolOutput(toolError("spawn_subagent failed", err))
 	}
 	fmt.Fprintf(a.stderr, "→ subagent: %s\n", args.Name)
-	result, setupErr := runSubagentProcess(ctx, a.executable, a.timeout, sess.CWD, args.Name, args.Prompt)
+	result, setupErr := runSubagentProcess(ctx, a.executable, subagentLimits{request: a.requestTimeout, cell: a.cellTimeout, wall: a.subagentTimeout}, sess.CWD, args.Name, args.Prompt)
 	status := "completed"
 	if setupErr != nil || !result.OK {
 		status = "failed"

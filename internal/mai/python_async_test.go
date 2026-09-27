@@ -59,7 +59,7 @@ func TestPythonOwnerChainHelper(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, mode+"-go"), []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
 		t.Fatal(err)
 	}
-	a := &agent{stderr: io.Discard, timeout: time.Minute}
+	a := &agent{stderr: io.Discard, requestTimeout: time.Minute, cellTimeout: time.Minute, subagentTimeout: time.Minute}
 	sess := &session{CWD: root, RepoRoot: root}
 	identity := pythonCell(t, a, sess, "import os; os.getpid()")
 	if !identity.OK {

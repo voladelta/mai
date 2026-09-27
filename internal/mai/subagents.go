@@ -303,7 +303,7 @@ func renderSubagentInstructions(agents map[string]customAgent) string {
 - A child cannot spawn another child.
 - Python await mai.spawn(name, prompt) returns a background handle promptly. For two concurrent children: first = await mai.spawn(name, prompt); second = await mai.spawn(name, other_prompt); then collect await first.wait() and await second.wait().
 - Handles support async status(), cancel(), and repeatable wait(). cancel() reaps the child and returns its terminal status/result. Cancelling a wait leaves its child running. Status polling does not use the 64 ordinary host-call quota.
-- Go owns children across cells, ordinary Python exceptions, and compaction. Ordinary leftover Python Tasks are cancelled. Reset, state loss, parent cancellation, and shutdown cancel/reap children. Each child has the agent timeout independent of its spawning cell.
+- Go owns children across cells, ordinary Python exceptions, and compaction. Ordinary leftover Python Tasks are cancelled. Reset, state loss, parent cancellation, and shutdown cancel/reap children. Each child has a --subagent-timeout wall-clock limit independent of its spawning cell.
 - Limits: 4 active background children and 64 retained background child records per task, including resets/resumes; overload rejects. Start a new task after reaching the retained record limit. On restart no live handles return; unfinished saved children become unknown. Never relaunch automatically.
 
 Available custom agents:`)
@@ -320,11 +320,17 @@ func customAgentInstructions(agent *customAgent) string {
 	return fmt.Sprintf("Custom agent role: %s\nThese role instructions supplement mai's base instructions. They do not expand task authority or replace recovery rules.\n\n%s", agent.Name, agent.DeveloperInstructions)
 }
 
-func runSubagentProcess(parent context.Context, executable string, timeout time.Duration, cwd string, name, prompt string) (subagentResult, error) {
-	ctx, cancel := context.WithTimeout(parent, timeout)
+type subagentLimits struct {
+	request time.Duration
+	cell    time.Duration
+	wall    time.Duration
+}
+
+func runSubagentProcess(parent context.Context, executable string, limits subagentLimits, cwd string, name, prompt string) (subagentResult, error) {
+	ctx, cancel := context.WithTimeout(parent, limits.wall)
 	defer cancel()
 
-	cmd, cleanup, err := ownedCommand(ctx, executable, "--subagent", name, "--timeout", timeout.String(), "--", prompt)
+	cmd, cleanup, err := ownedCommand(ctx, executable, "--subagent", name, "--timeout", limits.request.String(), "--cell-timeout", limits.cell.String(), "--", prompt)
 	if err != nil {
 		return subagentResult{}, err
 	}
@@ -362,7 +368,7 @@ func runSubagentProcess(parent context.Context, executable string, timeout time.
 		}
 		switch {
 		case result.TimedOut:
-			result.Error = fmt.Sprintf("child process timed out after %s", timeout)
+			result.Error = fmt.Sprintf("child process timed out after %s", limits.wall)
 		case result.Cancelled:
 			result.Error = "child process was cancelled"
 		default:

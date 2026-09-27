@@ -26,7 +26,7 @@ func pythonTestAgent(t *testing.T) (*agent, *session) {
 	if _, err := exec.LookPath(python); err != nil {
 		t.Skipf("Python runtime unavailable: %v", err)
 	}
-	a := &agent{stderr: io.Discard, timeout: 5 * time.Second}
+	a := &agent{stderr: io.Discard, requestTimeout: 5 * time.Second, cellTimeout: 5 * time.Second, subagentTimeout: time.Minute}
 	t.Cleanup(a.python.close)
 	return a, &session{CWD: t.TempDir()}
 }
@@ -44,6 +44,17 @@ func pythonCell(t *testing.T, a *agent, sess *session, code string) pythonResult
 		t.Fatal(err)
 	}
 	return result
+}
+
+func TestPythonCellWallLimitIsIndependentOfRequestTimeout(t *testing.T) {
+	a, sess := pythonTestAgent(t)
+	a.requestTimeout = 10 * time.Millisecond
+	a.cellTimeout = 200 * time.Millisecond
+
+	result := pythonCell(t, a, sess, "import time; time.sleep(0.05); 42")
+	if !result.OK || result.Stdout != "42\n" {
+		t.Fatalf("cell stopped at request timeout: %#v", result)
+	}
 }
 
 func TestPythonPersistsAnalysisAndPartialFailures(t *testing.T) {
@@ -400,7 +411,7 @@ func TestPythonSubagentOwnerDeathStopsProcessGroup(t *testing.T) {
 				timeout = 10 * time.Second
 			}
 			go func() {
-				result, err := runSubagentProcess(ctx, wrapper, timeout, root, "test", "wait")
+				result, err := runSubagentProcess(ctx, wrapper, testSubagentLimits(timeout), root, "test", "wait")
 				done <- encodeSubagentResult(result, err)
 			}()
 

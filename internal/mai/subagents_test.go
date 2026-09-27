@@ -30,7 +30,7 @@ func TestSubagentResultWireCompatibility(t *testing.T) {
 
 func TestRunSubagentMissingExecutableReturnsFailedResult(t *testing.T) {
 	root := t.TempDir()
-	result, err := runSubagentProcess(context.Background(), filepath.Join(root, "missing"), time.Second, root, "scout", "test")
+	result, err := runSubagentProcess(context.Background(), filepath.Join(root, "missing"), testSubagentLimits(time.Second), root, "scout", "test")
 	if err != nil {
 		t.Fatalf("runtime startup failure became setup error: %v", err)
 	}
@@ -153,7 +153,7 @@ printf 'diagnostic\n' >&2
 		t.Fatal(err)
 	}
 
-	result, err := runSubagentProcess(context.Background(), executable, time.Second, root, "repo_scout", "map the parser")
+	result, err := runSubagentProcess(context.Background(), executable, subagentLimits{request: time.Second, cell: 2 * time.Minute, wall: 3 * time.Minute}, root, "repo_scout", "map the parser")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ printf 'diagnostic\n' >&2
 		t.Fatalf("subagent result = %#v", result)
 	}
 	if !strings.Contains(result.Output, "cwd=<"+root+">") ||
-		!strings.Contains(result.Output, "args=<--subagent><repo_scout><--timeout><1s><--><map the parser>") {
+		!strings.Contains(result.Output, "args=<--subagent><repo_scout><--timeout><1s><--cell-timeout><2m0s><--><map the parser>") {
 		t.Fatalf("child output = %q", result.Output)
 	}
 	if result.Stderr != "" || result.StderrBytes == 0 {
@@ -175,7 +175,7 @@ func TestRunSubagentProcessTimesOutWholeChild(t *testing.T) {
 		t.Fatal(err)
 	}
 	started := time.Now()
-	result, err := runSubagentProcess(context.Background(), executable, 50*time.Millisecond, t.TempDir(), "repo_scout", "wait")
+	result, err := runSubagentProcess(context.Background(), executable, testSubagentLimits(50*time.Millisecond), t.TempDir(), "repo_scout", "wait")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,10 +213,12 @@ func TestSpawnSubagentToolRunsConfiguredChild(t *testing.T) {
 	}
 	var stderr bytes.Buffer
 	a := &agent{
-		customAgents: map[string]customAgent{"repo_scout": {Name: "repo_scout"}},
-		executable:   executable,
-		timeout:      time.Second,
-		stderr:       &stderr,
+		customAgents:    map[string]customAgent{"repo_scout": {Name: "repo_scout"}},
+		executable:      executable,
+		requestTimeout:  time.Second,
+		cellTimeout:     defaultCellTimeout,
+		subagentTimeout: time.Minute,
+		stderr:          &stderr,
 	}
 	raw := a.executeTool(context.Background(), &session{CWD: t.TempDir()}, functionCall{
 		Name: "spawn_subagent", Arguments: `{"name":"repo_scout","prompt":"inspect"}`,
