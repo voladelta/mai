@@ -158,6 +158,12 @@ def main():
     async def spawn_subagent(name, prompt):
         return await host_call("spawn_subagent", {"name": name, "prompt": prompt})
 
+    async def history(query, limit=20, start=0):
+        result = await host_call("history", {"query": query, "limit": limit, "start": start})
+        if "error" in result:
+            raise ValueError(result["error"])
+        return result
+
     class Child:
         def __init__(self, identifier):
             self.id = identifier
@@ -193,6 +199,7 @@ def main():
         return Child(result["id"])
 
     mai.bash, mai.apply_patch, mai.spawn_subagent = bash, apply_patch, spawn_subagent
+    mai.history = history
     mai.spawn = spawn
     sys.modules["mai"] = mai
     module = types.ModuleType("__main__")

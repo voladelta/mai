@@ -8,7 +8,7 @@ ChatGPT login, so you do not need an OpenAI API key.
 The agent has 6 tools:
 
 - `bash` reads files, searches code and runs commands
-- `python` explores data in a persistent Python namespace
+- `python` explores data and task history in a persistent Python namespace
 - `apply_patch` creates, changes, moves and deletes files
 - `read_skill` loads a skill's complete `SKILL.md`, or a required supporting file when `file` is provided
 - `view_image` shows a local image to the model
@@ -221,14 +221,47 @@ paths = listing["stdout"].splitlines()
 len(paths)
 ```
 
+Search this task's visible conversation and tool history from Python:
+
+```python
+found = await mai.history("release date", limit=5)
+for item in found["matches"]:
+    print(item["index"], item["kind"], item["text"])
+```
+
+To continue when a query has more than one page of matches:
+
+```python
+page = await mai.history("release date")
+while True:
+    for item in page["matches"]:
+        print(item["index"], item["text"])
+    if page.get("next") is None:
+        break
+    page = await mai.history("release date", start=page["next"])
+```
+
+Search uses a case-insensitive literal substring. Start with short distinctive
+text, then refine. The query `recovery code` can find "recovery code for ticket
+H-1"; `recovery code ticket` cannot. Search returns up to 20 matches in task
+order, a `total` match count, an optional `next` index, and each entry's index
+in the current transcript. `start` is an inclusive,
+zero-based transcript index. Each text excerpt is at most 2,048 Unicode code
+points. Prompts, assistant text, tool calls, and tool results remain searchable
+after conversation compaction and `--last`. Opaque reasoning, compaction
+payloads, and image data are excluded. A saved task created before this feature
+can search its current history; content removed by an earlier compaction cannot
+be recovered. Search results are copies, so editing one does not change Mai's
+history.
+
 `await mai.apply_patch(patch)` applies a repository patch, and
 `await mai.spawn_subagent(name, prompt)` returns a completed child result.
 These calls use the same validation, approvals, and repository boundaries as
 direct tool calls. Children cannot spawn children. Host operations run in
-sequence, with at most eight pending requests and 64 calls per cell. Read-only
-child status requests do not consume the 64-call budget. The bridge
-accepts calls only from the cell's Python thread. It does not expose recursive
-Python calls.
+sequence, with at most eight pending requests and 64 effectful calls per cell.
+Read-only history searches and child status requests do not consume that budget.
+The bridge accepts calls only from the cell's Python thread. It does not expose
+recursive Python calls.
 
 Use `mai.spawn` for background work when subagent use is authorized:
 
@@ -344,7 +377,9 @@ Mai tracks the active context size reported by the Codex backend. At 90% of the
 configured context budget (272,000 tokens), it sends a Codex V2 compaction
 request before the next response request. The compacted history keeps recent
 user messages and the encrypted compaction item. Persisted tasks save this
-replacement history before they continue.
+replacement history before they continue. Mai archives visible text separately
+so Python can search it after compaction or `--last`; the saved archive grows
+with the task's visible history.
 
 ## Safety
 
@@ -372,6 +407,16 @@ data.
 go test -race ./...
 go vet ./...
 ```
+
+To run the live history-recall eval with your Codex login:
+
+```bash
+MAI_LIVE_HISTORY_EVAL=1 go test -v ./internal/mai -run '^TestLiveHistoryRecall$' -count=1
+```
+
+In a three-pair local run, Mai recalled 3/3 random codes from archived history
+and 0/3 without it. This small probe seeds the archive in memory; deterministic
+tests cover two compactions and saved-task resume. See [eval details](evals/README.md#searchable-history-recall).
 
 ## Backend status
 

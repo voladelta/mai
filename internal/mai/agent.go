@@ -221,6 +221,17 @@ func (a *agent) compactIfNeeded(ctx context.Context, sess *session, instructions
 	}
 	next := *sess
 	next.History = history
+	next.Transcript = append([]transcriptEntry(nil), sess.Transcript...)
+	for _, item := range sess.History[sess.TranscriptSkip:] {
+		entry, visible, err := visibleTranscriptEntry(item)
+		if err != nil {
+			return fmt.Errorf("archive history for transcript: %w", err)
+		}
+		if visible {
+			next.Transcript = append(next.Transcript, entry)
+		}
+	}
+	next.TranscriptSkip = len(history)
 	// Compaction replaces the prompt prefix and removes configuration updates.
 	// Start the replacement prefix at the current effort.
 	next.RequestEffort = next.Effort

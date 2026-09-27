@@ -30,6 +30,8 @@ type session struct {
 	RequestEffort    string            `json:"request_effort,omitempty"`
 	ContextTokens    int64             `json:"context_tokens,omitempty"`
 	History          []json.RawMessage `json:"history"`
+	Transcript       []transcriptEntry `json:"transcript,omitempty"`
+	TranscriptSkip   int               `json:"transcript_skip,omitempty"`
 	PythonActivities []pythonActivity  `json:"python_activities,omitempty"`
 }
 
@@ -152,6 +154,9 @@ func loadSession(path string) (*session, error) {
 	}
 	if out.Version != stateVersion || !validSessionID(out.ID) || out.CWD == "" || out.RepoRoot == "" || out.ContextTokens < 0 {
 		return nil, fmt.Errorf("saved session is incomplete or unsupported")
+	}
+	if out.TranscriptSkip < 0 || out.TranscriptSkip > len(out.History) {
+		return nil, errors.New("saved session has invalid transcript position")
 	}
 	if !supportedModel(out.Model) && out.Model != "astra" && out.Model != "terra" {
 		return nil, fmt.Errorf("saved session has invalid model %q", out.Model)

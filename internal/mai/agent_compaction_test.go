@@ -67,6 +67,31 @@ func TestRunTurnCompactsBeforeSamplingAndSavesReplacement(t *testing.T) {
 	if len(saved.History) != 3 || historyItemType(saved.History[1]) != "compaction" || saved.ContextTokens != 12_345 {
 		t.Fatalf("saved session = %#v", saved)
 	}
+	if len(saved.Transcript) != 3 || saved.TranscriptSkip != 2 {
+		t.Fatalf("saved transcript = %#v, skip=%d", saved.Transcript, saved.TranscriptSkip)
+	}
+	saved.ContextTokens = 244_800
+	if err := a.compactIfNeeded(context.Background(), saved, "instructions"); err != nil {
+		t.Fatal(err)
+	}
+	if len(requests) != 3 || !hasCompactionTrigger(requests[2]["input"]) {
+		t.Fatalf("second compaction requests = %#v", requests)
+	}
+	saved, err = loadSession(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saved.Transcript) != 4 || saved.TranscriptSkip != 2 {
+		t.Fatalf("transcript after second compaction = %#v, skip=%d", saved.Transcript, saved.TranscriptSkip)
+	}
+	python, _ := pythonTestAgent(t)
+	got := pythonCell(t, python, saved, `found = await mai.history("old output")
+assert found["total"] == 1
+assert found["matches"][0]["kind"] == "tool_result"
+assert "old output" in found["matches"][0]["text"]`)
+	if !got.OK {
+		t.Fatalf("history was not searchable after two compactions and resume: %#v", got)
+	}
 }
 
 func TestFailedCompactionLeavesHistoryUnchanged(t *testing.T) {

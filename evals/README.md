@@ -43,6 +43,30 @@ turn that review into a single score without a written rubric.
 
 The first local smoke result is recorded in [baseline.md](baseline.md).
 
+## Searchable history recall
+
+Run the opt-in live eval with your normal Codex login:
+
+```sh
+MAI_LIVE_HISTORY_EVAL=1 go test -v ./internal/mai -run '^TestLiveHistoryRecall$' -count=1
+```
+
+It runs three paired attempts with Luna at medium effort. Each pair asks for a
+new random code. The test arm places the code in Mai's in-memory archived
+transcript; the control has no archived entry. Neither arm puts the code in the
+model's current context or in a workspace file. The test reports exact recall
+and how often Mai called `mai.history`. It makes live model requests and is
+skipped by normal `go test` runs.
+
+On 2026-09-27, the first run was 0/3 in both arms: Mai searched a long phrase
+that did not occur literally in the old message and stopped after zero hits.
+After the system hint explained literal substring search and short queries, the
+same eval design scored 3/3 with archived history and 0/3 without it. This is a
+small recall probe, not a statistical benchmark. Compaction and saved-task
+recovery are covered by separate deterministic tests; this live probe seeds the
+archive directly so it tests model use of history without exposing a session
+file to Bash.
+
 ## Waiting time
 
 New JSONL traces include `duration_ms` on model, tool, and completed task

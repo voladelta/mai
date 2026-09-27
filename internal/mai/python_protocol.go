@@ -201,7 +201,7 @@ func (k *pythonKernel) runProtocol(ctx context.Context, code, marker string, hos
 				if active != nil {
 					count++
 				}
-				if frame.Name != "child_status" {
+				if frame.Name != "child_status" && frame.Name != "history" {
 					effectCalls++
 				}
 				if frame.Call != lastCall+1 || effectCalls > maxPythonCalls || count >= maxPythonPending || frame.Name == "" || len(frame.Name) > 64 || len(frame.Arguments) == 0 || frame.Arguments[0] != '{' {

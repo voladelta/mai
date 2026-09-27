@@ -316,6 +316,9 @@ func (a *agent) executePython(ctx context.Context, sess *session, arguments stri
 	start := len(sess.PythonActivities)
 	host := a.pythonHost(sess, outerCall)
 	result := a.python.execute(ctx, sess.CWD, code, reset, a.timeout, func(cellCtx context.Context, generation, cell, call int, name string, args json.RawMessage) (json.RawMessage, error) {
+		if name == "history" {
+			return searchTranscript(sess, args, outerCall), nil
+		}
 		if name == "spawn" || name == "child_status" || name == "child_cancel" {
 			activity := pythonActivity{OuterCallID: outerCall, Generation: generation, Cell: cell, Call: call, Name: name, Arguments: args}
 			raw, err := a.childHost(ctx, sess, activity)
