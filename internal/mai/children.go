@@ -160,7 +160,7 @@ func (r *childRegistry) stop() {
 	}
 }
 
-func (r *childRegistry) spawn(parent context.Context, generation int, executable, cwd, name, prompt string, limits subagentLimits, provenance ...pythonActivity) (childRecord, error) {
+func (r *childRegistry) spawn(parent context.Context, generation int, executable, cwd, name, prompt string, limits subagentLimits, provenance pythonActivity) (childRecord, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.failure != nil {
@@ -188,11 +188,9 @@ func (r *childRegistry) spawn(parent context.Context, generation int, executable
 	r.generation = generation
 	ctx, cancel := context.WithCancel(parent)
 	run := &childRun{record: childRecord{ID: id, Generation: generation, Name: name, Prompt: prompt, Status: "running"}, cancel: cancel, done: make(chan struct{})}
-	if len(provenance) > 0 {
-		run.record.OuterCallID = provenance[0].OuterCallID
-		run.record.Cell = provenance[0].Cell
-		run.record.Call = provenance[0].Call
-	}
+	run.record.OuterCallID = provenance.OuterCallID
+	run.record.Cell = provenance.Cell
+	run.record.Call = provenance.Call
 	r.runs[id] = run
 	if err := r.saveLocked(); err != nil {
 		delete(r.runs, id)

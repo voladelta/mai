@@ -51,11 +51,6 @@ type yamlEntry struct {
 	value  string
 }
 
-type skillFrontMatter struct {
-	name        string
-	description string
-}
-
 func defaultSkillsRoot() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -289,11 +284,7 @@ func readSkill(root, id, file string) (skillFileResult, error) {
 	if filepath.IsAbs(file) || clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return skillFileResult{}, errors.New("skill file path must stay inside the selected skill")
 	}
-	return readSkillPath(id, dir, clean)
-}
-
-func readSkillPath(id, dir, path string) (skillFileResult, error) {
-	resolved, err := secureSkillPath(dir, path)
+	resolved, err := secureSkillPath(dir, clean)
 	if err != nil {
 		return skillFileResult{}, err
 	}
@@ -306,7 +297,7 @@ func readSkillPath(id, dir, path string) (skillFileResult, error) {
 		mediaType = http.DetectContentType(b)
 	}
 	result := skillFileResult{
-		OK: true, Skill: id, Path: filepath.ToSlash(path), MediaType: mediaType,
+		OK: true, Skill: id, Path: filepath.ToSlash(clean), MediaType: mediaType,
 	}
 	if strings.HasPrefix(strings.ToLower(mediaType), "image/") {
 		contentType, _, _ := strings.Cut(mediaType, ";")
@@ -315,7 +306,7 @@ func readSkillPath(id, dir, path string) (skillFileResult, error) {
 	}
 	content := string(b)
 	if !utf8.Valid(b) || strings.IndexByte(content, 0) >= 0 {
-		return skillFileResult{}, fmt.Errorf("%s is binary data with unsupported media type %s", path, mediaType)
+		return skillFileResult{}, fmt.Errorf("%s is binary data with unsupported media type %s", clean, mediaType)
 	}
 	result.Content = content
 	return result, nil
@@ -392,73 +383,50 @@ func parseSkillFrontMatter(content string) (string, string, error) {
 	if len(lines) < 3 || strings.TrimSpace(lines[0]) != "---" {
 		return "", "", errors.New("SKILL.md has no YAML front matter")
 	}
-	var matter skillFrontMatter
+	var name, description string
 	for i := 1; i < len(lines); i++ {
 		line := lines[i]
 		if strings.TrimSpace(line) == "---" {
-			return matter.values()
+			name = strings.TrimSpace(name)
+			description = strings.TrimSpace(description)
+			if name == "" || description == "" {
+				return "", "", errors.New("SKILL.md front matter requires name and description")
+			}
+			if len([]rune(description)) > maxSkillDescriptionChars {
+				return "", "", fmt.Errorf("SKILL.md front matter description exceeds %d characters", maxSkillDescriptionChars)
+			}
+			return name, description, nil
 		}
-		key, value, ok := skillFrontMatterField(line)
+		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, ":")
 		if !ok {
 			continue
 		}
-		if key == "description" && (strings.HasPrefix(value, ">") || strings.HasPrefix(value, "|")) {
-			matter.description = readFrontMatterBlock(lines, &i)
+		key = strings.TrimSpace(key)
+		if key != "name" && key != "description" {
 			continue
 		}
-		matter.set(key, yamlScalar(value))
-	}
-	return "", "", errors.New("SKILL.md front matter is not closed")
-}
-
-func skillFrontMatterField(line string) (string, string, bool) {
-	if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
-		return "", "", false
-	}
-	key, value, ok := strings.Cut(line, ":")
-	if !ok {
-		return "", "", false
-	}
-	key = strings.TrimSpace(key)
-	if key != "name" && key != "description" {
-		return "", "", false
-	}
-	return key, strings.TrimSpace(value), true
-}
-
-func readFrontMatterBlock(lines []string, index *int) string {
-	var parts []string
-	for *index+1 < len(lines) && frontMatterContinuation(lines[*index+1]) {
-		(*index)++
-		if part := strings.TrimSpace(lines[*index]); part != "" {
-			parts = append(parts, part)
+		value = strings.TrimSpace(value)
+		if key == "description" && (strings.HasPrefix(value, ">") || strings.HasPrefix(value, "|")) {
+			var parts []string
+			for i+1 < len(lines) && (strings.HasPrefix(lines[i+1], " ") || strings.TrimSpace(lines[i+1]) == "") {
+				i++
+				if part := strings.TrimSpace(lines[i]); part != "" {
+					parts = append(parts, part)
+				}
+			}
+			description = strings.Join(parts, " ")
+			continue
+		}
+		if key == "name" {
+			name = yamlScalar(value)
+		} else {
+			description = yamlScalar(value)
 		}
 	}
-	return strings.Join(parts, " ")
-}
-
-func frontMatterContinuation(line string) bool {
-	return strings.HasPrefix(line, " ") || strings.TrimSpace(line) == ""
-}
-
-func (matter *skillFrontMatter) set(key, value string) {
-	if key == "name" {
-		matter.name = value
-	} else {
-		matter.description = value
-	}
-}
-
-func (matter skillFrontMatter) values() (string, string, error) {
-	name := strings.TrimSpace(matter.name)
-	description := strings.TrimSpace(matter.description)
-	if name == "" || description == "" {
-		return "", "", errors.New("SKILL.md front matter requires name and description")
-	}
-	if len([]rune(description)) > maxSkillDescriptionChars {
-		return "", "", fmt.Errorf("SKILL.md front matter description exceeds %d characters", maxSkillDescriptionChars)
-	}
-	return name, description, nil
+	return "", "", errors.New("SKILL.md front matter is not closed")
 }
 
 func yamlScalar(value string) string {

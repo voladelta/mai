@@ -199,7 +199,7 @@ child.pid`)
 				timeout = 5 * time.Second
 				time.AfterFunc(100*time.Millisecond, cancel)
 			}
-			result = a.python.execute(ctx, sess.CWD, "import time; time.sleep(30)", false, timeout)
+			result = a.python.execute(ctx, sess.CWD, "import time; time.sleep(30)", false, timeout, nil)
 			if result.OK || !result.StateLost || result.TimedOut == cancelCell || a.python.cmd != nil || syscall.Kill(pid, 0) == nil {
 				t.Fatalf("failed cleanup: %#v", result)
 			}
@@ -375,7 +375,7 @@ func TestPythonSubagentOwnerHelper(t *testing.T) {
 	var kernel pythonKernel
 	result := kernel.execute(context.Background(), ".", `import os, subprocess, sys
 child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
-print(os.getpid(), child.pid)`, false, time.Minute)
+print(os.getpid(), child.pid)`, false, time.Minute, nil)
 	if !result.OK {
 		t.Fatalf("kernel setup failed: %#v", result)
 	}
@@ -383,7 +383,7 @@ print(os.getpid(), child.pid)`, false, time.Minute)
 	if err := os.WriteFile("python-pids", []byte(result.Stdout), 0600); err != nil {
 		t.Fatal(err)
 	}
-	result = kernel.execute(context.Background(), ".", "import time; time.sleep(60)", false, time.Minute)
+	result = kernel.execute(context.Background(), ".", "import time; time.sleep(60)", false, time.Minute, nil)
 	t.Fatalf("owner unexpectedly returned: %#v", result)
 }
 

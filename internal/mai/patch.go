@@ -606,25 +606,14 @@ func atomicWriteRootFile(root *os.Root, path string, content []byte, mode os.Fil
 	if err := root.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create directory for %s: %w", path, err)
 	}
-	var tmp *os.File
-	var tmpPath string
-	for range 100 {
-		var suffix [12]byte
-		if _, err := rand.Read(suffix[:]); err != nil {
-			return fmt.Errorf("create temporary name for %s: %w", path, err)
-		}
-		tmpPath = filepath.Join(dir, ".mai-"+hex.EncodeToString(suffix[:]))
-		var err error
-		tmp, err = root.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-		if err == nil {
-			break
-		}
-		if !errors.Is(err, os.ErrExist) {
-			return fmt.Errorf("create temporary file for %s: %w", path, err)
-		}
+	var suffix [12]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return fmt.Errorf("create temporary name for %s: %w", path, err)
 	}
-	if tmp == nil {
-		return fmt.Errorf("create temporary file for %s: too many name conflicts", path)
+	tmpPath := filepath.Join(dir, ".mai-"+hex.EncodeToString(suffix[:]))
+	tmp, err := root.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("create temporary file for %s: %w", path, err)
 	}
 	keep := false
 	defer func() {

@@ -92,7 +92,7 @@ func saveCurrentSession(paths sessionPaths, id string) error {
 	if err := atomicWriteFile(paths.current, []byte(id+"\n"), 0o600); err != nil {
 		return fmt.Errorf("save current session: %w", err)
 	}
-	return os.Chmod(paths.current, 0o600)
+	return nil
 }
 
 func loadCurrentSessionID(paths sessionPaths) (string, error) {
@@ -167,13 +167,10 @@ func loadSession(path string) (*session, error) {
 		if err != nil {
 			return nil, fmt.Errorf("open saved transcript: %w", err)
 		}
-		info, statErr := file.Stat()
-		closeErr := file.Close()
-		if statErr != nil {
-			return nil, fmt.Errorf("inspect saved transcript: %w", statErr)
-		}
-		if closeErr != nil {
-			return nil, fmt.Errorf("close saved transcript: %w", closeErr)
+		info, err := file.Stat()
+		file.Close()
+		if err != nil {
+			return nil, fmt.Errorf("inspect saved transcript: %w", err)
 		}
 		if info.Size() < out.TranscriptEnd {
 			return nil, errors.New("saved transcript is shorter than its committed position")
@@ -330,6 +327,7 @@ func estimateHistoryTokens(items []json.RawMessage) int64 {
 const estimatedImageBytes int64 = 7373
 
 func estimateHistoryItemTokens(item json.RawMessage) int64 {
+	rawEstimate := (int64(len(item)) + 3) / 4
 	var envelope struct {
 		Type             string `json:"type"`
 		EncryptedContent string `json:"encrypted_content"`
@@ -337,16 +335,13 @@ func estimateHistoryItemTokens(item json.RawMessage) int64 {
 	if json.Unmarshal(item, &envelope) == nil &&
 		(envelope.Type == "compaction" || envelope.Type == "compaction_summary") {
 		// Codex estimates the decoded encrypted payload, less fixed envelope overhead.
-		estimatedBytes := int64(len(envelope.EncryptedContent))*3/4 - 650
-		if estimatedBytes < 0 {
-			estimatedBytes = 0
-		}
+		estimatedBytes := max(0, int64(len(envelope.EncryptedContent))*3/4-650)
 		return (estimatedBytes + 3) / 4
 	}
 
 	estimatedBytes := int64(len(item))
 	if !bytes.Contains(item, []byte("input_image")) {
-		return (estimatedBytes + 3) / 4
+		return rawEstimate
 	}
 
 	var imageItem struct {
@@ -355,7 +350,7 @@ func estimateHistoryItemTokens(item json.RawMessage) int64 {
 		Output  json.RawMessage   `json:"output"`
 	}
 	if err := json.Unmarshal(item, &imageItem); err != nil {
-		return (estimatedBytes + 3) / 4
+		return rawEstimate
 	}
 
 	var parts []json.RawMessage
@@ -364,10 +359,10 @@ func estimateHistoryItemTokens(item json.RawMessage) int64 {
 		parts = imageItem.Content
 	case "function_call_output":
 		if err := json.Unmarshal(imageItem.Output, &parts); err != nil {
-			return (estimatedBytes + 3) / 4
+			return rawEstimate
 		}
 	default:
-		return (estimatedBytes + 3) / 4
+		return rawEstimate
 	}
 
 	for _, part := range parts {
@@ -376,13 +371,13 @@ func estimateHistoryItemTokens(item json.RawMessage) int64 {
 			ImageURL json.RawMessage `json:"image_url"`
 		}
 		if err := json.Unmarshal(part, &content); err != nil {
-			return (int64(len(item)) + 3) / 4
+			return rawEstimate
 		}
 		if content.Type != "input_image" {
 			continue
 		}
 		if len(content.ImageURL) < 2 || content.ImageURL[0] != '"' || content.ImageURL[len(content.ImageURL)-1] != '"' {
-			return (int64(len(item)) + 3) / 4
+			return rawEstimate
 		}
 
 		// The model sees an image, not the base64 text in its data URL.

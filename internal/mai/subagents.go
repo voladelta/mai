@@ -2,7 +2,6 @@ package mai
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -362,7 +361,6 @@ func runSubagentProcess(parent context.Context, executable string, limits subage
 		OK:           runErr == nil,
 		Name:         name,
 		Output:       stdout.String(),
-		ExitCode:     0,
 		DurationMS:   time.Since(started).Milliseconds(),
 		Truncated:    stdout.Truncated() || stderr.Truncated(),
 		OutputBytes:  stdout.TotalBytes(),
@@ -396,9 +394,5 @@ func encodeSubagentResult(result subagentResult, setupErr error) string {
 		return toolError("start subagent", setupErr)
 	}
 
-	b, err := json.Marshal(result)
-	if err != nil {
-		return toolError("encode spawn_subagent result", err)
-	}
-	return string(b)
+	return marshalToolResult(result)
 }

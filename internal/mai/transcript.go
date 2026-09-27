@@ -21,18 +21,15 @@ func openTranscript(path string, flags int) (*os.File, error) {
 		return nil, err
 	}
 	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() {
-		file.Close()
-		if err != nil {
-			return nil, err
-		}
-		return nil, errors.New("transcript is not a regular file")
+	if err == nil && !info.Mode().IsRegular() {
+		err = errors.New("transcript is not a regular file")
 	}
-	if flags&os.O_RDWR != 0 {
-		if err := file.Chmod(0o600); err != nil {
-			file.Close()
-			return nil, err
-		}
+	if err == nil && flags&os.O_RDWR != 0 {
+		err = file.Chmod(0o600)
+	}
+	if err != nil {
+		file.Close()
+		return nil, err
 	}
 	return file, nil
 }
@@ -243,6 +240,7 @@ func searchTranscript(sess *session, arguments json.RawMessage, activeCallID str
 		if err != nil {
 			return json.RawMessage(`{"error":"cannot read saved transcript"}`)
 		}
+		defer file.Close()
 		decoder := json.NewDecoder(io.LimitReader(file, sess.TranscriptEnd))
 		for {
 			var entry transcriptEntry
@@ -251,13 +249,9 @@ func searchTranscript(sess *session, arguments json.RawMessage, activeCallID str
 				break
 			}
 			if err != nil {
-				file.Close()
 				return json.RawMessage(`{"error":"saved transcript contains an invalid entry"}`)
 			}
 			add(entry)
-		}
-		if err := file.Close(); err != nil {
-			return json.RawMessage(`{"error":"cannot close saved transcript"}`)
 		}
 	}
 	live, err := visibleHistoryEntries(sess.History[sess.TranscriptSkip:])
@@ -267,10 +261,7 @@ func searchTranscript(sess *session, arguments json.RawMessage, activeCallID str
 	for _, entry := range live {
 		add(entry)
 	}
-	encoded, err := json.Marshal(result)
-	if err != nil {
-		return json.RawMessage(`{"error":"cannot encode history result"}`)
-	}
+	encoded, _ := json.Marshal(result)
 	return encoded
 }
 
@@ -279,14 +270,9 @@ func transcriptExcerpt(text string, matchByte int) string {
 	if len(runes) <= 2048 {
 		return text
 	}
-	if matchByte > len(text) {
-		matchByte = len(text)
-	}
+	matchByte = min(matchByte, len(text))
 	position := utf8.RuneCountInString(text[:matchByte])
-	start := position - 512
-	if start < 0 {
-		start = 0
-	}
+	start := max(0, position-512)
 	end := start + 2048
 	if end > len(runes) {
 		end = len(runes)

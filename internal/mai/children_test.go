@@ -46,7 +46,7 @@ func TestChildFailureKeepsTypedOutcomeInJournal(t *testing.T) {
 	t.Cleanup(r.stop)
 	executable := childTestExecutable(t, root, "printf partial; printf diagnostic >&2; exit 7")
 
-	record, err := r.spawn(context.Background(), 1, executable, root, "review", "work", testSubagentLimits(time.Second))
+	record, err := r.spawn(context.Background(), 1, executable, root, "review", "work", testSubagentLimits(time.Second), pythonActivity{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestChildAdmissionCompletionAndRecovery(t *testing.T) {
 	}
 	t.Cleanup(r.stop)
 	executable := childTestExecutable(t, root, "touch started\nwhile [ ! -f release ]; do sleep 0.01; done\nprintf done")
-	record, err := r.spawn(context.Background(), 1, executable, root, "review", "work", testSubagentLimits(time.Minute))
+	record, err := r.spawn(context.Background(), 1, executable, root, "review", "work", testSubagentLimits(time.Minute), pythonActivity{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,13 +137,13 @@ func TestChildLimitsCancellationAndStaleHandles(t *testing.T) {
 	executable := childTestExecutable(t, root, "sleep 30")
 	var ids []string
 	for i := 0; i < maxActiveChildren; i++ {
-		record, err := r.spawn(context.Background(), 1, executable, root, "review", "work", testSubagentLimits(time.Minute))
+		record, err := r.spawn(context.Background(), 1, executable, root, "review", "work", testSubagentLimits(time.Minute), pythonActivity{})
 		if err != nil {
 			t.Fatal(err)
 		}
 		ids = append(ids, record.ID)
 	}
-	if _, err := r.spawn(context.Background(), 1, executable, root, "review", "work", testSubagentLimits(time.Minute)); err == nil {
+	if _, err := r.spawn(context.Background(), 1, executable, root, "review", "work", testSubagentLimits(time.Minute), pythonActivity{}); err == nil {
 		t.Fatal("accepted fifth active child")
 	}
 	if _, err := r.inspect(2, ids[0], true); err == nil {
@@ -169,7 +169,7 @@ func TestChildLimitsCancellationAndStaleHandles(t *testing.T) {
 	for len(next.recovered) < maxChildHandles {
 		next.recovered = append(next.recovered, childRecord{Status: "unknown"})
 	}
-	if _, err := next.spawn(context.Background(), 2, executable, root, "review", "work", testSubagentLimits(time.Minute)); err == nil {
+	if _, err := next.spawn(context.Background(), 2, executable, root, "review", "work", testSubagentLimits(time.Minute), pythonActivity{}); err == nil {
 		t.Fatal("retention cap bypassed")
 	}
 }
@@ -182,7 +182,7 @@ func TestChildSaveFailuresPreventEffectsAndHideUnsavedResult(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "blocked"), nil, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.spawn(context.Background(), 1, executable, root, "review", "work", testSubagentLimits(time.Minute)); err == nil {
+	if _, err := r.spawn(context.Background(), 1, executable, root, "review", "work", testSubagentLimits(time.Minute), pythonActivity{}); err == nil {
 		t.Fatal("admission save failure accepted")
 	}
 	if _, err := os.Stat(filepath.Join(root, "unexpected")); !os.IsNotExist(err) {
@@ -191,7 +191,7 @@ func TestChildSaveFailuresPreventEffectsAndHideUnsavedResult(t *testing.T) {
 
 	r, _ = openChildRegistry(filepath.Join(root, "session"))
 	t.Cleanup(r.stop)
-	record, err := r.spawn(context.Background(), 1, executable, root, "review", "work", testSubagentLimits(time.Minute))
+	record, err := r.spawn(context.Background(), 1, executable, root, "review", "work", testSubagentLimits(time.Minute), pythonActivity{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +208,7 @@ func TestChildSaveFailuresPreventEffectsAndHideUnsavedResult(t *testing.T) {
 	if got.Status != "unknown" || len(got.Result) != 0 {
 		t.Fatalf("unsaved result acknowledged: %#v", got)
 	}
-	if _, err := r.spawn(context.Background(), 1, executable, root, "review", "work", testSubagentLimits(time.Minute)); err == nil {
+	if _, err := r.spawn(context.Background(), 1, executable, root, "review", "work", testSubagentLimits(time.Minute), pythonActivity{}); err == nil {
 		t.Fatal("admitted after result save failure")
 	}
 }
@@ -259,7 +259,7 @@ func TestChildTimeoutAndParentCancellation(t *testing.T) {
 			if timeout {
 				limit = 50 * time.Millisecond
 			}
-			record, err := r.spawn(ctx, 1, executable, root, "review", "work", testSubagentLimits(limit))
+			record, err := r.spawn(ctx, 1, executable, root, "review", "work", testSubagentLimits(limit), pythonActivity{})
 			if err != nil {
 				t.Fatal(err)
 			}

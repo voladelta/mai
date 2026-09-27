@@ -179,7 +179,7 @@ func drainPythonOutput(file *os.File, marker []byte, output *cappedBuffer) error
 	}
 }
 
-func (k *pythonKernel) execute(parent context.Context, cwd, code string, reset bool, timeout time.Duration, hosts ...map[string]pythonOperation) pythonResult {
+func (k *pythonKernel) execute(parent context.Context, cwd, code string, reset bool, timeout time.Duration, operations map[string]pythonOperation) pythonResult {
 	started := time.Now()
 	result := pythonResult{Generation: k.generation}
 	if reset {
@@ -219,10 +219,6 @@ func (k *pythonKernel) execute(parent context.Context, cwd, code string, reset b
 	defer cancel()
 	k.cell++
 	result.Cell = k.cell
-	var operations map[string]pythonOperation
-	if len(hosts) > 0 {
-		operations = hosts[0]
-	}
 	var random [24]byte
 	_, _ = rand.Read(random[:])
 	marker := "\x00mai-" + hex.EncodeToString(random[:]) + "\x00"

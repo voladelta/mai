@@ -155,14 +155,19 @@ func (a *agent) loadSkillInstructions(userPrompt string) string {
 	return skillContext.Instructions
 }
 
+func (a *agent) emit(event map[string]any) error {
+	if a.events == nil {
+		return nil
+	}
+	return writeJSONLEvent(a.events, event)
+}
+
 func (a *agent) runTurn(ctx context.Context, sess *session, instructions string) (bool, error) {
 	if err := a.compactIfNeeded(ctx, sess, instructions); err != nil {
 		return false, err
 	}
-	if a.events != nil {
-		if err := writeJSONLEvent(a.events, map[string]any{"type": "model.started"}); err != nil {
-			return false, err
-		}
+	if err := a.emit(map[string]any{"type": "model.started"}); err != nil {
+		return false, err
 	}
 	modelStarted := time.Now()
 	result, err := a.client.stream(ctx, sess, instructions)
@@ -170,26 +175,17 @@ func (a *agent) runTurn(ctx context.Context, sess *session, instructions string)
 	if result.wrote && a.events == nil {
 		fmt.Fprintln(a.stdout)
 	}
+	if err == nil && len(result.items) == 0 {
+		err = errors.New("Codex response contained no output items")
+	}
 	if err != nil {
-		if a.events != nil {
-			if eventErr := writeJSONLEvent(a.events, map[string]any{"type": "model.failed", "duration_ms": modelDuration}); eventErr != nil {
-				return false, eventErr
-			}
+		if eventErr := a.emit(map[string]any{"type": "model.failed", "duration_ms": modelDuration}); eventErr != nil {
+			return false, eventErr
 		}
 		return false, err
 	}
-	if len(result.items) == 0 {
-		if a.events != nil {
-			if eventErr := writeJSONLEvent(a.events, map[string]any{"type": "model.failed", "duration_ms": modelDuration}); eventErr != nil {
-				return false, eventErr
-			}
-		}
-		return false, errors.New("Codex response contained no output items")
-	}
-	if a.events != nil {
-		if err := writeJSONLEvent(a.events, map[string]any{"type": "model.completed", "total_tokens": result.totalTokens, "duration_ms": modelDuration}); err != nil {
-			return false, err
-		}
+	if err := a.emit(map[string]any{"type": "model.completed", "total_tokens": result.totalTokens, "duration_ms": modelDuration}); err != nil {
+		return false, err
 	}
 	sess.History = append(sess.History, result.items...)
 	if result.totalTokens > 0 {
@@ -216,8 +212,7 @@ func (a *agent) runTurn(ctx context.Context, sess *session, instructions string)
 }
 
 func (a *agent) compactIfNeeded(ctx context.Context, sess *session, instructions string) error {
-	contextWindow := modelContextWindow
-	if sess.ContextTokens < contextWindow*autoCompactPercent/100 {
+	if sess.ContextTokens < modelContextWindow*autoCompactPercent/100 {
 		return nil
 	}
 	compaction, err := a.client.compact(ctx, sess, instructions)
@@ -278,10 +273,8 @@ func compactedHistory(history []json.RawMessage, compaction json.RawMessage) ([]
 
 func (a *agent) executeCalls(ctx context.Context, sess *session, calls []functionCall) error {
 	for _, call := range calls {
-		if a.events != nil {
-			if err := writeJSONLEvent(a.events, map[string]any{"type": "tool.started", "name": call.Name, "call_id": call.CallID}); err != nil {
-				return err
-			}
+		if err := a.emit(map[string]any{"type": "tool.started", "name": call.Name, "call_id": call.CallID}); err != nil {
+			return err
 		}
 		toolStarted := time.Now()
 		output := a.executeTool(ctx, sess, call)
@@ -310,17 +303,15 @@ func (a *agent) executeCalls(ctx context.Context, sess *session, calls []functio
 				return fmt.Errorf("save tool output: %w", err)
 			}
 		}
-		if a.events != nil {
-			event := map[string]any{"type": "tool.completed", "name": call.Name, "call_id": call.CallID, "duration_ms": toolDuration}
-			if len(output) <= 256<<10 {
-				event["output"] = output
-			} else {
-				event["output_bytes"] = len(output)
-				event["output_omitted"] = true
-			}
-			if err := writeJSONLEvent(a.events, event); err != nil {
-				return err
-			}
+		event := map[string]any{"type": "tool.completed", "name": call.Name, "call_id": call.CallID, "duration_ms": toolDuration}
+		if len(output) <= 256<<10 {
+			event["output"] = output
+		} else {
+			event["output_bytes"] = len(output)
+			event["output_omitted"] = true
+		}
+		if err := a.emit(event); err != nil {
+			return err
 		}
 	}
 	return nil

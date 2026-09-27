@@ -293,7 +293,7 @@ func TestPersistCreatesProjectSessionAndCurrentPointer(t *testing.T) {
 func TestConcurrentPersistedTasksKeepSeparateHistory(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
-	cfg := taskConfig{Effort: "m"}
+	cfg := taskConfig{Model: defaultModel, Effort: "m"}
 
 	first, err := startSession(cfg, options{persist: true})
 	if err != nil {
@@ -344,7 +344,7 @@ func TestConcurrentPersistedTasksKeepSeparateHistory(t *testing.T) {
 func TestLastRejectsSessionThatIsAlreadyRunning(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
-	active, err := startSession(taskConfig{Effort: "m"}, options{persist: true})
+	active, err := startSession(taskConfig{Model: defaultModel, Effort: "m"}, options{persist: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -450,7 +450,7 @@ func TestModelSelectionAndResumePreserveRequestPrefix(t *testing.T) {
 
 func TestLastMigratesOlderModelToLuna(t *testing.T) {
 	t.Chdir(t.TempDir())
-	active, err := startSession(taskConfig{Effort: "m"}, options{persist: true})
+	active, err := startSession(taskConfig{Model: defaultModel, Effort: "m"}, options{persist: true})
 	if err != nil {
 		t.Fatal(err)
 	}

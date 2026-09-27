@@ -2,7 +2,6 @@ package mai
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -112,39 +111,35 @@ func runBash(parent context.Context, req bashRequest) string {
 	cmd.Stderr = io.MultiWriter(&stderr, stderrCapture)
 	started := time.Now()
 	err = cmd.Run()
-	stdoutCloseErr := stdoutFile.Close()
-	stderrCloseErr := stderrFile.Close()
+	stdoutCapture.close()
+	stderrCapture.close()
 
 	result := bashResult{
 		OK: err == nil, Stdout: stdout.String(), Stderr: stderr.String(),
-		ExitCode: 0, TimedOut: errors.Is(ctx.Err(), context.DeadlineExceeded),
+		TimedOut:    errors.Is(ctx.Err(), context.DeadlineExceeded),
 		Truncated:   stdout.Truncated() || stderr.Truncated(),
 		DurationMS:  time.Since(started).Milliseconds(),
 		StdoutBytes: stdout.TotalBytes(), StderrBytes: stderr.TotalBytes(),
 		OmittedBytes:     stdout.OmittedBytes() + stderr.OmittedBytes(),
 		CaptureTruncated: stdoutCapture.truncated || stderrCapture.truncated,
 	}
-	if stdoutCapture.err != nil || stdoutCloseErr != nil || stderrCapture.err != nil || stderrCloseErr != nil {
+	if stdoutCapture.err != nil || stderrCapture.err != nil {
 		result.CaptureError = "full output capture failed"
 	}
-	if result.Truncated {
-		if stdout.Truncated() && stdoutCapture.err == nil && stdoutCloseErr == nil {
-			result.StdoutCapturePath = stdoutPath
-		}
-		if stderr.Truncated() && stderrCapture.err == nil && stderrCloseErr == nil {
-			result.StderrCapturePath = stderrPath
-		}
-		if result.StdoutCapturePath == "" {
-			_ = os.Remove(stdoutPath)
-		}
-		if result.StderrCapturePath == "" {
-			_ = os.Remove(stderrPath)
-		}
-		if result.StdoutCapturePath == "" && result.StderrCapturePath == "" {
-			_ = os.Remove(captureDir)
-		}
+	keepStdout := stdout.Truncated() && stdoutCapture.err == nil
+	keepStderr := stderr.Truncated() && stderrCapture.err == nil
+	if keepStdout {
+		result.StdoutCapturePath = stdoutPath
 	} else {
-		_ = os.RemoveAll(captureDir)
+		_ = os.Remove(stdoutPath)
+	}
+	if keepStderr {
+		result.StderrCapturePath = stderrPath
+	} else {
+		_ = os.Remove(stderrPath)
+	}
+	if !keepStdout && !keepStderr {
+		_ = os.Remove(captureDir)
 	}
 	if err != nil {
 		var exitErr *exec.ExitError
@@ -157,11 +152,7 @@ func runBash(parent context.Context, req bashRequest) string {
 			}
 		}
 	}
-	b, marshalErr := json.Marshal(result)
-	if marshalErr != nil {
-		return toolError("encode bash result", marshalErr)
-	}
-	return string(b)
+	return marshalToolResult(result)
 }
 
 type boundedCapture struct {
@@ -187,11 +178,14 @@ func (capture *boundedCapture) Write(p []byte) (int, error) {
 		written, err := capture.file.Write(p)
 		capture.written += int64(written)
 		capture.err = err
-		if written < len(p) && err == nil {
-			capture.err = io.ErrShortWrite
-		}
 	}
 	return length, nil
+}
+
+func (capture *boundedCapture) close() {
+	if err := capture.file.Close(); capture.err == nil {
+		capture.err = err
+	}
 }
 
 type cappedBuffer struct {
@@ -207,9 +201,6 @@ func (b *cappedBuffer) Write(p []byte) (int, error) {
 	defer b.mu.Unlock()
 	original := len(p)
 	b.total += int64(original)
-	if b.max <= 0 {
-		return original, nil
-	}
 	headLimit := b.max / 2
 	if len(b.head) < headLimit {
 		kept := min(len(p), headLimit-len(b.head))
@@ -217,7 +208,7 @@ func (b *cappedBuffer) Write(p []byte) (int, error) {
 		p = p[kept:]
 	}
 	tailLimit := b.max - headLimit
-	if len(p) == 0 || tailLimit == 0 {
+	if len(p) == 0 || tailLimit <= 0 {
 		return original, nil
 	}
 	if len(p) >= tailLimit {

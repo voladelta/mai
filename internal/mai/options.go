@@ -74,7 +74,10 @@ func parseOptions(args []string) (options, error) {
 	if out.version {
 		return out, nil
 	}
-	if err := out.normalizeAndValidate(len(args)); err != nil {
+	if err := out.normalizeSelections(); err != nil {
+		return out, err
+	}
+	if err := out.validateMode(len(args)); err != nil {
 		return out, err
 	}
 	return out, nil
@@ -166,13 +169,6 @@ func (out *options) setOption(kind optionKind, value string) error {
 		out.subagentTimeout = timeout
 	}
 	return nil
-}
-
-func (out *options) normalizeAndValidate(argCount int) error {
-	if err := out.normalizeSelections(); err != nil {
-		return err
-	}
-	return out.validateMode(argCount)
 }
 
 func (out *options) normalizeSelections() error {

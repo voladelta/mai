@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -54,11 +55,8 @@ Documentation and support: https://github.com/voladelta/mai
 func Main(args []string, stdout, stderr io.Writer) int {
 	opts, err := parseOptions(args)
 	if err != nil {
-		for _, arg := range args {
-			if arg == "--jsonl" {
-				_ = writeJSONLEvent(stdout, map[string]any{"type": "error", "message": err.Error()})
-				break
-			}
+		if slices.Contains(args, "--jsonl") {
+			_ = writeJSONLEvent(stdout, map[string]any{"type": "error", "message": err.Error()})
 		}
 		fmt.Fprintf(stderr, "mai: %v\nRun 'mai --help' for usage.\n", err)
 		return 2
@@ -68,21 +66,11 @@ func Main(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	if opts.help {
-		return showHelp(stdout, stderr)
+		fmt.Fprint(stdout, fullHelp)
+		return 0
 	}
 	if len(args) == 0 {
-		return showUsage(stdout, stderr)
-	}
-	return runTask(opts, stdout, stderr)
-}
-
-func showHelp(stdout, _ io.Writer) int {
-	fmt.Fprint(stdout, fullHelp)
-	return 0
-}
-
-func showUsage(stdout, _ io.Writer) int {
-	fmt.Fprint(stdout, `mai - a small coding agent
+		fmt.Fprint(stdout, `mai - a small coding agent
 
 Usage:
   mai "prompt" [options]
@@ -93,7 +81,9 @@ Example:
 Built-in default: luna/medium.
 Run 'mai --help' for more information.
 `)
-	return 0
+		return 0
+	}
+	return runTask(opts, stdout, stderr)
 }
 
 func runTask(opts options, stdout, stderr io.Writer) int {
@@ -229,10 +219,11 @@ func startSession(cfg taskConfig, opts options) (*activeTask, error) {
 		return &activeTask{session: sess, path: sessionPath(paths, sess.ID), makeCurrent: &paths, lock: lock}, nil
 	}
 
-	root, err := currentRepoRoot()
+	cwd, err := currentDir()
 	if err != nil {
 		return nil, err
 	}
+	root := findRepoRoot(cwd)
 	paths := projectSessionPaths(root)
 	id, err := loadCurrentSessionID(paths)
 	if err != nil {
@@ -314,16 +305,9 @@ func appendUserPrompt(sess *session, prompt string) error {
 }
 
 func createSession(cfg taskConfig) (*session, error) {
-	if cfg.Model == "" {
-		cfg.Model = defaultModel
-	}
-	cwd, err := os.Getwd()
+	cwd, err := currentDir()
 	if err != nil {
-		return nil, fmt.Errorf("get current directory: %w", err)
-	}
-	cwd, err = canonicalPath(cwd)
-	if err != nil {
-		return nil, fmt.Errorf("resolve current directory: %w", err)
+		return nil, err
 	}
 	root := findRepoRoot(cwd)
 	id, err := newSessionID()
@@ -336,7 +320,7 @@ func createSession(cfg taskConfig) (*session, error) {
 	}, nil
 }
 
-func currentRepoRoot() (string, error) {
+func currentDir() (string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "", fmt.Errorf("get current directory: %w", err)
@@ -345,7 +329,7 @@ func currentRepoRoot() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve current directory: %w", err)
 	}
-	return findRepoRoot(cwd), nil
+	return cwd, nil
 }
 
 func findRepoRoot(cwd string) string {

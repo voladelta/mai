@@ -126,7 +126,7 @@ func newCodexClient(stdout io.Writer, timeout time.Duration) *codexClient {
 
 func (c *codexClient) stream(ctx context.Context, sess *session, instructions string) (streamResult, error) {
 	return c.withCredentials(func(creds credentials) (streamResult, error) {
-		return c.streamWithCredentials(ctx, sess, instructions, creds)
+		return c.requestWithCredentials(ctx, sess, instructions, creds, false)
 	})
 }
 
@@ -184,12 +184,8 @@ func (c *codexClient) withCredentials(request func(credentials) (streamResult, e
 	return request(second)
 }
 
-func (c *codexClient) streamWithCredentials(ctx context.Context, sess *session, instructions string, creds credentials) (streamResult, error) {
-	return c.requestWithCredentials(ctx, sess, instructions, creds, false)
-}
-
 func (c *codexClient) requestWithCredentials(ctx context.Context, sess *session, instructions string, creds credentials, compaction bool) (streamResult, error) {
-	for attempt := 0; attempt < maxRequestAttempts; attempt++ {
+	for attempt := 0; ; attempt++ {
 		result, err := c.requestOnce(ctx, sess, instructions, creds, compaction)
 		if err == nil || result.wrote || attempt == maxRequestAttempts-1 || !retryableRequestError(err) {
 			return result, err
@@ -210,7 +206,6 @@ func (c *codexClient) requestWithCredentials(ctx context.Context, sess *session,
 		case <-timer.C:
 		}
 	}
-	return streamResult{}, errors.New("Codex request retry limit reached")
 }
 
 func retryableRequestError(err error) bool {
@@ -327,10 +322,7 @@ func parseRetryAfter(value string) (time.Duration, bool) {
 }
 
 func (c *codexClient) compactWithCredentials(ctx context.Context, sess *session, instructions string, creds credentials) (streamResult, error) {
-	trigger, err := json.Marshal(map[string]string{"type": "compaction_trigger"})
-	if err != nil {
-		return streamResult{}, err
-	}
+	trigger := json.RawMessage(`{"type":"compaction_trigger"}`)
 	compactSession := *sess
 	compactSession.History = append(append([]json.RawMessage(nil), sess.History...), trigger)
 	quietClient := *c
@@ -416,7 +408,7 @@ func (collector *sseCollector) writeDelta(delta string) error {
 
 func (collector *sseCollector) collectItem(index int, item json.RawMessage) {
 	if len(item) > 0 {
-		collector.items[index] = append(json.RawMessage(nil), item...)
+		collector.items[index] = item
 	}
 }
 
