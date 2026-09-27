@@ -109,6 +109,36 @@ assert "old output" in found["matches"][0]["text"]`)
 	}
 }
 
+func TestCompactionKeepsUnsavedTranscriptInMemory(t *testing.T) {
+	writeTestCodexAuth(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		writeSSEItem(t, w, `{"type":"compaction","encrypted_content":"summary"}`, 250_000)
+	}))
+	defer server.Close()
+
+	sess := &session{
+		Model: "luna", Effort: "m", ContextTokens: 244_800,
+		Transcript: []transcriptEntry{{Kind: "user", Text: "earlier fact"}},
+		History: []json.RawMessage{
+			json.RawMessage(`{"role":"user","content":"recent fact"}`),
+			json.RawMessage(`{"type":"reasoning","encrypted_content":"private"}`),
+		},
+	}
+	a := newAgent(&bytes.Buffer{}, &bytes.Buffer{}, "", time.Second, false, nil)
+	a.client.endpoint = server.URL
+	if err := a.compactIfNeeded(context.Background(), sess, "instructions"); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(sess.Transcript) != 2 || sess.Transcript[0].Text != "earlier fact" || sess.Transcript[1].Text != "recent fact" {
+		t.Fatalf("in-memory transcript = %#v", sess.Transcript)
+	}
+	if sess.TranscriptEnd != 0 || sess.TranscriptSkip != len(sess.History) {
+		t.Fatalf("in-memory transcript position: end=%d, skip=%d", sess.TranscriptEnd, sess.TranscriptSkip)
+	}
+}
+
 func TestRunTurnDoesNotCompactAfterLargeImageOutput(t *testing.T) {
 	writeTestCodexAuth(t)
 

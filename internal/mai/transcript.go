@@ -3,6 +3,7 @@ package mai
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -80,6 +81,48 @@ type transcriptEntry struct {
 	Text   string `json:"text"`
 	Name   string `json:"name,omitempty"`
 	CallID string `json:"call_id,omitempty"`
+}
+
+func visibleHistoryEntries(history []json.RawMessage) ([]transcriptEntry, error) {
+	var entries []transcriptEntry
+	for _, raw := range history {
+		entry, visible, err := visibleTranscriptEntry(raw)
+		if err != nil {
+			return nil, err
+		}
+		if visible {
+			entries = append(entries, entry)
+		}
+	}
+	return entries, nil
+}
+
+func archiveTranscript(sessionPath string, current, next *session) error {
+	live, err := visibleHistoryEntries(current.History[current.TranscriptSkip:])
+	if err != nil {
+		return fmt.Errorf("archive history for transcript: %w", err)
+	}
+
+	archived := make([]transcriptEntry, 0, len(current.Transcript)+len(live))
+	if sessionPath == "" || current.TranscriptEnd == 0 {
+		archived = append(archived, current.Transcript...)
+	}
+	archived = append(archived, live...)
+
+	if sessionPath == "" {
+		next.Transcript = archived
+	} else if len(archived) > 0 || current.TranscriptEnd > 0 {
+		path := transcriptPath(sessionPath)
+		end, err := appendTranscript(path, current.TranscriptEnd, archived)
+		if err != nil {
+			return fmt.Errorf("archive conversation transcript: %w", err)
+		}
+		next.Transcript = nil
+		next.TranscriptEnd = end
+		next.transcriptPath = path
+	}
+	next.TranscriptSkip = len(next.History)
+	return nil
 }
 
 func visibleTranscriptEntry(raw json.RawMessage) (transcriptEntry, bool, error) {
@@ -217,14 +260,12 @@ func searchTranscript(sess *session, arguments json.RawMessage, activeCallID str
 			return json.RawMessage(`{"error":"cannot close saved transcript"}`)
 		}
 	}
-	for _, raw := range sess.History[sess.TranscriptSkip:] {
-		entry, visible, err := visibleTranscriptEntry(raw)
-		if err != nil {
-			return json.RawMessage(`{"error":"history contains an invalid item"}`)
-		}
-		if visible {
-			add(entry)
-		}
+	live, err := visibleHistoryEntries(sess.History[sess.TranscriptSkip:])
+	if err != nil {
+		return json.RawMessage(`{"error":"history contains an invalid item"}`)
+	}
+	for _, entry := range live {
+		add(entry)
 	}
 	encoded, err := json.Marshal(result)
 	if err != nil {
