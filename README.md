@@ -261,6 +261,10 @@ can search its current history; content removed by an earlier compaction cannot
 be recovered. Search results are copies, so editing one does not change Mai's
 history.
 
+For saved tasks, compacted visible text is stored in a `.transcript.jsonl` file
+beside the session JSON. Older saved tasks migrate their inline transcript on
+the next compaction. Keep both files when moving or backing up a saved task.
+
 `await mai.apply_patch(patch)` applies a repository patch, and
 `await mai.spawn_subagent(name, prompt)` returns a completed child result.
 These calls use the same validation, approvals, and repository boundaries as

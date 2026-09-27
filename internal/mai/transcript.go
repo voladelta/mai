@@ -2,9 +2,76 @@ package mai
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
+	"os"
 	"strings"
+	"syscall"
 	"unicode/utf8"
 )
+
+func transcriptPath(sessionPath string) string {
+	return strings.TrimSuffix(sessionPath, ".json") + ".transcript.jsonl"
+}
+
+func openTranscript(path string, flags int) (*os.File, error) {
+	file, err := os.OpenFile(path, flags|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		file.Close()
+		if err != nil {
+			return nil, err
+		}
+		return nil, errors.New("transcript is not a regular file")
+	}
+	if flags&os.O_RDWR != 0 {
+		if err := file.Chmod(0o600); err != nil {
+			file.Close()
+			return nil, err
+		}
+	}
+	return file, nil
+}
+
+func appendTranscript(path string, committedEnd int64, entries []transcriptEntry) (int64, error) {
+	file, err := openTranscript(path, os.O_CREATE|os.O_RDWR)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		return 0, err
+	}
+	if info.Size() < committedEnd {
+		return 0, errors.New("transcript is shorter than its committed position")
+	}
+	// A prior append may have reached disk before the session checkpoint.
+	if err := file.Truncate(committedEnd); err != nil {
+		return 0, err
+	}
+	if _, err := file.Seek(committedEnd, io.SeekStart); err != nil {
+		return 0, err
+	}
+	encoder := json.NewEncoder(file)
+	for _, entry := range entries {
+		if err := encoder.Encode(entry); err != nil {
+			return 0, err
+		}
+	}
+	if err := file.Sync(); err != nil {
+		return 0, err
+	}
+	end, err := file.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return 0, err
+	}
+	return end, nil
+}
 
 // A transcript entry contains only text that was visible to the model.
 // Reasoning, compaction, and configuration items never enter this archive.
@@ -127,6 +194,28 @@ func searchTranscript(sess *session, arguments json.RawMessage, activeCallID str
 	}
 	for _, entry := range sess.Transcript {
 		add(entry)
+	}
+	if sess.TranscriptEnd > 0 {
+		file, err := openTranscript(sess.transcriptPath, os.O_RDONLY)
+		if err != nil {
+			return json.RawMessage(`{"error":"cannot read saved transcript"}`)
+		}
+		decoder := json.NewDecoder(io.LimitReader(file, sess.TranscriptEnd))
+		for {
+			var entry transcriptEntry
+			err := decoder.Decode(&entry)
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if err != nil {
+				file.Close()
+				return json.RawMessage(`{"error":"saved transcript contains an invalid entry"}`)
+			}
+			add(entry)
+		}
+		if err := file.Close(); err != nil {
+			return json.RawMessage(`{"error":"cannot close saved transcript"}`)
+		}
 	}
 	for _, raw := range sess.History[sess.TranscriptSkip:] {
 		entry, visible, err := visibleTranscriptEntry(raw)

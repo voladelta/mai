@@ -230,15 +230,29 @@ func (a *agent) compactIfNeeded(ctx context.Context, sess *session, instructions
 	}
 	next := *sess
 	next.History = history
-	next.Transcript = append([]transcriptEntry(nil), sess.Transcript...)
+	archived := make([]transcriptEntry, 0, len(sess.Transcript)+len(sess.History)-sess.TranscriptSkip)
+	if a.sessionPath == "" || sess.TranscriptEnd == 0 {
+		archived = append(archived, sess.Transcript...)
+	}
 	for _, item := range sess.History[sess.TranscriptSkip:] {
 		entry, visible, err := visibleTranscriptEntry(item)
 		if err != nil {
 			return fmt.Errorf("archive history for transcript: %w", err)
 		}
 		if visible {
-			next.Transcript = append(next.Transcript, entry)
+			archived = append(archived, entry)
 		}
+	}
+	if a.sessionPath == "" {
+		next.Transcript = archived
+	} else if len(archived) > 0 || sess.TranscriptEnd > 0 {
+		end, err := appendTranscript(transcriptPath(a.sessionPath), sess.TranscriptEnd, archived)
+		if err != nil {
+			return fmt.Errorf("archive conversation transcript: %w", err)
+		}
+		next.Transcript = nil
+		next.TranscriptEnd = end
+		next.transcriptPath = transcriptPath(a.sessionPath)
 	}
 	next.TranscriptSkip = len(history)
 	// Compaction replaces the prompt prefix and removes configuration updates.

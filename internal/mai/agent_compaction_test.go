@@ -37,6 +37,7 @@ func TestRunTurnCompactsBeforeSamplingAndSavesReplacement(t *testing.T) {
 		Version: stateVersion, ID: "01234567-89ab-cdef-0123-456789abcdef",
 		CWD: t.TempDir(), RepoRoot: t.TempDir(), Model: "luna", Effort: "m",
 		ContextTokens: 244_800,
+		Transcript:    []transcriptEntry{{Kind: "user", Text: "legacy fact"}},
 		History: []json.RawMessage{
 			json.RawMessage(`{"role":"user","content":[{"type":"input_text","text":"keep me"}]}`),
 			json.RawMessage(`{"type":"function_call","call_id":"old","name":"bash","arguments":"{}"}`),
@@ -68,9 +69,10 @@ func TestRunTurnCompactsBeforeSamplingAndSavesReplacement(t *testing.T) {
 	if len(saved.History) != 3 || historyItemType(saved.History[1]) != "compaction" || saved.ContextTokens != 12_345 {
 		t.Fatalf("saved session = %#v", saved)
 	}
-	if len(saved.Transcript) != 3 || saved.TranscriptSkip != 2 {
-		t.Fatalf("saved transcript = %#v, skip=%d", saved.Transcript, saved.TranscriptSkip)
+	if len(saved.Transcript) != 0 || saved.TranscriptEnd == 0 || saved.TranscriptSkip != 2 {
+		t.Fatalf("saved transcript = %#v, end=%d, skip=%d", saved.Transcript, saved.TranscriptEnd, saved.TranscriptSkip)
 	}
+	firstEnd := saved.TranscriptEnd
 	saved.ContextTokens = 244_800
 	if err := a.compactIfNeeded(context.Background(), saved, "instructions"); err != nil {
 		t.Fatal(err)
@@ -82,9 +84,17 @@ func TestRunTurnCompactsBeforeSamplingAndSavesReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(saved.Transcript) != 4 || saved.TranscriptSkip != 2 {
-		t.Fatalf("transcript after second compaction = %#v, skip=%d", saved.Transcript, saved.TranscriptSkip)
+	if len(saved.Transcript) != 0 || saved.TranscriptEnd <= firstEnd || saved.TranscriptSkip != 2 {
+		t.Fatalf("transcript after second compaction = %#v, end=%d, skip=%d", saved.Transcript, saved.TranscriptEnd, saved.TranscriptSkip)
 	}
+	stateBytes, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(stateBytes, []byte("old output")) || bytes.Contains(stateBytes, []byte("legacy fact")) {
+		t.Fatal("archived transcript remained in the session JSON")
+	}
+
 	python, _ := pythonTestAgent(t)
 	got := pythonCell(t, python, saved, `found = await mai.history("old output")
 assert found["total"] == 1
@@ -92,6 +102,10 @@ assert found["matches"][0]["kind"] == "tool_result"
 assert "old output" in found["matches"][0]["text"]`)
 	if !got.OK {
 		t.Fatalf("history was not searchable after two compactions and resume: %#v", got)
+	}
+	legacy := searchTranscript(saved, json.RawMessage(`{"query":"legacy fact","limit":20}`), "")
+	if !strings.Contains(string(legacy), `"total":1`) {
+		t.Fatalf("legacy transcript was not migrated: %s", legacy)
 	}
 }
 

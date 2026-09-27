@@ -3,6 +3,8 @@ package mai
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -75,6 +77,63 @@ func TestTranscriptSearchBoundsLargeResult(t *testing.T) {
 	result := searchTranscript(sess, json.RawMessage(`{"query":"target","limit":20}`), "")
 	if len(result) > 10_000 || !strings.Contains(string(result), "target") {
 		t.Fatalf("search result size=%d, result=%s", len(result), result)
+	}
+}
+
+func TestTranscriptIgnoresUncommittedTailAndTruncatesBeforeAppend(t *testing.T) {
+	path := transcriptPath(filepath.Join(t.TempDir(), "session.json"))
+	end, err := appendTranscript(path, 0, []transcriptEntry{{Kind: "user", Text: "committed"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := appendTranscript(path, end, []transcriptEntry{{Kind: "user", Text: "uncommitted"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	sess := &session{TranscriptEnd: end, transcriptPath: path}
+	result := searchTranscript(sess, json.RawMessage(`{"query":"uncommitted","limit":20}`), "")
+	if !strings.Contains(string(result), `"total":0`) {
+		t.Fatalf("uncommitted tail appeared in search: %s", result)
+	}
+
+	nextEnd, err := appendTranscript(path, end, []transcriptEntry{{Kind: "user", Text: "replacement"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess.TranscriptEnd = nextEnd
+	result = searchTranscript(sess, json.RawMessage(`{"query":"uncommitted","limit":20}`), "")
+	if !strings.Contains(string(result), `"total":0`) {
+		t.Fatalf("uncommitted tail survived retry: %s", result)
+	}
+	result = searchTranscript(sess, json.RawMessage(`{"query":"replacement","limit":20}`), "")
+	if !strings.Contains(string(result), `"total":1`) {
+		t.Fatalf("replacement was not searchable: %s", result)
+	}
+}
+
+func TestLoadSessionRejectsMissingCommittedTranscript(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "session.json")
+	sess := session{
+		Version: stateVersion, ID: "01234567-89ab-cdef-0123-456789abcdef",
+		CWD: root, RepoRoot: root, Model: "luna", Effort: "m",
+		TranscriptEnd: 1,
+	}
+	if err := saveJSON(path, sess); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadSession(path); err == nil {
+		t.Fatal("missing committed transcript was accepted")
+	}
+	if err := os.WriteFile(transcriptPath(path), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sess.TranscriptEnd = 2
+	if err := saveJSON(path, sess); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadSession(path); err == nil {
+		t.Fatal("short committed transcript was accepted")
 	}
 }
 

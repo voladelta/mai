@@ -33,7 +33,9 @@ type session struct {
 	History          []json.RawMessage `json:"history"`
 	Transcript       []transcriptEntry `json:"transcript,omitempty"`
 	TranscriptSkip   int               `json:"transcript_skip,omitempty"`
+	TranscriptEnd    int64             `json:"transcript_end,omitempty"`
 	PythonActivities []pythonActivity  `json:"python_activities,omitempty"`
+	transcriptPath   string
 }
 
 type sessionPaths struct {
@@ -156,8 +158,26 @@ func loadSession(path string) (*session, error) {
 	if out.Version != stateVersion || !validSessionID(out.ID) || out.CWD == "" || out.RepoRoot == "" || out.ContextTokens < 0 {
 		return nil, fmt.Errorf("saved session is incomplete or unsupported")
 	}
-	if out.TranscriptSkip < 0 || out.TranscriptSkip > len(out.History) {
+	if out.TranscriptSkip < 0 || out.TranscriptSkip > len(out.History) || out.TranscriptEnd < 0 {
 		return nil, errors.New("saved session has invalid transcript position")
+	}
+	out.transcriptPath = transcriptPath(path)
+	if out.TranscriptEnd > 0 {
+		file, err := openTranscript(out.transcriptPath, os.O_RDONLY)
+		if err != nil {
+			return nil, fmt.Errorf("open saved transcript: %w", err)
+		}
+		info, statErr := file.Stat()
+		closeErr := file.Close()
+		if statErr != nil {
+			return nil, fmt.Errorf("inspect saved transcript: %w", statErr)
+		}
+		if closeErr != nil {
+			return nil, fmt.Errorf("close saved transcript: %w", closeErr)
+		}
+		if info.Size() < out.TranscriptEnd {
+			return nil, errors.New("saved transcript is shorter than its committed position")
+		}
 	}
 	if !supportedModel(out.Model) && out.Model != "astra" && out.Model != "terra" {
 		return nil, fmt.Errorf("saved session has invalid model %q", out.Model)
@@ -208,7 +228,7 @@ func saveJSON(path string, value any) error {
 	if err := atomicWriteFile(path, b, 0o600); err != nil {
 		return fmt.Errorf("save state: %w", err)
 	}
-	return os.Chmod(path, 0o600)
+	return nil
 }
 
 func repairInterruptedToolCalls(sess *session) error {
