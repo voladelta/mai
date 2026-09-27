@@ -19,6 +19,10 @@ all eligible skill names and descriptions, then loads a complete `SKILL.md` only
 when needed. Each skill description must be 1,024 characters or fewer.
 Set `policy.allow_implicit_invocation` to `false` in `agents/openai.yaml` to hide
 a skill from automatic selection; an explicit `$skill-name` still loads it.
+Use `-s` or `--skip-skills` to skip skill discovery for one run, including
+resolution of explicit `$skill-name` mentions. The flag also works with
+`--last` and must be passed again on each resumed run. The `read_skill` tool
+remains available when you know a skill's directory id.
 Images use typed image output; other binary files are rejected.
 
 Custom agents are read from `$CODEX_HOME/agents`, or `~/.codex/agents` when

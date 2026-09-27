@@ -41,6 +41,16 @@ func TestParseOptionsInterspersed(t *testing.T) {
 			args: []string{"map", "the", "parser", "--subagent", "repo_scout"},
 			want: options{prompt: "map the parser", subagent: "repo_scout", noInput: true, timeout: defaultHTTPTimeout},
 		},
+		{
+			name: "short skip skills flag with resume",
+			args: []string{"continue", "--last", "-s"},
+			want: options{prompt: "continue", last: true, skipSkills: true, timeout: defaultHTTPTimeout},
+		},
+		{
+			name: "long skip skills flag",
+			args: []string{"--skip-skills", "inspect", "the", "repo"},
+			want: options{prompt: "inspect the repo", skipSkills: true, timeout: defaultHTTPTimeout},
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got, err := parseOptions(test.args)

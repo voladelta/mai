@@ -26,6 +26,7 @@ type agent struct {
 	approve       approvalFunc
 	skillsRoot    string
 	skillsError   error
+	skipSkills    bool
 	customAgent   *customAgent
 	customAgents  map[string]customAgent
 	agentWarnings []string
@@ -126,7 +127,7 @@ func (a *agent) loadSubagentInstructions() string {
 }
 
 func (a *agent) loadSkillInstructions(userPrompt string) string {
-	if a.customAgent != nil {
+	if a.customAgent != nil || a.skipSkills {
 		return ""
 	}
 	if a.skillsError != nil {

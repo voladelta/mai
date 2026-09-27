@@ -18,6 +18,7 @@ type options struct {
 	help           bool
 	version        bool
 	noInput        bool
+	skipSkills     bool
 	jsonl          bool
 	subagent       string
 	timeout        time.Duration
@@ -31,6 +32,7 @@ const (
 	optionLast
 	optionPersist
 	optionNoInput
+	optionSkipSkills
 	optionJSONL
 	optionSubagent
 	optionEffort
@@ -44,6 +46,7 @@ var optionKinds = map[string]optionKind{
 	"--last":     optionLast,
 	"--persist":  optionPersist,
 	"--no-input": optionNoInput,
+	"-s":         optionSkipSkills, "--skip-skills": optionSkipSkills,
 	"--jsonl":    optionJSONL,
 	"--subagent": optionSubagent,
 	"-e":         optionEffort, "--effort": optionEffort,
@@ -127,6 +130,8 @@ func (out *options) setOption(kind optionKind, value string) error {
 		out.persist = true
 	case optionNoInput:
 		out.noInput = true
+	case optionSkipSkills:
+		out.skipSkills = true
 	case optionJSONL:
 		out.jsonl = true
 	case optionSubagent:

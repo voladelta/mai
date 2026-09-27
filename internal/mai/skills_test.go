@@ -44,6 +44,26 @@ func TestBuildSkillContextListsImplicitSkillsAndLoadsExplicitOptOut(t *testing.T
 	}
 }
 
+func TestSkipSkillsBypassesDiscoveryAndExplicitLoading(t *testing.T) {
+	root := testSkillRoot(t)
+	writeTestSkill(t, root, "demo", "demo", "A demonstration skill.")
+	mustWrite(t, filepath.Join(root, "broken", "SKILL.md"), "invalid front matter")
+
+	var warnings strings.Builder
+	a := &agent{
+		stderr:     &warnings,
+		skillsRoot: root,
+		skipSkills: true,
+	}
+
+	if instructions := a.loadSkillInstructions("Use $demo for this request"); instructions != "" {
+		t.Fatalf("skill instructions = %q, want none", instructions)
+	}
+	if warnings.Len() != 0 {
+		t.Fatalf("skill discovery produced warnings: %s", warnings.String())
+	}
+}
+
 func TestImplicitPolicyDefaultsTrueAndParsesFalse(t *testing.T) {
 	for _, test := range []struct {
 		name    string

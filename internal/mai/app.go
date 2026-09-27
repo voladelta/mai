@@ -39,6 +39,7 @@ Options:
   -m, --model MODEL      Use sol or luna for this task.
   --timeout DURATION     Set the request timeout (default: 10m).
   --no-input             Do not ask for interactive approval.
+  -s, --skip-skills      Skip skill discovery for this run.
   --jsonl                 Write task, model, and tool events as JSON Lines.
   --subagent NAME        Run with an installed custom agent.
 
@@ -143,6 +144,7 @@ func runTask(opts options, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	runner := newAgent(stdout, stderr, active.path, opts.timeout, !opts.noInput && isTerminal(os.Stdin), selectedAgent)
+	runner.skipSkills = opts.skipSkills
 	if opts.jsonl {
 		runner.events = stdout
 		runner.client.stdout = jsonlTextWriter{output: stdout}
