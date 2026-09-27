@@ -2,8 +2,11 @@ package mai
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +14,17 @@ import (
 	"strings"
 	"testing"
 )
+
+type failToolCompletedWriter struct {
+	events bytes.Buffer
+}
+
+func (w *failToolCompletedWriter) Write(p []byte) (int, error) {
+	if bytes.Contains(p, []byte(`"type":"tool.completed"`)) {
+		return 0, errors.New("tool completion event failed")
+	}
+	return w.events.Write(p)
+}
 
 func TestMainWithoutPromptShowsBuiltInDefault(t *testing.T) {
 	var stdout, stderr bytes.Buffer
@@ -175,6 +189,69 @@ func TestMainJSONLReportsToolCalls(t *testing.T) {
 	}
 	if requests != 2 || !started || !completed {
 		t.Fatalf("requests=%d started=%t completed=%t events=%s", requests, started, completed, stdout.String())
+	}
+}
+
+func TestToolCompletedEventFailureKeepsSavedResult(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "session.json")
+	call := functionCall{
+		Name:      "bash",
+		CallID:    "call-1",
+		Arguments: `{"command":"printf complete > effect.txt"}`,
+	}
+	sess := &session{
+		Version:  stateVersion,
+		ID:       "01234567-89ab-cdef-0123-456789abcdef",
+		CWD:      root,
+		RepoRoot: root,
+		Model:    "luna",
+		Effort:   "m",
+		History: []json.RawMessage{
+			json.RawMessage(`{"type":"function_call","call_id":"call-1","name":"bash","arguments":"{\"command\":\"printf complete > effect.txt\"}"}`),
+		},
+	}
+	if err := saveJSON(path, sess); err != nil {
+		t.Fatal(err)
+	}
+
+	events := &failToolCompletedWriter{}
+	a := &agent{stderr: io.Discard, sessionPath: path, events: events}
+	err := a.executeCalls(context.Background(), sess, []functionCall{call})
+	if err == nil || !strings.Contains(err.Error(), "tool completion event failed") {
+		t.Fatalf("executeCalls error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "effect.txt")); err != nil {
+		t.Fatalf("tool effect was not completed: %v", err)
+	}
+	if !strings.Contains(events.events.String(), `"type":"tool.started"`) || strings.Contains(events.events.String(), `"type":"tool.completed"`) {
+		t.Fatalf("unexpected events: %s", events.events.String())
+	}
+
+	saved, err := loadSession(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repairInterruptedToolCalls(saved); err != nil {
+		t.Fatal(err)
+	}
+	if len(saved.History) != 2 {
+		t.Fatalf("history after resume has %d items, want call and saved result: %#v", len(saved.History), saved.History)
+	}
+	var output struct {
+		Type   string `json:"type"`
+		CallID string `json:"call_id"`
+		Output string `json:"output"`
+	}
+	if err := json.Unmarshal(saved.History[1], &output); err != nil {
+		t.Fatal(err)
+	}
+	var result bashResult
+	if err := json.Unmarshal([]byte(output.Output), &result); err != nil {
+		t.Fatal(err)
+	}
+	if output.Type != "function_call_output" || output.CallID != call.CallID || !result.OK || strings.Contains(output.Output, `"outcome":"unknown"`) {
+		t.Fatalf("saved tool output after resume = %#v", output)
 	}
 }
 

@@ -285,18 +285,8 @@ func (a *agent) executeCalls(ctx context.Context, sess *session, calls []functio
 		}
 		toolStarted := time.Now()
 		output := a.executeTool(ctx, sess, call)
-		if a.events != nil {
-			event := map[string]any{"type": "tool.completed", "name": call.Name, "call_id": call.CallID, "duration_ms": time.Since(toolStarted).Milliseconds()}
-			if len(output) <= 256<<10 {
-				event["output"] = output
-			} else {
-				event["output_bytes"] = len(output)
-				event["output_omitted"] = true
-			}
-			if err := writeJSONLEvent(a.events, event); err != nil {
-				return err
-			}
-		}
+		toolDuration := time.Since(toolStarted).Milliseconds()
+
 		item, err := json.Marshal(struct {
 			Type   string          `json:"type"`
 			CallID string          `json:"call_id"`
@@ -318,6 +308,18 @@ func (a *agent) executeCalls(ctx context.Context, sess *session, calls []functio
 		if a.sessionPath != "" {
 			if err := saveJSON(a.sessionPath, sess); err != nil {
 				return fmt.Errorf("save tool output: %w", err)
+			}
+		}
+		if a.events != nil {
+			event := map[string]any{"type": "tool.completed", "name": call.Name, "call_id": call.CallID, "duration_ms": toolDuration}
+			if len(output) <= 256<<10 {
+				event["output"] = output
+			} else {
+				event["output_bytes"] = len(output)
+				event["output_omitted"] = true
+			}
+			if err := writeJSONLEvent(a.events, event); err != nil {
+				return err
 			}
 		}
 	}
