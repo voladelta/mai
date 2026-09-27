@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -169,6 +170,21 @@ func TestRunBashDoesNotExecuteUnclassifiedRMWithoutApproval(t *testing.T) {
 	if _, err := os.Stat(target); err != nil {
 		t.Fatalf("rm command ran without approval: %v", err)
 	}
+}
+
+func TestRunBashRejectsPipedRMWithoutApproval(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(t.TempDir(), "keep.txt")
+	if err := os.WriteFile(target, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	command := "printf '%s\\n' " + strconv.Quote("rm -f "+strconv.Quote(target)) + " | sh"
+	raw := runBash(context.Background(), bashRequest{Command: command, CWD: root, RepoRoot: root})
+	if !strings.Contains(raw, "rm approval required") {
+		t.Fatalf("piped rm was not rejected: %s", raw)
+	}
+	assertContent(t, target, "keep")
 }
 
 func TestRunBashTimesOutProcessGroup(t *testing.T) {

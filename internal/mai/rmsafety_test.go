@@ -97,8 +97,10 @@ func TestDynamicRMTargetNeedsApproval(t *testing.T) {
 
 func TestMentioningRMIsNotACommand(t *testing.T) {
 	root := t.TempDir()
-	if required, reason := requiresRMApproval(`printf '%s\n' rm`, root, root); required {
-		t.Fatalf("unexpected approval: %s", reason)
+	for _, command := range []string{`printf '%s\n' rm`, `printf '%s\n' rm || true`} {
+		if required, reason := requiresRMApproval(command, root, root); required {
+			t.Errorf("%q unexpectedly needs approval: %s", command, reason)
+		}
 	}
 }
 

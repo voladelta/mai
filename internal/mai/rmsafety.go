@@ -91,8 +91,16 @@ func findRMInvocations(tokens []shellToken) ([]rmInvocation, bool) {
 			if changesDirectory(base) {
 				directoryMayHaveChanged = true
 			}
-			if base != "printf" && containsRMWord(shellCommandArgs(tokens[i+1:])) {
-				return invocations, true
+
+			args := shellCommandArgs(tokens[i+1:])
+			if containsRMWord(args) {
+				next := i + 1 + len(args)
+				// Printed rm text may become a command when piped downstream.
+				piped := next < len(tokens) && tokens[next].text == "|" &&
+					(next+1 == len(tokens) || tokens[next+1].text != "|")
+				if base != "printf" || piped {
+					return invocations, true
+				}
 			}
 			commandStart = false
 			continue
