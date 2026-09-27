@@ -26,6 +26,7 @@ directory and keeps Mai's output, the final workspace, a diff, and the grader
 result for each case. It reports model requests, tool calls, nonzero tool results,
 and wall time so a passed task is not the only signal. These three cases are a
 smoke test, not a statistical benchmark.
+With no case names, the runner discovers every directory under `evals/cases/`.
 Nonzero tool results include intentionally failing tests during a fix, so inspect
 the events before treating one as harness friction.
 `model.completed.total_tokens` is context size, so the runner does not mistake it
