@@ -81,6 +81,27 @@ func TestPythonBoundsHostCallsPerCell(t *testing.T) {
 	}
 }
 
+func TestPythonHistoryDoesNotConsumeHostCallBudget(t *testing.T) {
+	a, sess := pythonTestAgent(t)
+	sess.History = []json.RawMessage{
+		json.RawMessage(`{"role":"user","content":"quota marker"}`),
+	}
+
+	result := pythonCell(t, a, sess, `for _ in range(64):
+    assert (await mai.bash(':'))['ok']
+assert (await mai.history('quota marker'))['total'] == 1`)
+	if !result.OK || len(result.Activities) != maxPythonCalls {
+		t.Fatalf("history after 64 effectful calls: ok=%t, stderr=%q, activities=%d", result.OK, result.Stderr, len(result.Activities))
+	}
+
+	result = pythonCell(t, a, sess, `assert (await mai.history('quota marker'))['total'] == 1
+for _ in range(64):
+    assert (await mai.bash(':'))['ok']`)
+	if !result.OK || len(result.Activities) != maxPythonCalls {
+		t.Fatalf("history consumed effectful call budget: ok=%t, stderr=%q, activities=%d", result.OK, result.Stderr, len(result.Activities))
+	}
+}
+
 func TestPythonStaleCallbackCannotUseLaterCellAuthority(t *testing.T) {
 	a, sess := pythonTestAgent(t)
 	result := pythonCell(t, a, sess, `import asyncio

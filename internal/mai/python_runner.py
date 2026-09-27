@@ -118,10 +118,10 @@ def main():
         with lock:
             if active is None or closing or cell_context.get() != active:
                 raise RuntimeError("Host calls are only available inside an active cell")
-            if len(pending) >= MAX_PENDING or name != "child_status" and effect_calls >= MAX_CALLS:
+            if len(pending) >= MAX_PENDING or name not in ("child_status", "history") and effect_calls >= MAX_CALLS:
                 raise RuntimeError("Python host call limit reached (8 pending, 64 per cell)")
             call_id += 1
-            if name != "child_status":
+            if name not in ("child_status", "history"):
                 effect_calls += 1
             identifier = call_id
             pending[identifier] = (future, target_loop)
