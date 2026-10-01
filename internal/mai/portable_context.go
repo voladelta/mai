@@ -10,7 +10,7 @@ import (
 	"unicode/utf8"
 )
 
-// Both implementations generate ordinary text. The checkpoint never contains
+// Backends generate ordinary text. The checkpoint never contains
 // provider-specific reasoning or encrypted compaction artifacts.
 type modelBackend interface {
 	stream(context.Context, *session, string) (streamResult, error)
@@ -94,6 +94,27 @@ func portableHistory(ctx context.Context, sess *session, backend modelBackend) (
 			_ = json.Unmarshal(raw, &message)
 			if _, err := portableMessageText(message.Content); err != nil {
 				return nil, nil, err
+			}
+		}
+		if item.Type == "function_call_output" {
+			var output struct {
+				Output json.RawMessage `json:"output"`
+			}
+			if err := json.Unmarshal(raw, &output); err != nil {
+				return nil, nil, err
+			}
+			var parts []struct {
+				Type string `json:"type"`
+			}
+			if len(output.Output) > 0 && output.Output[0] == '[' {
+				if err := json.Unmarshal(output.Output, &parts); err != nil {
+					return nil, nil, err
+				}
+				for _, part := range parts {
+					if part.Type != "input_text" && part.Type != "output_text" {
+						return nil, nil, errors.New("media tool output is unsupported by portable text checkpoints")
+					}
+				}
 			}
 		}
 		if item.Role == "system" || item.Role == "developer" {

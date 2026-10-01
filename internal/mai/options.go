@@ -188,8 +188,11 @@ func (out *options) normalizeSelections() error {
 	if out.modelExplicit {
 		out.model = normalizeModel(out.model)
 		if !supportedModel(out.model) {
-			return fmt.Errorf("invalid model %q (use sol, 6.1-sol or luna)", out.model)
+			return fmt.Errorf("invalid model %q (use sol, 6.1-sol, luna, ds-flash or ds-pro)", out.model)
 		}
+	}
+	if deepseekModel(out.model) && out.effortExplicit && !deepseekEffort(out.effort) {
+		return errors.New("DeepSeek effort must be l, h or max (low, high, max)")
 	}
 	return nil
 }
@@ -244,6 +247,12 @@ const defaultModel = "luna"
 
 func normalizeModel(model string) string {
 	model = strings.ToLower(strings.TrimSpace(model))
+	switch model {
+	case "deepseek-flash":
+		return "ds-flash"
+	case "deepseek-v4-pro":
+		return "ds-pro"
+	}
 	if model == "gpt-6.1-sol" {
 		return "6.1-sol"
 	}
@@ -251,10 +260,24 @@ func normalizeModel(model string) string {
 }
 
 func supportedModel(model string) bool {
-	return model == "sol" || model == "6.1-sol" || model == "luna"
+	return model == "sol" || model == "6.1-sol" || model == "luna" || deepseekModel(model)
+}
+
+func deepseekModel(model string) bool {
+	return model == "ds-flash" || model == "ds-pro"
+}
+
+func deepseekEffort(effort string) bool {
+	return effort == "l" || effort == "h" || effort == "max"
 }
 
 func modelID(model string) string {
+	if model == "ds-flash" {
+		return "deepseek-flash"
+	}
+	if model == "ds-pro" {
+		return "deepseek-v4-pro"
+	}
 	if model == "6.1-sol" {
 		return "gpt-6.1-sol"
 	}

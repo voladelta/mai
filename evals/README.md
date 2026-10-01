@@ -200,6 +200,23 @@ combines coding and summarization behavior. Both portable checkpoints are
 forced; full history fits. Two repetitions support a descriptive comparison,
 not a general model ranking or a native-compaction performance claim.
 
+## DeepSeek Responses conformance
+
+With `DEEPSEEK_API_KEY` already populated:
+
+```sh
+MAI_LIVE_DEEPSEEK_RESPONSES=1 \
+go test -v ./internal/mai -run '^TestLiveDeepSeekResponses$' -count=1 -timeout=10m
+```
+
+This paid API probe runs Flash and Pro at low, high and max effort. Each trial
+executes a harmless Bash printf, saves and reloads the task between responses,
+checks plain reasoning replay, and generates a tool-free checkpoint retaining
+an exact audit code and UNKNOWN outcome. It uses `/responses`, never Chat
+Completions or the Codex backend. This establishes protocol conformance, not a
+coding-performance ranking. Deterministic tests cover malformed/incomplete
+responses, credential isolation, model/effort selection and backend identity.
+
 ## Waiting time
 
 New JSONL traces include `duration_ms` on model, tool, and completed task

@@ -37,7 +37,7 @@ Options:
   --persist              Save this new task in the current project.
   --last                 Resume the current saved task in the current project.
   -e, --effort EFFORT    Use l, m, h, x, or max for this task.
-  -m, --model MODEL      Use sol, 6.1-sol or luna for this task.
+  -m, --model MODEL      Use sol, 6.1-sol, luna, ds-flash or ds-pro.
   --timeout DURATION     Set the per-request first-byte/idle timeout (default: 10m).
   --cell-timeout DURATION      Set the wall-clock limit for each Python cell (default: 10m).
   --subagent-timeout DURATION  Set the wall-clock limit for each subagent run (default: 1h).
@@ -199,6 +199,9 @@ func configForTask(opts options) taskConfig {
 	if opts.modelExplicit {
 		cfg.Model = opts.model
 	}
+	if deepseekModel(cfg.Model) {
+		cfg.Effort = "h"
+	}
 	if opts.effortExplicit {
 		cfg.Effort = opts.effort
 	}
@@ -258,6 +261,9 @@ func startSession(cfg taskConfig, opts options) (*activeTask, error) {
 		sess.Model = defaultModel
 	}
 	if opts.modelExplicit {
+		if deepseekModel(opts.model) && !deepseekModel(sess.Model) && !opts.effortExplicit {
+			sess.Effort = "h"
+		}
 		sess.Model = opts.model
 	}
 	if opts.effortExplicit {
@@ -274,6 +280,10 @@ func startSession(cfg taskConfig, opts options) (*activeTask, error) {
 }
 
 func appendUserPrompt(sess *session, prompt string) error {
+	if deepseekModel(sess.Model) {
+		// Responses uses a top-level effort, not Codex configuration items.
+		sess.RequestEffort = sess.Effort
+	}
 	userItem, err := json.Marshal(map[string]any{
 		"role":    "user",
 		"content": []map[string]string{{"type": "input_text", "text": prompt}},
@@ -296,7 +306,7 @@ func appendUserPrompt(sess *session, prompt string) error {
 			effective = item.Reasoning.Effort
 		}
 	}
-	if effective != effortIDs[sess.Effort] {
+	if !deepseekModel(sess.Model) && effective != effortIDs[sess.Effort] {
 		update, err := json.Marshal(map[string]any{
 			"type":      "configuration_update",
 			"reasoning": map[string]string{"effort": effortIDs[sess.Effort]},

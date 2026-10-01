@@ -210,7 +210,8 @@ func checkSavedTranscript(path string, end int64) error {
 
 func normalizeSessionSettings(out *session) error {
 	chatModel := strings.HasPrefix(out.Backend, "chat:") && out.Model != "" && len(out.Model) <= 256 && strings.HasSuffix(out.Backend, ":"+out.Model)
-	if out.Backend != "" && !chatModel {
+	deepseek := deepseekModel(out.Model) && strings.HasPrefix(out.Backend, "deepseek:") && strings.HasSuffix(out.Backend, ":"+out.Model)
+	if out.Backend != "" && !chatModel && !deepseek {
 		return errors.New("saved session has invalid chat backend/model")
 	}
 	if !chatModel && !supportedModel(out.Model) && out.Model != "astra" && out.Model != "terra" {

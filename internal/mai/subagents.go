@@ -195,6 +195,9 @@ func parseCustomAgent(content string) (customAgent, error) {
 	if _, ok := effortIDs[agent.Effort]; !ok {
 		return customAgent{}, fmt.Errorf("unsupported model_reasoning_effort %q", values["model_reasoning_effort"])
 	}
+	if deepseekModel(agent.Model) && !deepseekEffort(agent.Effort) {
+		return customAgent{}, errors.New("DeepSeek model_reasoning_effort must be low, high or max")
+	}
 	return agent, nil
 }
 

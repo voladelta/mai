@@ -50,6 +50,15 @@ func (a *agent) configureBackend(sess *session) error {
 		return errors.New("MAI_COMPACTION must be native or portable")
 	}
 	a.portable = mode == "portable"
+	if deepseekModel(sess.Model) || strings.HasPrefix(sess.Backend, "deepseek:") {
+		if provider != "" && provider != "deepseek" {
+			return errors.New("DeepSeek models require MAI_PROVIDER=deepseek or an unset provider")
+		}
+		if mode == "native" {
+			return errors.New("DeepSeek requires portable compaction")
+		}
+		return a.configureDeepSeek(sess)
+	}
 	if provider == "" || provider == "codex" {
 		if sess.Backend != "" {
 			return errors.New("saved chat task requires its original MAI_PROVIDER and MAI_CHAT_MODEL")
@@ -57,7 +66,7 @@ func (a *agent) configureBackend(sess *session) error {
 		return nil
 	}
 	if provider != "chat" {
-		return errors.New("MAI_PROVIDER must be codex or chat")
+		return errors.New("MAI_PROVIDER must be codex, deepseek or chat (DeepSeek requires ds-flash or ds-pro)")
 	}
 	if mode == "native" {
 		return errors.New("native compaction is unavailable for the chat provider")
