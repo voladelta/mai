@@ -196,11 +196,8 @@ func (h *pythonHostCalls) startNext(ctx context.Context) {
 	h.active = make(chan pythonHostResult, 1)
 	resultChan := h.active
 	go func() {
-		result := json.RawMessage(`{"ok":false,"error":"Python host bridge is unavailable"}`)
-		var err error
-		if operation, ok := h.operations[frame.Name]; ok {
-			result, err = operation.handler(ctx, frame.Generation, frame.Cell, frame.Call, frame.Name, frame.Arguments)
-		}
+		operation := h.operations[frame.Name]
+		result, err := operation.handler(ctx, frame.Generation, frame.Cell, frame.Call, frame.Name, frame.Arguments)
 		resultChan <- pythonHostResult{frame, result, err}
 	}()
 }

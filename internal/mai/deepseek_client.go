@@ -63,23 +63,29 @@ func (a *agent) configureBackend(sess *session) error {
 }
 
 func validateDeepSeekHistory(history []json.RawMessage, model string) error {
+	_, err := validatedDeepSeekCallIDs(history, model)
+	return err
+}
+
+func validatedDeepSeekCallIDs(history []json.RawMessage, model string) (map[string]bool, error) {
 	pending := map[string]bool{}
 	seen := map[string]bool{}
 	for _, raw := range history {
 		var item struct {
 			Type      string          `json:"type"`
 			CallID    string          `json:"call_id"`
+			Name      string          `json:"name"`
 			Arguments string          `json:"arguments"`
 			Encrypted string          `json:"encrypted_content"`
 			Content   json.RawMessage `json:"content"`
 		}
 		if err := json.Unmarshal(raw, &item); err != nil {
-			return errors.New("invalid DeepSeek history item")
+			return nil, errors.New("invalid DeepSeek history item")
 		}
 		switch item.Type {
 		case "", "message", "reasoning":
 			if item.Encrypted != "" {
-				return errors.New("DeepSeek cannot replay encrypted reasoning; start a new task")
+				return nil, errors.New("DeepSeek cannot replay encrypted reasoning; start a new task")
 			}
 			if item.Type == "reasoning" {
 				var parts []struct {
@@ -87,35 +93,38 @@ func validateDeepSeekHistory(history []json.RawMessage, model string) error {
 					Text string `json:"text"`
 				}
 				if err := json.Unmarshal(item.Content, &parts); err != nil || len(parts) == 0 {
-					return errors.New("DeepSeek requires plain-text reasoning content")
+					return nil, errors.New("DeepSeek requires plain-text reasoning content")
 				}
 				for _, part := range parts {
 					if part.Type != "reasoning_text" {
-						return errors.New("DeepSeek cannot replay opaque reasoning content")
+						return nil, errors.New("DeepSeek cannot replay opaque reasoning content")
 					}
 				}
 			}
 		case "function_call":
 			if item.CallID == "" || seen[item.CallID] || !json.Valid([]byte(item.Arguments)) {
-				return errors.New("invalid DeepSeek tool call history")
+				return nil, errors.New("invalid DeepSeek tool call history")
+			}
+			if item.Name == "" {
+				return nil, errors.New("Model returned an incomplete function call")
 			}
 			seen[item.CallID], pending[item.CallID] = true, true
 		case "function_call_output":
 			if !pending[item.CallID] {
-				return errors.New("unpaired DeepSeek tool output")
+				return nil, errors.New("unpaired DeepSeek tool output")
 			}
 			delete(pending, item.CallID)
 		default:
-			return fmt.Errorf("DeepSeek cannot replay history type %q; start a new task", item.Type)
+			return nil, fmt.Errorf("DeepSeek cannot replay history type %q; start a new task", item.Type)
 		}
 		if model == "ds-pro" && bytes.Contains(raw, []byte(`"input_image"`)) {
-			return errors.New("DeepSeek Pro does not support images")
+			return nil, errors.New("DeepSeek Pro does not support images")
 		}
 	}
 	if len(pending) != 0 {
-		return errors.New("DeepSeek history has unresolved tool calls")
+		return nil, errors.New("DeepSeek history has unresolved tool calls")
 	}
-	return nil
+	return seen, nil
 }
 
 func (c *deepseekClient) stream(ctx context.Context, sess *session, instructions string) (streamResult, error) {
@@ -210,7 +219,8 @@ func (c *deepseekClient) request(ctx context.Context, sess *session, instruction
 			history = append(history, hint)
 		}
 	}
-	if err := validateDeepSeekHistory(history, sess.Model); err != nil {
+	seen, err := validatedDeepSeekCallIDs(history, sess.Model)
+	if err != nil {
 		return streamResult{}, err
 	}
 	if !deepseekEffort(sess.Effort) {
@@ -277,15 +287,6 @@ func (c *deepseekClient) request(ctx context.Context, sess *session, instruction
 	if err != nil {
 		return streamResult{wrote: result.wrote}, errors.New("DeepSeek Responses stream failed or incomplete")
 	}
-	seen := map[string]bool{}
-	previousCalls, err := extractFunctionCalls(history)
-	if err != nil {
-		return streamResult{}, err
-	}
-	for _, call := range previousCalls {
-		seen[call.CallID] = true
-	}
-
 	for index, raw := range result.items {
 		var item struct {
 			Type      string          `json:"type"`

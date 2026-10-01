@@ -362,3 +362,28 @@ func TestDeepSeekChecksToolCallIDAgainstHistoryBeforeEffects(t *testing.T) {
 		})
 	}
 }
+
+func TestDeepSeekRejectsNamelessHistoryBeforeRequest(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		deepseekTestResponse(w, `[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}]`)
+	}))
+	defer server.Close()
+
+	sess := deepseekTestSession(t)
+	sess.appendEstimatedHistory(
+		json.RawMessage(`{"type":"function_call","call_id":"existing","arguments":"{}"}`),
+		json.RawMessage(`{"type":"function_call_output","call_id":"existing","output":"done"}`),
+	)
+	before := mustJSON(t, sess)
+	client := &deepseekClient{httpClient: server.Client(), endpoint: server.URL, stdout: io.Discard}
+	result, err := client.stream(context.Background(), sess, "test")
+
+	if err == nil || !strings.Contains(err.Error(), "incomplete function call") || len(result.items) != 0 {
+		t.Fatalf("accepted nameless history: result=%+v error=%v", result, err)
+	}
+	if requests != 0 || !bytes.Equal(before, mustJSON(t, sess)) {
+		t.Fatal("invalid history made a request or changed session state")
+	}
+}

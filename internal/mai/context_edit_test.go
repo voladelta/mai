@@ -20,11 +20,12 @@ func contextEditFixture(t *testing.T) *session {
 	dir := t.TempDir()
 	call, _ := json.Marshal(functionCall{Type: "function_call", CallID: "logs", Name: "bash", Arguments: `{"command":"printf logs"}`})
 	output, _ := json.Marshal(map[string]any{
-		"type": "function_call_output", "call_id": "logs",
+		"type": "function_call_output", "call_id": "logs", "future_envelope": "keep envelope",
 		"output": string(mustJSONValue(t, map[string]any{
 			"ok": true, "exit_code": 0, "timed_out": false,
 			"stdout": "ORIGINAL-RECALL-FACT " + strings.Repeat("completed build log\n", 1000),
 			"stderr": "warning to keep", "stdout_capture_path": "/private/example-capture",
+			"future_output": map[string]any{"enabled": false, "count": 0},
 		})),
 	})
 	sess := &session{
@@ -198,6 +199,15 @@ func TestContextEditPreservesOriginalsAndPersistsProjection(t *testing.T) {
 	if item.CallID != "logs" || body["stderr"] != "warning to keep" || body["stdout_capture_path"] != "/private/example-capture" || body["exit_code"] != float64(0) || body["stdout_context_summary"] != true {
 		t.Fatalf("result metadata changed: %s", projected[3])
 	}
+
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(projected[3], &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if string(envelope["future_envelope"]) != `"keep envelope"` || !bytes.Equal(mustJSONValue(t, body["future_output"]), json.RawMessage(`{"count":0,"enabled":false}`)) {
+		t.Fatalf("unknown metadata changed: %s", projected[3])
+	}
+
 	found := searchTranscript(loaded, json.RawMessage(`{"query":"ORIGINAL-RECALL-FACT","limit":20}`), "")
 	if !bytes.Contains(found, []byte(`"total":1`)) {
 		t.Fatalf("original stdout was not searchable: %s", found)

@@ -90,20 +90,14 @@ func contextEditHint(history []json.RawMessage) json.RawMessage {
 		if boundary.Role == "assistant" {
 			break
 		}
-		_, body, err := editableBashOutput(history, relationships, i)
+		output, err := editableBashOutput(history, relationships, i)
 		if err != nil {
 			continue
 		}
-		var stdout string
-		_ = json.Unmarshal(body["stdout"], &stdout)
-		if len(stdout) < 16<<10 {
+		if len(output.Stdout) < 16<<10 {
 			continue
 		}
-		var item struct {
-			CallID string `json:"call_id"`
-		}
-		_ = json.Unmarshal(history[i], &item)
-		candidates = append(candidates, map[string]string{"call_id": item.CallID, "digest": contextDigest(history[i])})
+		candidates = append(candidates, map[string]string{"call_id": output.CallID, "digest": contextDigest(history[i])})
 	}
 	if len(candidates) == 0 {
 		return nil
@@ -131,9 +125,15 @@ func contextDigest(raw json.RawMessage) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func editableBashOutput(history []json.RawMessage, relationships contextCallIndex, index int) (map[string]json.RawMessage, map[string]json.RawMessage, error) {
+type editableBashResult struct {
+	CallID string
+	Stdout string
+	Output string
+}
+
+func editableBashOutput(history []json.RawMessage, relationships contextCallIndex, index int) (editableBashResult, error) {
 	if index < 0 || index >= len(history) {
-		return nil, nil, errors.New("context edit index is outside history")
+		return editableBashResult{}, errors.New("context edit index is outside history")
 	}
 
 	var item struct {
@@ -142,20 +142,20 @@ func editableBashOutput(history []json.RawMessage, relationships contextCallInde
 		Output string `json:"output"`
 	}
 	if err := json.Unmarshal(history[index], &item); err != nil || item.Type != "function_call_output" || item.CallID == "" {
-		return nil, nil, errors.New("context edit requires a text tool output")
+		return editableBashResult{}, errors.New("context edit requires a text tool output")
 	}
 
 	// Require one earlier Bash call and exactly one output for this ID. Other
 	// tools, pending operations, and recovered unknown outcomes are ineligible.
 	if relationships.invalid {
-		return nil, nil, errors.New("invalid history item")
+		return editableBashResult{}, errors.New("invalid history item")
 	}
 	relationship := relationships.byID[item.CallID]
 	if relationship.calls > 0 && (relationship.lastCall >= index || relationship.nonBash) {
-		return nil, nil, errors.New("context edit requires an earlier Bash call")
+		return editableBashResult{}, errors.New("context edit requires an earlier Bash call")
 	}
 	if relationship.calls != 1 || relationship.outputs != 1 {
-		return nil, nil, errors.New("ambiguous tool call relationship")
+		return editableBashResult{}, errors.New("ambiguous tool call relationship")
 	}
 
 	var result struct {
@@ -166,17 +166,10 @@ func editableBashOutput(history []json.RawMessage, relationships contextCallInde
 		Error    string `json:"error"`
 	}
 	if err := json.Unmarshal([]byte(item.Output), &result); err != nil || !result.OK || result.ExitCode == nil || *result.ExitCode != 0 || result.TimedOut || result.Error != "" || result.Stdout == "" {
-		return nil, nil, errors.New("only successful Bash stdout can be shortened")
+		return editableBashResult{}, errors.New("only successful Bash stdout can be shortened")
 	}
 
-	var envelope, body map[string]json.RawMessage
-	if err := json.Unmarshal(history[index], &envelope); err != nil {
-		return nil, nil, err
-	}
-	if err := json.Unmarshal([]byte(item.Output), &body); err != nil {
-		return nil, nil, err
-	}
-	return envelope, body, nil
+	return editableBashResult{CallID: item.CallID, Stdout: result.Stdout, Output: item.Output}, nil
 }
 
 func renderStdoutEdit(history []json.RawMessage, relationships contextCallIndex, edit contextEdit) (json.RawMessage, error) {
@@ -186,10 +179,19 @@ func renderStdoutEdit(history []json.RawMessage, relationships contextCallIndex,
 	if strings.TrimSpace(edit.Summary) == "" || len(edit.Summary) > 16<<10 {
 		return nil, errors.New("stdout summary must contain 1 to 16384 bytes")
 	}
-	envelope, body, err := editableBashOutput(history, relationships, edit.Index)
+	result, err := editableBashOutput(history, relationships, edit.Index)
 	if err != nil {
 		return nil, err
 	}
+
+	var envelope, body map[string]json.RawMessage
+	if err := json.Unmarshal(history[edit.Index], &envelope); err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal([]byte(result.Output), &body); err != nil {
+		return nil, err
+	}
+
 	body["stdout"], _ = json.Marshal("[Model-authored context summary; original stdout remains in task history]\n" + edit.Summary)
 	body["stdout_context_summary"] = json.RawMessage("true")
 	output, err := json.Marshal(body)
@@ -249,22 +251,16 @@ func (a *agent) executeContextEdit(sess *session, arguments string) json.RawMess
 	if args.Action == "inspect" && len(args.Edits) == 0 {
 		candidates := []map[string]any{}
 		for i, raw := range history {
-			_, body, err := editableBashOutput(history, relationships, i)
+			output, err := editableBashOutput(history, relationships, i)
 			if err != nil {
 				continue
 			}
-			var item struct {
-				CallID string `json:"call_id"`
-			}
-			_ = json.Unmarshal(raw, &item)
-			var stdout string
-			_ = json.Unmarshal(body["stdout"], &stdout)
 			// Small outputs cannot repay summary framing or another model call.
-			if len(stdout) < 1024 {
+			if len(output.Stdout) < 1024 {
 				continue
 			}
 			candidates = append(candidates, map[string]any{
-				"call_id": item.CallID, "digest": contextDigest(raw),
+				"call_id": output.CallID, "digest": contextDigest(raw),
 				"estimated_tokens": estimateHistoryItemTokens(raw),
 			})
 		}

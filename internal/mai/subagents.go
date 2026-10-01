@@ -92,10 +92,6 @@ func loadCustomAgents(root string) (map[string]customAgent, []string, error) {
 			warnings = append(warnings, fmt.Sprintf("%s: defines name %q; the file name and agent name must match", entry.Name(), agent.Name))
 			continue
 		}
-		if _, duplicate := agents[agent.Name]; duplicate {
-			warnings = append(warnings, fmt.Sprintf("%s: duplicate custom agent name %q", entry.Name(), agent.Name))
-			continue
-		}
 		agents[agent.Name] = agent
 	}
 	sort.Strings(warnings)
@@ -193,9 +189,6 @@ func parseCustomAgent(content string) (customAgent, error) {
 	agent.Effort = normalizeEffort(values["model_reasoning_effort"])
 	if _, ok := effortIDs[agent.Effort]; !ok {
 		return customAgent{}, fmt.Errorf("unsupported model_reasoning_effort %q", values["model_reasoning_effort"])
-	}
-	if deepseekModel(agent.Model) && !deepseekEffort(agent.Effort) {
-		return customAgent{}, errors.New("DeepSeek model_reasoning_effort must be low, high or max")
 	}
 	return agent, nil
 }

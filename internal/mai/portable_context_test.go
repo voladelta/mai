@@ -106,6 +106,51 @@ func TestPortableCheckpointFailureLeavesSessionUnchanged(t *testing.T) {
 	}
 }
 
+func TestPortableCheckpointPreservesToolOutputFormatting(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		output string
+		want   string
+	}{
+		{
+			name:   "stdout lines",
+			output: `{"stdout":"first\nsecond\n","stderr":"warning","exit_code":0}`,
+			want:   "{\"exit_code\":0,\"stderr\":\"warning\",\"stdout\":\"[stdout follows as line records]\"}\nfirst\nsecond\n",
+		},
+		{
+			name:   "JSON without stdout",
+			output: `{"ok":false,"details":{"count":0}}`,
+			want:   "{\n \"details\": {\n  \"count\": 0\n },\n \"ok\": false\n}",
+		},
+		{
+			name:   "JSON array",
+			output: `[false,0]`,
+			want:   "[\n false,\n 0\n]",
+		},
+		{
+			name:   "plain text",
+			output: "plain tool result",
+			want:   "plain tool result",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			sess := portableFixture(t)
+			sess.History[3] = mustJSONValue(t, map[string]any{
+				"type": "function_call_output", "call_id": "logs", "output": test.output,
+			})
+			backend := &checkpointStub{reply: "checkpoint"}
+
+			_, _, err := portableHistory(context.Background(), sess, backend)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(backend.sources) != 1 || !strings.Contains(backend.sources[0], test.want) {
+				t.Fatalf("tool output formatting changed: want %q in sources %q", test.want, backend.sources)
+			}
+		})
+	}
+}
+
 func TestPortableCheckpointTriggersAtEightyPercent(t *testing.T) {
 	for _, window := range []int64{modelContextWindow, 32768} {
 		for _, atThreshold := range []bool{false, true} {

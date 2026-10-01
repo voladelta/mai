@@ -113,14 +113,14 @@ func portableHistory(ctx context.Context, sess *session, backend modelBackend) (
 			if entry.Kind == "tool_result" {
 				var output any
 				if json.Unmarshal([]byte(entry.Text), &output) == nil {
-					pretty, _ := json.MarshalIndent(output, "", " ")
-					entry.Text = string(pretty)
-					if body, ok := output.(map[string]any); ok {
-						if stdout, ok := body["stdout"].(string); ok {
-							body["stdout"] = "[stdout follows as line records]"
-							pretty, _ = json.Marshal(body)
-							entry.Text = string(pretty) + "\n" + stdout
-						}
+					body, _ := output.(map[string]any)
+					if stdout, ok := body["stdout"].(string); ok {
+						body["stdout"] = "[stdout follows as line records]"
+						metadata, _ := json.Marshal(body)
+						entry.Text = string(metadata) + "\n" + stdout
+					} else {
+						pretty, _ := json.MarshalIndent(output, "", " ")
+						entry.Text = string(pretty)
 					}
 				}
 			}

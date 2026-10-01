@@ -59,10 +59,6 @@ type sseCollector struct {
 	usage     *tokenUsage
 }
 
-type providerFailure struct{ context, code, detail string }
-
-func (e *providerFailure) Error() string { return e.context + ": " + e.detail }
-
 var errIncompleteStream = errors.New("Responses stream ended before response.completed")
 var errStreamRead = errors.New("read Responses stream")
 var errOutputWrite = errors.New("write Responses output")
@@ -215,35 +211,13 @@ func (collector *sseCollector) fail(event sseEvent) error {
 		return newProviderFailure("Responses response failed", event.Response.Error)
 	}
 	if len(event.Error) == 0 && (event.Code != "" || event.Message != "") {
-		return &providerFailure{
-			context: "Responses stream failed", code: strings.ToLower(event.Code),
-			detail: fmt.Sprintf("%s (%s)", event.Message, event.Code),
-		}
+		return fmt.Errorf("Responses stream failed: %s (%s)", event.Message, event.Code)
 	}
 	return newProviderFailure("Responses stream failed", event.Error)
 }
 
 func newProviderFailure(context string, raw json.RawMessage) error {
-	var value struct {
-		Code  string `json:"code"`
-		Type  string `json:"type"`
-		Error *struct {
-			Code string `json:"code"`
-			Type string `json:"type"`
-		} `json:"error"`
-	}
-	_ = json.Unmarshal(raw, &value)
-	code := value.Code
-	if code == "" && value.Error != nil {
-		code = value.Error.Code
-		if code == "" {
-			code = value.Error.Type
-		}
-	}
-	if code == "" {
-		code = value.Type
-	}
-	return &providerFailure{context: context, code: strings.ToLower(code), detail: compactJSON(raw)}
+	return fmt.Errorf("%s: %s", context, compactJSON(raw))
 }
 
 func (collector *sseCollector) result() streamResult {
