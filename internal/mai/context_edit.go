@@ -25,10 +25,58 @@ type stdoutEdit struct {
 	Summary string `json:"stdout_summary"`
 }
 
+type contextCallRelationship struct {
+	calls    int
+	outputs  int
+	lastCall int
+	outputAt int
+	nonBash  bool
+}
+
+type contextCallIndex struct {
+	byID    map[string]contextCallRelationship
+	invalid bool
+}
+
+// Index only relationship fields. Original and projected histories have the
+// same relationships, but output text and digests must come from each source.
+func indexContextCalls(history []json.RawMessage) contextCallIndex {
+	index := contextCallIndex{byID: make(map[string]contextCallRelationship)}
+	for i, raw := range history {
+		var item struct {
+			Type   string `json:"type"`
+			CallID string `json:"call_id"`
+			Name   string `json:"name"`
+		}
+		if json.Unmarshal(raw, &item) != nil {
+			index.invalid = true
+			continue
+		}
+
+		relationship := index.byID[item.CallID]
+		switch item.Type {
+		case "function_call":
+			relationship.calls++
+			relationship.lastCall = i
+			relationship.nonBash = relationship.nonBash || item.Name != "bash"
+		case "function_call_output":
+			if relationship.outputs == 0 {
+				relationship.outputAt = i
+			}
+			relationship.outputs++
+		default:
+			continue
+		}
+		index.byID[item.CallID] = relationship
+	}
+	return index
+}
+
 // Hints belong after the conversation, not in the stable instruction prefix.
 // Bound their size and scan range. Stop at the last assistant answer so
 // automatic hints do not offer outputs from the preceding cached turn.
 func contextEditHint(history []json.RawMessage) json.RawMessage {
+	relationships := indexContextCalls(history)
 	candidates := []map[string]string{}
 	start := len(history) - 32
 	if start < 0 {
@@ -42,7 +90,7 @@ func contextEditHint(history []json.RawMessage) json.RawMessage {
 		if boundary.Role == "assistant" {
 			break
 		}
-		_, body, err := editableBashOutput(history, i)
+		_, body, err := editableBashOutput(history, relationships, i)
 		if err != nil {
 			continue
 		}
@@ -83,7 +131,7 @@ func contextDigest(raw json.RawMessage) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func editableBashOutput(history []json.RawMessage, index int) (map[string]json.RawMessage, map[string]json.RawMessage, error) {
+func editableBashOutput(history []json.RawMessage, relationships contextCallIndex, index int) (map[string]json.RawMessage, map[string]json.RawMessage, error) {
 	if index < 0 || index >= len(history) {
 		return nil, nil, errors.New("context edit index is outside history")
 	}
@@ -99,30 +147,14 @@ func editableBashOutput(history []json.RawMessage, index int) (map[string]json.R
 
 	// Require one earlier Bash call and exactly one output for this ID. Other
 	// tools, pending operations, and recovered unknown outcomes are ineligible.
-	calls, outputs := 0, 0
-	for i, raw := range history {
-		var entry struct {
-			Type   string `json:"type"`
-			CallID string `json:"call_id"`
-			Name   string `json:"name"`
-		}
-		if err := json.Unmarshal(raw, &entry); err != nil {
-			return nil, nil, errors.New("invalid history item")
-		}
-		if entry.CallID != item.CallID {
-			continue
-		}
-		if entry.Type == "function_call" {
-			if i >= index || entry.Name != "bash" {
-				return nil, nil, errors.New("context edit requires an earlier Bash call")
-			}
-			calls++
-		}
-		if entry.Type == "function_call_output" {
-			outputs++
-		}
+	if relationships.invalid {
+		return nil, nil, errors.New("invalid history item")
 	}
-	if calls != 1 || outputs != 1 {
+	relationship := relationships.byID[item.CallID]
+	if relationship.calls > 0 && (relationship.lastCall >= index || relationship.nonBash) {
+		return nil, nil, errors.New("context edit requires an earlier Bash call")
+	}
+	if relationship.calls != 1 || relationship.outputs != 1 {
 		return nil, nil, errors.New("ambiguous tool call relationship")
 	}
 
@@ -147,14 +179,14 @@ func editableBashOutput(history []json.RawMessage, index int) (map[string]json.R
 	return envelope, body, nil
 }
 
-func renderStdoutEdit(history []json.RawMessage, edit contextEdit) (json.RawMessage, error) {
+func renderStdoutEdit(history []json.RawMessage, relationships contextCallIndex, edit contextEdit) (json.RawMessage, error) {
 	if edit.Index < 0 || edit.Index >= len(history) || contextDigest(history[edit.Index]) != edit.Digest {
 		return nil, errors.New("context edit source no longer matches history")
 	}
 	if strings.TrimSpace(edit.Summary) == "" || len(edit.Summary) > 16<<10 {
 		return nil, errors.New("stdout summary must contain 1 to 16384 bytes")
 	}
-	envelope, body, err := editableBashOutput(history, edit.Index)
+	envelope, body, err := editableBashOutput(history, relationships, edit.Index)
 	if err != nil {
 		return nil, err
 	}
@@ -169,6 +201,13 @@ func renderStdoutEdit(history []json.RawMessage, edit contextEdit) (json.RawMess
 }
 
 func (sess *session) requestHistory() ([]json.RawMessage, error) {
+	if len(sess.ContextEdits) == 0 {
+		return append([]json.RawMessage(nil), sess.History...), nil
+	}
+	return sess.projectHistory(indexContextCalls(sess.History))
+}
+
+func (sess *session) projectHistory(relationships contextCallIndex) ([]json.RawMessage, error) {
 	history := append([]json.RawMessage(nil), sess.History...)
 	seen := make(map[int]bool)
 	for _, edit := range sess.ContextEdits {
@@ -176,7 +215,7 @@ func (sess *session) requestHistory() ([]json.RawMessage, error) {
 			return nil, errors.New("duplicate context edit index")
 		}
 		seen[edit.Index] = true
-		rendered, err := renderStdoutEdit(sess.History, edit)
+		rendered, err := renderStdoutEdit(sess.History, relationships, edit)
 		if err != nil {
 			return nil, err
 		}
@@ -201,7 +240,8 @@ func (a *agent) executeContextEdit(sess *session, arguments string) json.RawMess
 	if err := decoder.Decode(new(any)); err != io.EOF {
 		return textToolOutput(toolError("invalid edit_context arguments", errors.New("expected one JSON object")))
 	}
-	history, err := sess.requestHistory()
+	relationships := indexContextCalls(sess.History)
+	history, err := sess.projectHistory(relationships)
 	if err != nil {
 		return textToolOutput(toolError("invalid context projection", err))
 	}
@@ -209,7 +249,7 @@ func (a *agent) executeContextEdit(sess *session, arguments string) json.RawMess
 	if args.Action == "inspect" && len(args.Edits) == 0 {
 		candidates := []map[string]any{}
 		for i, raw := range history {
-			_, body, err := editableBashOutput(history, i)
+			_, body, err := editableBashOutput(history, relationships, i)
 			if err != nil {
 				continue
 			}
@@ -244,23 +284,13 @@ func (a *agent) executeContextEdit(sess *session, arguments string) json.RawMess
 			return textToolOutput(toolError("context edit rejected", errors.New("duplicate call ID")))
 		}
 		used[proposed.CallID] = true
-		index := -1
-		for i, raw := range history {
-			var item struct {
-				Type   string `json:"type"`
-				CallID string `json:"call_id"`
-			}
-			_ = json.Unmarshal(raw, &item)
-			if item.Type == "function_call_output" && item.CallID == proposed.CallID {
-				index = i
-				break
-			}
-		}
-		if index < 0 || contextDigest(history[index]) != proposed.Digest {
+		relationship := relationships.byID[proposed.CallID]
+		index := relationship.outputAt
+		if relationship.outputs == 0 || contextDigest(history[index]) != proposed.Digest {
 			return textToolOutput(toolError("context edit rejected", errors.New("stale or missing output; inspect context again")))
 		}
 		edit := contextEdit{Index: index, Digest: contextDigest(sess.History[index]), Summary: proposed.Summary}
-		rendered, err := renderStdoutEdit(sess.History, edit)
+		rendered, err := renderStdoutEdit(sess.History, relationships, edit)
 		if err != nil {
 			return textToolOutput(toolError("context edit rejected", err))
 		}

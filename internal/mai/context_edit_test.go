@@ -297,6 +297,114 @@ func TestContextEditSaveFailureAndCorruptedResumeDoNotApply(t *testing.T) {
 	}
 }
 
+func TestContextEditRejectsInvalidCallRelationships(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		mutate      func(*session)
+		outputIndex int
+		wantError   string
+	}{
+		{
+			name: "duplicate earlier calls",
+			mutate: func(sess *session) {
+				sess.History[1] = sess.History[2]
+			},
+			outputIndex: 3,
+			wantError:   "ambiguous tool call relationship",
+		},
+		{
+			name: "duplicate outputs",
+			mutate: func(sess *session) {
+				sess.History = append(sess.History, sess.History[3])
+			},
+			outputIndex: 3,
+			wantError:   "ambiguous tool call relationship",
+		},
+		{
+			name: "call after output",
+			mutate: func(sess *session) {
+				sess.History[2], sess.History[3] = sess.History[3], sess.History[2]
+			},
+			outputIndex: 2,
+			wantError:   "earlier Bash call",
+		},
+		{
+			name: "missing call",
+			mutate: func(sess *session) {
+				sess.History[2] = json.RawMessage(`{"role":"assistant","content":"No call"}`)
+			},
+			outputIndex: 3,
+			wantError:   "ambiguous tool call relationship",
+		},
+		{
+			name: "unrelated malformed item",
+			mutate: func(sess *session) {
+				sess.History = append(sess.History, json.RawMessage(`{"type":123}`))
+			},
+			outputIndex: 3,
+			wantError:   "invalid history item",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			sess := contextEditFixture(t)
+			test.mutate(sess)
+			before := mustJSONValue(t, sess)
+			a := &agent{}
+
+			inspection := a.executeContextEdit(sess, `{"action":"inspect"}`)
+			var text string
+			if err := json.Unmarshal(inspection, &text); err != nil || text != `{"candidates":[]}` {
+				t.Fatalf("invalid relationship advertised: %s, %v", inspection, err)
+			}
+			if contextEditHint(sess.History) != nil {
+				t.Fatal("invalid relationship advertised in context hint")
+			}
+
+			digest := contextDigest(sess.History[test.outputIndex])
+			rejected := shrinkContext(t, a, sess, digest, "Build completed")
+			if !bytes.Contains(rejected, []byte(test.wantError)) || !bytes.Equal(before, mustJSONValue(t, sess)) {
+				t.Fatalf("invalid relationship accepted or state changed: %s", rejected)
+			}
+
+			sess.ContextEdits = []contextEdit{{Index: test.outputIndex, Digest: digest, Summary: "Build completed"}}
+			if _, err := sess.requestHistory(); err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("invalid saved projection accepted: %v", err)
+			}
+		})
+	}
+}
+
+func BenchmarkContextEditInspect(b *testing.B) {
+	for _, count := range []int{100, 1000} {
+		b.Run(fmt.Sprint(count), func(b *testing.B) {
+			sess := &session{}
+			for i := 0; i < count; i++ {
+				callID := fmt.Sprintf("logs-%d", i)
+				call, err := json.Marshal(functionCall{Type: "function_call", CallID: callID, Name: "bash", Arguments: `{}`})
+				if err != nil {
+					b.Fatal(err)
+				}
+				body, err := json.Marshal(map[string]any{"ok": true, "exit_code": 0, "stdout": strings.Repeat("x", 1024)})
+				if err != nil {
+					b.Fatal(err)
+				}
+				output, err := json.Marshal(map[string]any{"type": "function_call_output", "call_id": callID, "output": string(body)})
+				if err != nil {
+					b.Fatal(err)
+				}
+				sess.History = append(sess.History, call, output)
+			}
+			a := &agent{}
+			b.ReportAllocs()
+			b.ResetTimer()
+
+			for i := 0; i < b.N; i++ {
+				a.executeContextEdit(sess, `{"action":"inspect"}`)
+			}
+		})
+	}
+}
+
 func TestAgentExecutesContextEditWithoutReplayingBash(t *testing.T) {
 	writeTestDeepSeekConfig(t)
 	sess := contextEditFixture(t)

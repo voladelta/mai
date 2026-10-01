@@ -142,6 +142,134 @@ func BenchmarkApplyChunksManyHunks(b *testing.B) {
 	}
 }
 
+func TestApplyChunksIndexedMatchingPreservesContextRules(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		content string
+		chunks  []patchChunk
+		want    string
+		wantErr string
+	}{
+		{
+			name:    "overlapping matches are ambiguous",
+			content: "a\na\na\n",
+			chunks:  []patchChunk{{oldLines: []string{"a", "a"}, newLines: []string{"new"}}},
+			wantErr: "ambiguous",
+		},
+		{
+			name:    "repeated first line needs full context",
+			content: "a\nb\na\nc\na\nd\n",
+			chunks:  []patchChunk{{oldLines: []string{"a", "c"}, newLines: []string{"new"}}},
+			want:    "a\nb\nnew\na\nd\n",
+		},
+		{
+			name:    "repeated anchors advance from cursor",
+			content: "anchor\nfirst\nanchor\nsecond\n",
+			chunks: []patchChunk{
+				{anchor: "anchor", oldLines: []string{"first"}, newLines: []string{"one"}},
+				{anchor: "anchor", oldLines: []string{"second"}, newLines: []string{"two"}},
+			},
+			want: "anchor\none\nanchor\ntwo\n",
+		},
+		{
+			name:    "first line found but full context missing",
+			content: "a\nb\na\n",
+			chunks:  []patchChunk{{oldLines: []string{"a", "c"}}},
+			wantErr: "context not found",
+		},
+		{
+			name:   "empty file insertion",
+			chunks: []patchChunk{{newLines: []string{"new"}}},
+			want:   "new",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := applyChunks(test.content, test.chunks)
+			if test.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantErr) || got != "" {
+					t.Fatalf("got %q, %v; want %q rejection", got, err, test.wantErr)
+				}
+				return
+			}
+
+			if err != nil || got != test.want {
+				t.Fatalf("got %q, %v; want %q", got, err, test.want)
+			}
+		})
+	}
+}
+
+func TestPatchSourceReadSizeBoundary(t *testing.T) {
+	for _, size := range []int64{maxPatchFileBytes, maxPatchFileBytes + 1} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			rootPath, err := canonicalPath(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(rootPath, "source.txt")
+			mustWrite(t, path, "")
+			if err := os.Truncate(path, size); err != nil {
+				t.Fatal(err)
+			}
+			root, err := os.OpenRoot(rootPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer root.Close()
+			plan := patchPlan{root: root, rootPath: rootPath, files: make(map[string]*pendingFile)}
+
+			file, err := plan.loadFile("source.txt")
+			if size > maxPatchFileBytes {
+				if !errors.Is(err, errFileTooLarge) || file != nil || len(plan.files) != 0 {
+					t.Fatalf("oversized source admitted: file=%v, err=%v", file != nil, err)
+				}
+				return
+			}
+
+			if err != nil || int64(len(file.content)) != size {
+				t.Fatalf("exact-limit source rejected: %v", err)
+			}
+		})
+	}
+}
+
+func TestPatchCommitRejectsOversizedSourceBeforeWrites(t *testing.T) {
+	rootPath, err := canonicalPath(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(rootPath, "source.txt")
+	mustWrite(t, path, "old\n")
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	plan := patchPlan{root: root, rootPath: rootPath, files: make(map[string]*pendingFile)}
+	if err := plan.addOperation(patchOperation{kind: "update", path: "source.txt", chunks: []patchChunk{{oldLines: []string{"old"}, newLines: []string{"new"}}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := plan.addOperation(patchOperation{kind: "add", path: "added.txt", contents: "added\n"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(path, maxPatchFileBytes+1); err != nil {
+		t.Fatal(err)
+	}
+
+	err = plan.commitWithIO(atomicWriteRootFile, (*os.Root).Remove)
+	if !errors.Is(err, errFileTooLarge) {
+		t.Fatalf("oversized source not rejected by read limit: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil || info.Size() != maxPatchFileBytes+1 {
+		t.Fatalf("concurrent source overwritten: %v, %v", info, err)
+	}
+	if _, err := os.Lstat(filepath.Join(rootPath, "added.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("another target written before rejection: %v", err)
+	}
+}
+
 func TestApplyPatchCreateUpdateMoveDelete(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "old.txt"), "alpha\nbeta\n")

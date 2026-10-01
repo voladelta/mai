@@ -198,13 +198,12 @@ func (plan *patchPlan) loadFile(rel string) (*pendingFile, error) {
 	if info.Mode()&os.ModeSymlink != 0 {
 		return nil, fmt.Errorf("refusing to patch symlink %s", rel)
 	}
+	// Reject special files before opening; opening a FIFO could block.
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("%s is not a regular file", rel)
 	}
-	if info.Size() > maxPatchFileBytes {
-		return nil, fmt.Errorf("%s exceeds the %d byte patch limit", rel, maxPatchFileBytes)
-	}
-	content, err := plan.root.ReadFile(path)
+
+	content, err := readPatchSource(plan.root, path)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", rel, err)
 	}
@@ -214,6 +213,20 @@ func (plan *patchPlan) loadFile(rel string) (*pendingFile, error) {
 	}
 	plan.files[path] = file
 	return file, nil
+}
+
+func readPatchSource(root *os.Root, path string) ([]byte, error) {
+	file, err := root.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	content, err := readBoundedFile(file, maxPatchFileBytes)
+	if errors.Is(err, errFileTooLarge) {
+		return nil, fmt.Errorf("%s exceeds the %d byte patch limit: %w", path, maxPatchFileBytes, err)
+	}
+	return content, err
 }
 
 func (plan *patchPlan) commitWithIO(write patchWriteFunc, remove patchRemoveFunc) error {
@@ -304,7 +317,7 @@ func (plan *patchPlan) checkCurrentFiles() error {
 		if !info.Mode().IsRegular() || info.Mode().Perm() != file.mode {
 			return fmt.Errorf("patch source changed before commit: %s", path)
 		}
-		content, err := plan.root.ReadFile(path)
+		content, err := readPatchSource(plan.root, path)
 		if err != nil {
 			return fmt.Errorf("read %s before commit: %w", path, err)
 		}
@@ -471,17 +484,23 @@ func parseChunks(lines []string) ([]patchChunk, error) {
 
 func applyChunks(content string, chunks []patchChunk) (string, error) {
 	lines, trailingNewline := splitFileLines(content)
+	positions := make(map[string][]int)
+	for i, line := range lines {
+		positions[line] = append(positions[line], i)
+	}
+
 	cursor := 0
 	output := make([]string, 0, len(lines))
 
 	for index, chunk := range chunks {
 		start := cursor
 		if chunk.anchor != "" {
-			anchorAt := findLine(lines, chunk.anchor, cursor)
-			if anchorAt < 0 {
+			anchors := positions[chunk.anchor]
+			anchorIndex := sort.SearchInts(anchors, cursor)
+			if anchorIndex == len(anchors) {
 				return "", fmt.Errorf("chunk %d anchor %q not found", index+1, chunk.anchor)
 			}
-			start = anchorAt + 1
+			start = anchors[anchorIndex] + 1
 		}
 
 		if chunk.endOfFile {
@@ -492,14 +511,14 @@ func applyChunks(content string, chunks []patchChunk) (string, error) {
 			start = suffix
 		}
 
-		at := findSequence(lines, chunk.oldLines, start)
+		at := findSequence(lines, positions, chunk.oldLines, start)
 		if at < 0 {
 			return "", fmt.Errorf("chunk %d context not found", index+1)
 		}
 		if chunk.endOfFile && at+len(chunk.oldLines) != len(lines) {
 			return "", fmt.Errorf("chunk %d does not reach end of file", index+1)
 		}
-		if len(chunk.oldLines) > 0 && !chunk.endOfFile && findSequence(lines, chunk.oldLines, at+1) >= 0 {
+		if len(chunk.oldLines) > 0 && !chunk.endOfFile && findSequence(lines, positions, chunk.oldLines, at+1) >= 0 {
 			return "", fmt.Errorf("chunk %d context is ambiguous; include more surrounding lines", index+1)
 		}
 
@@ -531,23 +550,21 @@ func joinFileLines(lines []string, trailing bool) string {
 	return out
 }
 
-func findLine(lines []string, want string, start int) int {
-	for i := start; i < len(lines); i++ {
-		if lines[i] == want {
-			return i
-		}
-	}
-	return -1
-}
-
-func findSequence(lines, want []string, start int) int {
+func findSequence(lines []string, positions map[string][]int, want []string, start int) int {
 	if len(want) == 0 {
 		if start <= len(lines) {
 			return start
 		}
 		return -1
 	}
-	for i := start; i+len(want) <= len(lines); i++ {
+	// The original lines stay immutable while hunks build separate output.
+	// Only positions containing the first context line can match.
+	candidates := positions[want[0]]
+	for _, i := range candidates[sort.SearchInts(candidates, start):] {
+		if i+len(want) > len(lines) {
+			break
+		}
+
 		match := true
 		for j := range want {
 			if lines[i+j] != want[j] {
