@@ -160,8 +160,8 @@ func (out *options) setOption(kind optionKind, value string) error {
 		out.model, out.modelExplicit = value, true
 	case optionMaxTurns:
 		maxTurns, err := strconv.Atoi(value)
-		if err != nil || maxTurns <= 0 {
-			return fmt.Errorf("invalid --max-turns %q (use a positive integer)", value)
+		if err != nil || (maxTurns <= 0 && maxTurns != -1) {
+			return fmt.Errorf("invalid --max-turns %q (use a positive integer or -1 for unlimited turns)", value)
 		}
 		out.maxTurns = maxTurns
 	case optionTimeout:

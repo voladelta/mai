@@ -79,7 +79,7 @@ func (a *agent) run(ctx context.Context, sess *session, userPrompt string) error
 	if sess.ContextTokens == 0 {
 		sess.ContextTokens = estimateHistoryTokens(sess.History) + estimateInstructionTokens(instructions)
 	}
-	for turn := 0; turn < a.maxTurns; turn++ {
+	for turn := 0; a.maxTurns == -1 || turn < a.maxTurns; turn++ {
 		if interactive && turn > 0 {
 			fmt.Fprintln(a.stderr, "→ thinking")
 		}

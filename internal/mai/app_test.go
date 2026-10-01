@@ -48,6 +48,7 @@ func TestMainEnforcesMaxTurns(t *testing.T) {
 		{name: "custom limit", args: []string{"work", "--max-turns=2"}, wantTurns: 2, wantCode: 1},
 		{name: "completion at limit", args: []string{"work", "--max-turns=2"}, finalTurn: 2, wantTurns: 2},
 		{name: "more than 64", args: []string{"work", "--max-turns=65"}, finalTurn: 65, wantTurns: 65},
+		{name: "unlimited completes beyond default", args: []string{"work", "--max-turns=-1"}, finalTurn: 70, wantTurns: 70},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Chdir(t.TempDir())

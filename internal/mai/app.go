@@ -37,7 +37,7 @@ Options:
   --last                 Resume the current saved task in the current project.
   -e, --effort EFFORT    Use l, h, or max (low, high, max).
   -m, --model MODEL      Use ds-flash or ds-pro for this task.
-  --max-turns COUNT      Set the model-turn limit for this run (default: 64).
+  --max-turns COUNT      Set the model-turn limit (default: 64; -1: unlimited).
   --timeout DURATION     Set the per-request first-byte/idle timeout (default: 10m).
   --cell-timeout DURATION      Set the wall-clock limit for each Python cell (default: 10m).
   --no-input             Do not ask for interactive approval.

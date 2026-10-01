@@ -31,6 +31,8 @@ func TestParseMaxTurns(t *testing.T) {
 		{name: "default", args: []string{"work"}, want: 64},
 		{name: "separate value", args: []string{"work", "--max-turns", "128"}, want: 128},
 		{name: "inline value on resume", args: []string{"continue", "--last", "--max-turns=256"}, want: 256},
+		{name: "unlimited separate value", args: []string{"work", "--max-turns", "-1"}, want: -1},
+		{name: "unlimited inline value on resume", args: []string{"continue", "--last", "--max-turns=-1"}, want: -1},
 		{name: "resume default", args: []string{"continue", "--last"}, want: 64},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -45,7 +47,7 @@ func TestParseMaxTurns(t *testing.T) {
 		})
 	}
 
-	for _, value := range []string{"", "0", "-1", "1.5", "many", "999999999999999999999999999999"} {
+	for _, value := range []string{"", "0", "-2", "1.5", "many", "999999999999999999999999999999"} {
 		if _, err := parseOptions([]string{"work", "--max-turns=" + value}); err == nil || !strings.Contains(err.Error(), "positive integer") {
 			t.Fatalf("max turns %q: error = %v", value, err)
 		}

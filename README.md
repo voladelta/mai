@@ -189,11 +189,13 @@ mai "continue the refactor" --last -e max
 ## Timeouts and interactive input
 
 Each run allows up to 64 model turns by default. Use `--max-turns` with a
-positive integer to set a different limit for longer or shorter tasks:
+positive integer to set a different limit, or `-1` to run without a turn cap
+until Mai finishes, encounters an error, or is interrupted:
 
 ```bash
 mai "complete the migration" --max-turns 128 --persist
 mai "continue the migration" --last --max-turns 128
+mai "finish the migration" --max-turns -1 --persist
 ```
 
 A turn is one model request and execution of its returned tool calls. A final
