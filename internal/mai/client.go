@@ -30,12 +30,14 @@ type codexClient struct {
 	endpoint       string
 	stdout         io.Writer
 	allowSubagents bool
+	textOnly       bool
 }
 
 type streamResult struct {
 	items       []json.RawMessage
 	wrote       bool
 	totalTokens int64
+	usage       *tokenUsage
 }
 
 type sseEvent struct {
@@ -57,7 +59,12 @@ type sseResponse struct {
 }
 
 type tokenUsage struct {
-	TotalTokens int64 `json:"total_tokens"`
+	TotalTokens        int64  `json:"total_tokens"`
+	InputTokens        *int64 `json:"input_tokens,omitempty"`
+	OutputTokens       *int64 `json:"output_tokens,omitempty"`
+	InputTokensDetails *struct {
+		CachedTokens *int64 `json:"cached_tokens,omitempty"`
+	} `json:"input_tokens_details,omitempty"`
 }
 
 type sseCollector struct {
@@ -66,6 +73,7 @@ type sseCollector struct {
 	wrote     bool
 	completed bool
 	tokens    int64
+	usage     *tokenUsage
 }
 
 type httpStatusError struct {
@@ -130,12 +138,12 @@ func (c *codexClient) stream(ctx context.Context, sess *session, instructions st
 	})
 }
 
-func (c *codexClient) compact(ctx context.Context, sess *session, instructions string) (json.RawMessage, error) {
+func (c *codexClient) compact(ctx context.Context, sess *session, instructions string) (json.RawMessage, *tokenUsage, error) {
 	result, err := c.withCredentials(func(creds credentials) (streamResult, error) {
 		return c.compactWithCredentials(ctx, sess, instructions, creds)
 	})
 	if err != nil {
-		return nil, err
+		return nil, result.usage, err
 	}
 	var compaction json.RawMessage
 	for _, raw := range result.items {
@@ -144,23 +152,23 @@ func (c *codexClient) compact(ctx context.Context, sess *session, instructions s
 			EncryptedContent string `json:"encrypted_content"`
 		}
 		if err := json.Unmarshal(raw, &item); err != nil {
-			return nil, fmt.Errorf("parse Codex compaction output: %w", err)
+			return nil, result.usage, fmt.Errorf("parse Codex compaction output: %w", err)
 		}
 		if item.Type != "compaction" && item.Type != "compaction_summary" {
 			continue
 		}
 		if compaction != nil {
-			return nil, errors.New("Codex compaction returned more than one compaction item")
+			return nil, result.usage, errors.New("Codex compaction returned more than one compaction item")
 		}
 		if item.EncryptedContent == "" {
-			return nil, errors.New("Codex compaction returned empty encrypted content")
+			return nil, result.usage, errors.New("Codex compaction returned empty encrypted content")
 		}
 		compaction = raw
 	}
 	if compaction == nil {
-		return nil, fmt.Errorf("Codex compaction returned no compaction item in %d output items", len(result.items))
+		return nil, result.usage, fmt.Errorf("Codex compaction returned no compaction item in %d output items", len(result.items))
 	}
-	return compaction, nil
+	return compaction, result.usage, nil
 }
 
 func (c *codexClient) withCredentials(request func(credentials) (streamResult, error)) (streamResult, error) {
@@ -238,12 +246,21 @@ func retryableRequestError(err error) bool {
 }
 
 func (c *codexClient) requestOnce(ctx context.Context, sess *session, instructions string, creds credentials, compaction bool) (streamResult, error) {
+	history, err := sess.requestHistory()
+	if err != nil {
+		return streamResult{}, fmt.Errorf("render request context: %w", err)
+	}
+	if !compaction && sess.ContextTokens >= modelContextWindow/2 {
+		if hint := contextEditHint(history); hint != nil {
+			history = append(history, hint)
+		}
+	}
 	body := map[string]any{
 		"model":               modelID(sess.Model),
 		"store":               false,
 		"stream":              true,
 		"instructions":        instructions,
-		"input":               sess.History,
+		"input":               history,
 		"tools":               toolDefinitions(c.allowSubagents),
 		"tool_choice":         "auto",
 		"parallel_tool_calls": false,
@@ -254,6 +271,10 @@ func (c *codexClient) requestOnce(ctx context.Context, sess *session, instructio
 		"text":             map[string]string{"verbosity": "low"},
 		"include":          []string{"reasoning.encrypted_content"},
 		"prompt_cache_key": sess.ID,
+	}
+	if c.textOnly {
+		body["tools"] = []any{}
+		body["tool_choice"] = "none"
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -453,6 +474,7 @@ func (collector *sseCollector) complete(response *sseResponse) error {
 	}
 	if response.Usage != nil {
 		collector.tokens = response.Usage.TotalTokens
+		collector.usage = response.Usage
 	}
 
 	return nil
@@ -504,7 +526,7 @@ func (collector *sseCollector) result() streamResult {
 	for _, index := range indexes {
 		ordered = append(ordered, collector.items[index])
 	}
-	return streamResult{items: ordered, wrote: collector.wrote, totalTokens: collector.tokens}
+	return streamResult{items: ordered, wrote: collector.wrote, totalTokens: collector.tokens, usage: collector.usage}
 }
 
 func compactJSON(raw json.RawMessage) string {
@@ -520,6 +542,29 @@ func compactJSON(raw json.RawMessage) string {
 
 func toolDefinitions(allowSubagents bool) []map[string]any {
 	definitions := []map[string]any{
+		{
+			"type": "function", "name": "edit_context",
+			"description": "Shorten completed successful Bash stdout in future model requests, preserving originals for history search. Shrink directly with current call IDs and digests supplied in context hints, or inspect to obtain them. Keep exact facts, corrections and decisions still needed for the task. Summaries are model-authored context, not fresh evidence. Other output fields and request items stay intact. This changes context only, never command effects. Each summary must reduce estimated size. Prefer large obsolete outputs when savings justify another request. Continue the task after editing.",
+			"parameters": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"action": map[string]any{"type": "string", "enum": []string{"inspect", "shrink"}},
+					"edits": map[string]any{
+						"type": "array", "maxItems": 8,
+						"items": map[string]any{
+							"type": "object", "additionalProperties": false,
+							"properties": map[string]any{
+								"call_id":        map[string]string{"type": "string"},
+								"digest":         map[string]string{"type": "string"},
+								"stdout_summary": map[string]string{"type": "string"},
+							},
+							"required": []string{"call_id", "digest", "stdout_summary"},
+						},
+					},
+				},
+				"required": []string{"action"},
+			},
+		},
 		{
 			"type": "function", "name": "read_skill",
 			"description": "Read one file from an installed skill. Omit file to read SKILL.md; read it before using the skill or loading supporting files. Images are returned as image content; unsupported binary files fail.",

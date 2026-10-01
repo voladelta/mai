@@ -69,7 +69,7 @@ func runLiveRecallAttempt(t *testing.T, prompt string, transcript []transcriptEn
 	workspace := t.TempDir()
 	sess := &session{
 		Version: stateVersion, ID: id, CWD: workspace, RepoRoot: workspace,
-		Model: "luna", Effort: "m", Transcript: transcript,
+		Model: "luna", Effort: "m", RequestEffort: "m", Transcript: transcript,
 	}
 	if err := appendUserPrompt(sess, prompt); err != nil {
 		return "", 0, err

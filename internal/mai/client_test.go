@@ -54,6 +54,17 @@ func TestReadSSEStreamsTextAndCollectsItems(t *testing.T) {
 	}
 }
 
+func TestReadSSEPreservesOptionalUsageFields(t *testing.T) {
+	stream := `data: {"type":"response.completed","response":{"status":"completed","output":[],"usage":{"total_tokens":456,"input_tokens":400,"output_tokens":56,"input_tokens_details":{"cached_tokens":0}}}}` + "\n\n"
+	result, err := (&codexClient{stdout: io.Discard}).readSSE(strings.NewReader(stream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.usage == nil || result.usage.InputTokens == nil || *result.usage.InputTokens != 400 || result.usage.OutputTokens == nil || *result.usage.OutputTokens != 56 || result.usage.InputTokensDetails == nil || result.usage.InputTokensDetails.CachedTokens == nil || *result.usage.InputTokensDetails.CachedTokens != 0 {
+		t.Fatalf("usage lost available values: %#v", result.usage)
+	}
+}
+
 func TestCompactAddsTriggerAndSuppressesOtherOutput(t *testing.T) {
 	writeTestCodexAuth(t)
 	var input []map[string]any
@@ -83,7 +94,7 @@ func TestCompactAddsTriggerAndSuppressesOtherOutput(t *testing.T) {
 	var stdout bytes.Buffer
 	client := newCodexClient(&stdout, time.Second)
 	client.endpoint = server.URL
-	item, err := client.compact(context.Background(), &session{
+	item, _, err := client.compact(context.Background(), &session{
 		ID: "session", Model: "luna", Effort: "m", RequestEffort: "m",
 		History: []json.RawMessage{json.RawMessage(`{"role":"user","content":"hello"}`)},
 	}, "instructions")

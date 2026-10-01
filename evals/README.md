@@ -68,6 +68,138 @@ recovery are covered by separate deterministic tests; this live probe seeds the
 archive directly so it tests model use of history without exposing a session
 file to Bash.
 
+## Native context-editing research
+
+Run the controlled three-arm study with your Codex login:
+
+```sh
+MAI_LIVE_CONTEXT_RESEARCH=1 \
+MAI_CONTEXT_RESEARCH_REPORT=/absolute/existing/directory/research.json \
+go test -v ./internal/mai -run '^TestLiveContextResearch$' -count=1 -timeout=15m
+```
+
+It compares native Codex compaction, deterministic 1,000-byte head/tail sampling,
+and model-proposed `edit_context` summaries. Two matched repetitions place facts
+at the start, middle, and end of synthetic Bash logs. Each session goes through
+two cycles, a user correction, and save/load. There are 36 graded answers, five
+exact string fields per answer. Assessment answers are not appended to history.
+Reports retain the strict count and also a count that treats `unknown` and
+`UNKNOWN` as the same status; identifiers still require exact matches.
+Every compaction, editing, and answer request records available input/output/cache
+usage and elapsed time. Original-log recall is checked through the host's history
+search after resume, including the prior cycle. No model-proposed command runs.
+
+The first objective emphasizes release and audit codes; batch size is queried
+later. Set `MAI_CONTEXT_RESEARCH_DECLARED_GOAL=1` for a focused follow-up with all
+five graded fields declared up front. That follow-up uses middle placement, two
+repetitions, and two cycles: 12 graded answers. Use a separate report filename.
+
+These are context probes, not long coding-task benchmarks. Compaction is forced
+at cycle boundaries below the normal 90% production threshold. Answer-phase
+retrieval is prohibited, so lost projected facts can score poorly even though
+the archive can recover them. CLM preparation is explicitly requested and gets
+at most four requests per cycle. Arm order is fixed, and the sample is too small
+for statistical performance claims. Missing usage fields are unavailable, not
+zero. Inspection/summary overhead and cache effects must be counted before
+claiming a gain.
+
+### Coding and context-budget pilot
+
+```sh
+MAI_LIVE_CONTEXT_BUDGET_RESEARCH=1 \
+MAI_CONTEXT_RESEARCH_REPORT=/absolute/existing/directory/budget-research.json \
+go test -v ./internal/mai -run '^TestLiveContextBudgetResearch$' -count=1 -timeout=45m
+```
+
+This pilot executes real coding tools in temporary Go projects. It compares
+native compaction at the production 90% threshold, selective CLM with inline
+editing handles, and bounded 1,000-byte head/tail excerpts with retrieval.
+The bounded policy is experimental harness behavior, not a production default.
+All arms retain original history and can use `mai.history`. The harness removes
+the editing tool and its hints from native/bounded request schemas so baseline
+behavior does not depend on the model obeying a prohibition in the prompt.
+
+Two matched repetitions randomize arm order with a recorded seed. Long sessions
+warm an old-log prefix, calibrate new logs from reported input usage, then
+perform four coding stages, including a batch correction and retrieval of an old
+audit identifier. Short sessions have a small log and one coding stage, where
+editing should stay inactive. Hidden Go checks verify constants, corrected limits,
+parsing and safe retry behavior. Sessions save and reload between stages.
+Checkpoint files live outside the coding project so repository searches cannot
+read internal state instead of using the history interface.
+Seeded logs are split into successful outputs no larger than Bash's production
+64 KiB stdout cap; the bounded arm further reduces each new output to head/tail
+excerpts. The study does not bypass MAI's existing output admission limit.
+Warm-up uses `tool_choice: none` while keeping each arm's tool schema intact;
+the model cannot accidentally start coding before the measured task.
+
+Reports are saved after each arm, including partial failures, request/cache usage,
+compaction events, edit receipts, wall time and source recall after resume. Tool
+output bodies are omitted. Count warm requests and all management requests when
+comparing strategies. These are synthetic staged tasks with two repetitions;
+they cannot establish a general performance gain. Check whether native compaction
+actually occurred before interpreting any claim about avoiding it.
+
+## Portable compaction
+
+Run a fresh matched native-versus-portable coding pilot (two long trials each):
+
+```sh
+MAI_LIVE_CONTEXT_BUDGET_RESEARCH=1 \
+MAI_CONTEXT_RESEARCH_PORTABLE=1 \
+MAI_CONTEXT_RESEARCH_REPORT=/absolute/path/portable-native.json \
+go test -v ./internal/mai -run '^TestLiveContextBudgetResearch$' -count=1 -timeout=30m
+```
+
+This retains the staged coding task, warm cache policy, production compaction
+threshold and hidden checks. Both arms hide `edit_context`; the portable arm
+uses ordinary tool-free checkpoint generation. Count its summary requests as
+management work. Repeated log lines make source encoding unusually effective;
+do not extrapolate the result to arbitrary unique histories.
+
+To check another provider with real coding tools and forced portable checkpoints:
+
+```sh
+MAI_LIVE_PORTABLE_CHAT=1 \
+MAI_CHAT_URL=https://api.deepseek.com/chat/completions \
+MAI_CHAT_KEY_ENV=DEEPSEEK_API_KEY \
+MAI_CHAT_TEST_MODELS=deepseek-flash,deepseek-v4-pro \
+MAI_CHAT_TEST_FULL_CONTROL=1 \
+MAI_CONTEXT_RESEARCH_REPORT=/absolute/path/portable-chat.json \
+go test -v ./internal/mai -run '^TestLivePortableChatProviders$' -count=1 -timeout=20m
+```
+
+The key variable must already be populated. This test uses the production chat
+configuration, unique diagnostic records, chunk folding, literal identifiers,
+an explicit UNKNOWN enum, a corrected numeric constraint, hidden Go checks and
+session reloads. It requires no Codex login. With the control enabled, each model
+also runs identical paired facts with the full original history and a larger
+test budget that disables compaction. Checkpoints are forced twice under
+a conservative 32K input budget; this is cross-model conformance evidence, not
+a latency comparison with the warmed native pilot. Tool output bodies and keys
+are excluded from the report.
+
+## Cross-model portable comparison
+
+Use the same three-stage coding fixture for DeepSeek Flash, GPT-6.1 Sol medium
+and GPT-6 Luna medium, with two matched repetitions and both full-history and
+portable arms. Each repetition uses identical facts for all three models;
+model and arm order rotate. GPT uses the cached Codex subscription login.
+
+```sh
+MAI_LIVE_PORTABLE_MODEL_COMPARISON=1 \
+MAI_CHAT_URL=https://api.deepseek.com/chat/completions \
+MAI_CHAT_KEY_ENV=DEEPSEEK_API_KEY \
+MAI_CONTEXT_RESEARCH_REPORT=/absolute/path/model-comparison.json \
+go test -v ./internal/mai -run '^TestLivePortableModelComparison$' -count=1 -timeout=45m
+```
+
+DeepSeek thinking remains disabled; it is not the same reasoning configuration
+as GPT medium. Each worker generates its own checkpoints, so the comparison
+combines coding and summarization behavior. Both portable checkpoints are
+forced; full history fits. Two repetitions support a descriptive comparison,
+not a general model ranking or a native-compaction performance claim.
+
 ## Waiting time
 
 New JSONL traces include `duration_ms` on model, tool, and completed task

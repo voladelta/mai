@@ -27,10 +27,12 @@ type session struct {
 	CWD              string            `json:"cwd"`
 	RepoRoot         string            `json:"repo_root"`
 	Model            string            `json:"model"`
+	Backend          string            `json:"backend,omitempty"`
 	Effort           string            `json:"effort"`
 	RequestEffort    string            `json:"request_effort,omitempty"`
 	ContextTokens    int64             `json:"context_tokens,omitempty"`
 	History          []json.RawMessage `json:"history"`
+	ContextEdits     []contextEdit     `json:"context_edits,omitempty"`
 	Transcript       []transcriptEntry `json:"transcript,omitempty"`
 	TranscriptSkip   int               `json:"transcript_skip,omitempty"`
 	TranscriptEnd    int64             `json:"transcript_end,omitempty"`
@@ -167,8 +169,15 @@ func loadSession(path string) (*session, error) {
 	if err := normalizeSessionSettings(&out); err != nil {
 		return nil, err
 	}
+	if err := validateContextEdits(&out); err != nil {
+		return nil, err
+	}
 	if out.ContextTokens == 0 && len(out.History) > 0 {
-		out.ContextTokens = estimateHistoryTokens(out.History)
+		history, err := out.requestHistory()
+		if err != nil {
+			return nil, err
+		}
+		out.ContextTokens = estimateHistoryTokens(history)
 	}
 	return &out, nil
 }
@@ -200,7 +209,11 @@ func checkSavedTranscript(path string, end int64) error {
 }
 
 func normalizeSessionSettings(out *session) error {
-	if !supportedModel(out.Model) && out.Model != "astra" && out.Model != "terra" {
+	chatModel := strings.HasPrefix(out.Backend, "chat:") && out.Model != "" && len(out.Model) <= 256 && strings.HasSuffix(out.Backend, ":"+out.Model)
+	if out.Backend != "" && !chatModel {
+		return errors.New("saved session has invalid chat backend/model")
+	}
+	if !chatModel && !supportedModel(out.Model) && out.Model != "astra" && out.Model != "terra" {
 		return fmt.Errorf("saved session has invalid model %q", out.Model)
 	}
 	if _, ok := effortIDs[out.Effort]; !ok {

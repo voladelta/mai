@@ -25,6 +25,9 @@ const (
 
 type agent struct {
 	client          *codexClient
+	backend         modelBackend
+	portable        bool
+	contextWindow   int64
 	stdout          io.Writer
 	stderr          io.Writer
 	sessionPath     string
@@ -170,13 +173,17 @@ func (a *agent) runTurn(ctx context.Context, sess *session, instructions string)
 		return false, err
 	}
 	modelStarted := time.Now()
-	result, err := a.client.stream(ctx, sess, instructions)
+	backend := a.backend
+	if backend == nil {
+		backend = a.client
+	}
+	result, err := backend.stream(ctx, sess, instructions)
 	modelDuration := time.Since(modelStarted).Milliseconds()
 	if result.wrote && a.events == nil {
 		fmt.Fprintln(a.stdout)
 	}
 	if err == nil && len(result.items) == 0 {
-		err = errors.New("Codex response contained no output items")
+		err = errors.New("model response contained no output items")
 	}
 	if err != nil {
 		if eventErr := a.emit(map[string]any{"type": "model.failed", "duration_ms": modelDuration}); eventErr != nil {
@@ -184,7 +191,19 @@ func (a *agent) runTurn(ctx context.Context, sess *session, instructions string)
 		}
 		return false, err
 	}
-	if err := a.emit(map[string]any{"type": "model.completed", "total_tokens": result.totalTokens, "duration_ms": modelDuration}); err != nil {
+	completed := map[string]any{"type": "model.completed", "total_tokens": result.totalTokens, "duration_ms": modelDuration}
+	if result.usage != nil {
+		if result.usage.InputTokens != nil {
+			completed["input_tokens"] = *result.usage.InputTokens
+		}
+		if result.usage.OutputTokens != nil {
+			completed["output_tokens"] = *result.usage.OutputTokens
+		}
+		if details := result.usage.InputTokensDetails; details != nil && details.CachedTokens != nil {
+			completed["cached_input_tokens"] = *details.CachedTokens
+		}
+	}
+	if err := a.emit(completed); err != nil {
 		return false, err
 	}
 	sess.History = append(sess.History, result.items...)
@@ -212,19 +231,36 @@ func (a *agent) runTurn(ctx context.Context, sess *session, instructions string)
 }
 
 func (a *agent) compactIfNeeded(ctx context.Context, sess *session, instructions string) error {
-	if sess.ContextTokens < modelContextWindow*autoCompactPercent/100 {
+	window := a.contextWindow
+	if window == 0 {
+		window = modelContextWindow
+	}
+	if sess.ContextTokens < window*autoCompactPercent/100 {
 		return nil
 	}
-	compaction, err := a.client.compact(ctx, sess, instructions)
+	started := time.Now()
+	var history []json.RawMessage
+	var usage *tokenUsage
+	var err error
+	if a.portable {
+		backend := a.backend
+		if backend == nil {
+			backend = a.client
+		}
+		history, usage, err = portableHistory(ctx, sess, backend)
+	} else {
+		var compaction json.RawMessage
+		compaction, usage, err = a.client.compact(ctx, sess, instructions)
+		if err == nil {
+			history, err = compactedHistory(sess.History, compaction)
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("compact conversation: %w", err)
 	}
-	history, err := compactedHistory(sess.History, compaction)
-	if err != nil {
-		return err
-	}
 	next := *sess
 	next.History = history
+	next.ContextEdits = nil
 	if err := archiveTranscript(a.sessionPath, sess, &next); err != nil {
 		return err
 	}
@@ -238,7 +274,14 @@ func (a *agent) compactIfNeeded(ctx context.Context, sess *session, instructions
 		}
 	}
 	*sess = next
-	return nil
+	completed := map[string]any{"type": "compaction.completed", "duration_ms": time.Since(started).Milliseconds()}
+	if a.portable {
+		completed["strategy"] = "portable"
+	}
+	if usage != nil {
+		completed["usage"] = usage
+	}
+	return a.emit(completed)
 }
 
 func estimateInstructionTokens(instructions string) int64 {
@@ -353,6 +396,8 @@ func extractFunctionCalls(items []json.RawMessage) ([]functionCall, error) {
 
 func (a *agent) executeTool(ctx context.Context, sess *session, call functionCall) json.RawMessage {
 	switch call.Name {
+	case "edit_context":
+		return a.executeContextEdit(sess, call.Arguments)
 	case "read_skill":
 		return a.executeReadSkill(call.Arguments)
 	case "view_image":

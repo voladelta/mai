@@ -3,9 +3,10 @@
 ![mai project banner](assets/mai-banner.png)
 
 `mai` is a small coding agent for macOS and Linux. It uses your existing Codex
-ChatGPT login, so you do not need an OpenAI API key.
+ChatGPT login by default, so you do not need an OpenAI API key. An experimental
+Go Chat Completions backend supports other providers with portable compaction.
 
-The agent has 6 tools:
+The agent has 7 tools:
 
 - `bash` reads files, searches code and runs commands
 - `python` explores data and task history in a persistent Python namespace
@@ -13,6 +14,7 @@ The agent has 6 tools:
 - `read_skill` loads a skill's complete `SKILL.md`, or a required supporting file when `file` is provided
 - `view_image` shows a local image to the model
 - `spawn_subagent` runs one installed custom agent and returns its final output
+- `edit_context` shortens successful Bash stdout in future model requests while keeping the original searchable
 
 Skills are read only from `~/.agents/skills`. Each main-agent request includes
 all eligible skill names and descriptions, then loads a complete `SKILL.md` only
@@ -50,10 +52,10 @@ it needs, so the project has no third-party dependencies.
 You need:
 
 - Go 1.27 or later
-- a ChatGPT account with access to Codex
-- the Codex command-line interface
+- for the default backend: a ChatGPT account with Codex access and the Codex CLI
+- for the experimental chat backend: a supported Chat Completions endpoint and API key
 
-Log in before you run `mai`:
+For the default backend, log in before you run `mai`:
 
 ```bash
 codex login
@@ -114,12 +116,17 @@ mai "add tests for the parser" --jsonl > run.jsonl
 ```
 
 Events include `task.started`, `model.started`, `model.delta`,
-`model.completed`, `model.failed`, `tool.started`, `tool.completed`,
+`model.completed`, `model.failed`, `compaction.completed`, `tool.started`, `tool.completed`,
 `task.completed`, and `error`. Model text is
 reported in `model.delta` events instead of being printed directly. Progress
 messages remain on standard error. A `tool.completed` event includes its output
 up to 256 KiB; larger outputs report `output_bytes` and `output_omitted` instead.
 Completed model, tool, and task events include `duration_ms` for elapsed time.
+Completed model events also include `input_tokens`, `output_tokens`, and
+`cached_input_tokens` when the backend supplies them. Missing fields mean
+unavailable; `total_tokens` keeps its existing context-size meaning.
+`compaction.completed` includes elapsed time and a `usage` object with the
+backend's available token fields, so native compaction work can be counted too.
 Model duration covers the full Codex request, including any internal retry.
 Tool duration covers execution of that call; task duration covers the agent run.
 The default output remains human-readable.
@@ -131,13 +138,51 @@ New tasks use `gpt-6-luna` by default. Select `gpt-6-sol` with `-m sol` or
 `--last` to change it. Older saved tasks that used another model switch to Luna
 when resumed.
 
-Custom agents may set `model` to `gpt-6-sol` or `gpt-6-luna` in their TOML
+Use `-m gpt-6.1-sol -e m` for GPT-6.1 Sol with medium effort.
+
+Custom agents may set `model` to `gpt-6-sol`, `gpt-6.1-sol` or `gpt-6-luna` in their TOML
 file. When omitted, they use Luna.
 
 ```bash
 mai "complex refactor" -m sol
 mai "continue the refactor" --last -m luna
 ```
+
+### Portable compaction and other providers (experimental)
+
+Set `MAI_COMPACTION=portable` to use readable, model-authored continuity
+checkpoints instead of Codex encrypted compaction. The Go context owner keeps
+the current user turn and original transcript, including exact tool results.
+Checkpoints contain goals, corrections, unresolved outcomes and history search
+anchors. Consecutive identical log lines are encoded with their occurrence
+counts before summarization; unique records are folded in bounded chunks.
+Summary requests cannot execute tools. Invalid summaries leave session state
+unchanged. Native remains the default for existing Codex tasks.
+
+The opt-in Chat Completions adapter can run both coding and compaction without
+an OpenAI account. Supply a complete endpoint URL, model, key-variable name,
+and a conservative input context budget appropriate to that model:
+
+```sh
+MAI_PROVIDER=chat \
+MAI_CHAT_URL=https://api.deepseek.com/chat/completions \
+MAI_CHAT_MODEL=deepseek-flash \
+MAI_CHAT_KEY_ENV=DEEPSEEK_API_KEY \
+MAI_CONTEXT_WINDOW=65536 \
+mai "add useful tests for the parser" --persist
+```
+
+The named key must already be in the environment. It is never copied into task
+state. Use the same endpoint and model when resuming; saved chat tasks reject a
+different backend. `-m` and reasoning-effort selections apply to Codex; the
+chat model is selected through `MAI_CHAT_MODEL`. Chat automatically uses
+portable compaction at 90% of `MAI_CONTEXT_WINDOW` and buffers each response.
+The adapter supports text and function tools, not images, provider-specific
+thinking state, or every extension to the Chat Completions protocol. DeepSeek
+thinking is explicitly disabled. Native encrypted checkpoints cannot migrate
+to this backend; start a new portable task. An active turn exceeding the budget
+still needs context editing or a smaller tool output: portable compaction does
+not discard pending calls or silently truncate that turn.
 
 ## Choose reasoning effort
 
@@ -392,6 +437,36 @@ replacement history before they continue. Mai archives visible text separately
 so Python can search it after compaction or `--last`; the saved archive grows
 with the task's visible history.
 
+### Native context editing
+
+Mai provides a native Go `edit_context` tool. The model can inspect eligible
+outputs, then propose a shorter stdout summary using the returned call ID and
+digest. Each batch accepts at most eight edits. Summaries must contain 1 to
+16,384 bytes and reduce estimated request size. Digests reject stale edits, and
+Mai saves an accepted batch before using it. At 50% of the context budget, a
+request-tail reminder supplies current handles for up to eight outputs since
+the last assistant answer, with at least 16 KiB of stdout. The model can shrink
+these directly, then continue the task. The reminder leaves the system
+instructions and preceding history intact; actual cache reuse still depends on
+which output is edited.
+
+This first version edits only successful Bash stdout. It preserves stderr,
+exit status, capture paths, call IDs, item order, user instructions, and opaque
+reasoning and compaction items. Failed, timed-out, interrupted, and other tool
+outputs are not eligible. Summaries are explicitly marked as model-authored;
+they are not fresh tool evidence. Mai validates structure and size, not whether
+the model preserved every useful fact.
+
+The session stores original history plus a separate projection. `mai.history`
+continues to search original stdout, including after `--last` and native
+compaction. Compaction uses the projected request, archives the original visible
+history, and clears the superseded projection. No command is undone or replayed.
+No Node runtime or bridge is involved.
+
+Context editing can change prompt-cache reuse and add model calls. Reduced
+request size alone does not establish faster or cheaper task completion. Native
+Codex compaction remains the fallback at the existing threshold.
+
 ## Safety
 
 `apply_patch` can only change files inside the repository. It rejects paths and
@@ -424,6 +499,16 @@ To run the live history-recall eval with your Codex login:
 ```bash
 MAI_LIVE_HISTORY_EVAL=1 go test -v ./internal/mai -run '^TestLiveHistoryRecall$' -count=1
 ```
+
+To check Codex compatibility with shortened stdout and real call/reasoning items:
+
+```bash
+MAI_LIVE_CONTEXT_EDIT_EVAL=1 go test -v ./internal/mai -run '^TestLiveContextEditCompatibility$' -count=1
+```
+
+This probe supplies a synthetic successful Bash result and executes no
+model-proposed command. It checks backend acceptance and exact code retention,
+not long-task performance.
 
 In a three-pair local run, Mai recalled 3/3 random codes from archived history
 and 0/3 without it. This small probe seeds the archive in memory; deterministic

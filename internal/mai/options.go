@@ -188,7 +188,7 @@ func (out *options) normalizeSelections() error {
 	if out.modelExplicit {
 		out.model = normalizeModel(out.model)
 		if !supportedModel(out.model) {
-			return fmt.Errorf("invalid model %q (use sol or luna)", out.model)
+			return fmt.Errorf("invalid model %q (use sol, 6.1-sol or luna)", out.model)
 		}
 	}
 	return nil
@@ -244,14 +244,20 @@ const defaultModel = "luna"
 
 func normalizeModel(model string) string {
 	model = strings.ToLower(strings.TrimSpace(model))
+	if model == "gpt-6.1-sol" {
+		return "6.1-sol"
+	}
 	return strings.TrimPrefix(model, "gpt-6-")
 }
 
 func supportedModel(model string) bool {
-	return model == "sol" || model == "luna"
+	return model == "sol" || model == "6.1-sol" || model == "luna"
 }
 
 func modelID(model string) string {
+	if model == "6.1-sol" {
+		return "gpt-6.1-sol"
+	}
 	return "gpt-6-" + model
 }
 
