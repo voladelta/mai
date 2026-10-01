@@ -134,17 +134,22 @@ func TestPythonRejectsInvalidControlFrames(t *testing.T) {
 		"malformed": `{"type":"done","generation":1,"cell":1,"ok":"yes"}`,
 		"stale":     `{"type":"done","generation":1,"cell":999,"ok":true}`,
 		"extra":     `{"type":"done","generation":1,"cell":1,"ok":true,"extra":true}`,
-		"oversized": strings.Repeat("x", maxPythonFrame+1),
+		"oversized": `{"type":"done","generation":1,"cell":1,"ok":true}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			a, sess := pythonTestAgent(t)
 			code := fmt.Sprintf("import os\nos.write(4, %q.encode())", frame+"\n")
 			if name == "oversized" {
-				code = fmt.Sprintf("import os\nos.write(4, b'x' * %d)", maxPythonFrame+1)
+				// JSON whitespace makes the frame oversized without invalidating it.
+				code = fmt.Sprintf("import os\nos.write(4, b' ' * %d + %q.encode())", maxPythonFrame, frame+"\n")
 			}
+
 			result := pythonCell(t, a, sess, code)
 			if result.OK || !result.StateLost {
 				t.Fatalf("invalid frame accepted: %#v", result)
+			}
+			if name == "oversized" && !strings.Contains(result.Error, "token too long") && !strings.Contains(result.Error, "control frame exceeds 1 MiB") {
+				t.Fatalf("oversized frame rejected for an unrelated reason: %s", result.Error)
 			}
 
 			result = pythonCell(t, a, sess, "1")

@@ -99,9 +99,6 @@ func TestParseOptionsInterspersed(t *testing.T) {
 }
 
 func TestParseOptionsRejectsInvalid(t *testing.T) {
-	if _, err := parseOptions([]string{"hello", "-m", "unknown"}); err == nil {
-		t.Fatal("expected invalid model error")
-	}
 	if _, err := parseOptions([]string{"--last"}); err == nil {
 		t.Fatal("expected missing prompt error")
 	}

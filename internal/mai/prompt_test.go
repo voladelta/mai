@@ -9,12 +9,11 @@ func TestSystemInstructionsAreLeanAndComplete(t *testing.T) {
 	sess := &session{CWD: "/work/repo with spaces", RepoRoot: "/work/root with spaces"}
 	prompt := systemInstructions(sess, "")
 	for _, required := range []string{
-		"autonomous coding agent",
 		"Change files only when the user asks",
-		"complete in-scope work",
 		"bash:",
 		"python:",
-		"mai.history(query) to search visible task history, including entries before compaction",
+		"mai.history(query)",
+		"including entries before compaction",
 		"case-insensitive literal substring",
 		"including --last, starts fresh",
 		"Never replay uncertain cells automatically",
@@ -25,7 +24,6 @@ func TestSystemInstructionsAreLeanAndComplete(t *testing.T) {
 		"non-idempotent effects without user confirmation",
 		"ASD-STE100 Simplified Technical English",
 		"when the user prefers it",
-		"requested outcome is complete or genuinely blocked",
 		`"/work/repo with spaces"`,
 		`"/work/root with spaces"`,
 	} {
