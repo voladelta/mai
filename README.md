@@ -6,17 +6,16 @@ Mai is a small coding agent for macOS and Linux, built in Go. It uses the
 DeepSeek Responses API for streaming, reasoning and function tools. Portable
 checkpoints keep long tasks moving while original history remains searchable.
 
-The agent has 7 tools:
+The agent has 6 tools:
 
 - `bash` reads files, searches code and runs commands
 - `python` explores data and task history in a persistent Python namespace
 - `apply_patch` creates, changes, moves and deletes files
 - `read_skill` loads a skill's complete `SKILL.md`, or a required supporting file when `file` is provided
 - `view_image` shows a local image to the model
-- `spawn_subagent` runs one installed custom agent and returns its final output
 - `edit_context` shortens successful Bash stdout in future model requests while keeping the original searchable
 
-Skills are read only from `~/.agents/skills`. Each main-agent request includes
+Skills are read only from `~/.agents/skills`. Each model request includes
 all eligible skill names and descriptions, then loads a complete `SKILL.md` only
 when needed. Each skill description must be 1,024 characters or fewer.
 Set `policy.allow_implicit_invocation` to `false` in `agents/openai.yaml` to hide
@@ -26,23 +25,6 @@ resolution of explicit `$skill-name` mentions. The flag also works with
 `--last` and must be passed again on each resumed run. The `read_skill` tool
 remains available when you know a skill's directory id.
 Images use typed image output; other binary files are rejected.
-
-Custom agents are read from `~/.agents/agents`, or the directory specified by
-`MAI_AGENTS_DIR`. Each `<name>.toml` file must define matching `name`,
-`description`, and `developer_instructions` fields, plus a reasoning effort.
-
-Choose an installed agent, such as `implementor` for an assigned code change or
-`verifier` for an independent review. Run a custom agent directly with:
-
-```bash
-mai --subagent verifier "Review the current diff against the task contract"
-```
-
-This mode uses the model, effort, and developer instructions from the selected
-agent's TOML file. It implies `--no-input` and cannot be combined with
-`--persist`, `--last`, `--effort`, or `--model`. A custom subagent does not
-receive the general skill catalog. Its developer instructions must identify any
-required skills.
 
 The DeepSeek Responses backend uses server-sent events (SSE). The Go standard library
 provides everything it needs, so the project has no third-party dependencies.
@@ -145,8 +127,6 @@ mai "review this implementation" -m ds-pro -e max
 | `ds-flash` | `deepseek-flash` | `l` / `low`, `h` / `high`, `max` | `high` |
 | `ds-pro` | `deepseek-v4-pro` | `l` / `low`, `h` / `high`, `max` | `high` |
 
-Custom agents may use these aliases with `model_reasoning_effort = "low"`, `"high"`, or `"max"`.
-
 Responses stream through the existing text and function-tool flow. Mai replays
 the full local history, including DeepSeek's plain reasoning between tool calls;
 the API does not retain conversations. Each request allows up to 32,768 output
@@ -202,6 +182,20 @@ mai "continue the refactor" --last -e max
 
 ## Timeouts and interactive input
 
+Each run allows up to 64 model turns by default. Use `--max-turns` with a
+positive integer to set a different limit for longer or shorter tasks:
+
+```bash
+mai "complete the migration" --max-turns 128 --persist
+mai "continue the migration" --last --max-turns 128
+```
+
+A turn is one model request and execution of its returned tool calls. A final
+answer also consumes a turn. The limit applies to the current run and is not
+saved; `--last` defaults to 64 unless you pass `--max-turns` again. When the
+limit is reached, Mai stops with an error after saving completed work for a
+persisted task, which you can continue with `--last`.
+
 Each DeepSeek Responses request has a 10-minute time-to-first-byte and idle timeout. Each
 received stream chunk restarts the idle timer, so an active response can run
 longer than 10 minutes. Set a different positive Go-style duration when necessary:
@@ -213,13 +207,8 @@ mai "investigate the failure" --timeout 20m
 Failed requests return an error. Mai does not automatically replay a failed
 request or tool call.
 
-Each Python cell has a separate 10-minute wall-clock limit, and each subagent
-has a separate one-hour wall-clock limit. Change them with `--cell-timeout` and
-`--subagent-timeout`; `--timeout` still controls each subagent request. A parent
-runs one child at a time. The child uses the parent's working directory, starts
-with new in-memory history, and cannot spawn another child. The parent receives
-the child's final standard output. Failed calls also include the child's
-standard error.
+Each Python cell has a separate 10-minute wall-clock limit. Change it with
+`--cell-timeout`; `--timeout` controls model requests.
 
 Each `bash` result reports its duration and original output byte counts. Mai
 keeps at most 64 KiB from each stream. For longer output, it preserves the
@@ -304,47 +293,13 @@ For saved tasks, compacted visible text is stored in a `.transcript.jsonl` file
 beside the session JSON. Older saved tasks migrate their inline transcript on
 the next compaction. Keep both files when moving or backing up a saved task.
 
-`await mai.apply_patch(patch)` applies a repository patch, and
-`await mai.spawn_subagent(name, prompt)` returns a completed child result.
-These calls use the same validation, approvals, and repository boundaries as
-direct tool calls. Children cannot spawn children. Host operations run in
-sequence, with at most eight pending requests and 64 effectful calls per cell.
-Read-only history searches and child status requests do not consume that budget.
+`await mai.apply_patch(patch)` applies a repository patch. Host calls use the
+same validation, approvals, and repository boundaries as direct tool calls.
+Host operations run in sequence, with at most eight pending requests and 64
+effectful calls per cell.
+Read-only history searches do not consume that budget.
 The bridge accepts calls only from the cell's Python thread. It does not expose
 recursive Python calls.
-
-Use `mai.spawn` for background work when subagent use is authorized:
-
-```python
-first = await mai.spawn("verifier", "Review the storage changes against the task contract")
-second = await mai.spawn("verifier", "Review the API changes against the task contract")
-# Both children run independently, including between cells.
-first_result = await first.wait()
-second_result = await second.wait()
-```
-
-`await first.status()` returns the child ID, name, status, and terminal result
-when available. `await first.cancel()` cancels and reaps the child, then returns
-its terminal status and result. Cancellation is idempotent. Repeated waits return
-the same result. Cancelling a wait, including with `asyncio.wait_for`, leaves the
-child running. Waiting polls every 100 ms and does not block other host operations.
-
-Go owns a maximum of four active background children and 64 retained background
-child records per task, including across Python resets and persisted-task
-resumes. Admission rejects overload; it never queues or retries a child. Start a
-new task after the retained record limit is reached. Handles survive cells,
-ordinary Python exceptions, and conversation compaction. Reset, kernel loss, parent
-cancellation, and shutdown cancel and reap children. Each child has its own
-`--subagent-timeout` deadline, independent of its spawning cell. Ordinary leftover Python
-tasks are still cancelled at cell completion.
-
-Persisted tasks keep a bounded `.children.json` journal beside the session file.
-Admission is saved before the process starts, and completion is saved even when
-Python is idle. A save failure prevents new admissions; an unsaved result has an
-unknown outcome. On restart, no live handles are restored. Unfinished children
-become unknown, and saved child IDs, statuses, and short result summaries appear
-in task guidance. Inspect effects before deciding whether new work is safe;
-Mai never relaunches a recovered child automatically.
 
 State survives conversation compaction, but ends when Mai exits. `--last` restores
 conversation history only; it starts a new Python environment. Results report the
@@ -362,7 +317,7 @@ replayed automatically.
 
 An exception can leave partial changes in the namespace. A timeout, cancellation,
 or kernel failure discards it and stops owned processes. Owner-lifetime watchers
-also stop the Python, Bash, and child-agent process groups if Mai is forcibly
+also stop the Python and Bash process groups if Mai is forcibly
 killed. Descendants that deliberately leave those process groups are outside this
 cleanup. External effects can remain; failed cells are never retried automatically.
 Python is not sandboxed and has Mai's OS access. Interactive input is unsupported.
@@ -373,6 +328,33 @@ finish cleanup. Cells must finish scheduled callbacks, background threads, and
 subprocess work before returning; output from work left running cannot be
 attributed reliably. Native libraries must flush their own buffered output before
 the cell returns.
+
+### Delegation through the CLI
+
+When delegation is authorized, the model can launch another ordinary Mai run
+through `bash` or Python's `subprocess`. Install `mai` on `PATH`, or use the
+binary's absolute path. For example:
+
+```bash
+mai --no-input --max-turns 32 -- "Act as a reviewer. Inspect the current diff, report actionable findings, and do not change files or delegate further."
+```
+
+Supply a complete task, role, and file scope in the prompt. Each run starts
+with fresh conversation history and discovers skills normally. It inherits
+the working directory and environment, including API credentials. Model,
+effort, and turn limits use CLI defaults unless passed explicitly.
+
+Use stateless runs for delegation so they do not change `.mai/current` or
+contend for the parent's saved task. Wait for completion, capture stdout and
+stderr, and inspect effects before retrying an interrupted run. For concurrent
+work, give each run separate file ownership or a separate workspace.
+
+Nested runs share the enclosing tool's lifetime: Bash defaults to two minutes
+and allows up to ten minutes through `timeout_ms`; Python uses `--cell-timeout`.
+The nested run's `--timeout` controls its model requests and does not extend
+the enclosing tool's deadline. Python subprocesses must finish before the cell
+returns. Mai provides no dedicated role configurations, background handles,
+child journals, or enforced recursion limit for these ordinary CLI runs.
 
 ## Authentication
 
@@ -405,12 +387,8 @@ Effort changes are sent at the request's top level, without rewriting earlier
 history. DeepSeek caching is automatic and depends on matching prefixes and
 cache lifetime. Mai does not send server-side conversation IDs or cache keys.
 
-Model tool calls and synchronous `spawn_subagent` calls run in sequence. Python
-cells can await host tools, whose operations also run in sequence. Children
-started with `mai.spawn` run concurrently. Mid-turn steering is not enabled.
-
-Children never create their own saved tasks. A persisted parent saves the
-`spawn_subagent` call and its returned result in the parent task history.
+Model tool calls run in sequence. Python cells can await host tools, whose
+operations also run in sequence. Mid-turn steering is not enabled.
 
 Mai tracks the active context size reported by DeepSeek. The default budget is
 1,000,000 tokens; `MAI_CONTEXT_WINDOW` can lower it.
@@ -455,10 +433,6 @@ At the context threshold, Mai builds a portable checkpoint.
 symbolic links that lead outside the repository.
 
 `bash` can run any command available to your shell. It is not sandboxed.
-
-A custom agent runs as a new `mai` process with the same file and command access
-as its parent. Agent configuration fields such as `sandbox_mode` do not reduce
-that access.
 
 `mai` checks recognisable `rm` commands before it runs them. It asks for approval
 when a target is outside the repository or cannot be resolved safely.

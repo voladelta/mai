@@ -26,7 +26,12 @@ func pythonTestAgent(t *testing.T) (*agent, *session) {
 	if _, err := exec.LookPath(python); err != nil {
 		t.Skipf("Python runtime unavailable: %v", err)
 	}
-	a := &agent{stderr: io.Discard, requestTimeout: 5 * time.Second, cellTimeout: 5 * time.Second, subagentTimeout: time.Minute}
+	a := &agent{
+		stderr:         io.Discard,
+		requestTimeout: 5 * time.Second,
+		cellTimeout:    5 * time.Second,
+		maxTurns:       defaultMaxTurns,
+	}
 	t.Cleanup(a.python.close)
 	return a, &session{CWD: t.TempDir()}
 }
@@ -365,8 +370,8 @@ func TestPythonCompilesWholeCellBeforeEffects(t *testing.T) {
 }
 
 // This helper is a real Go owner with a real kernel and no deferred cleanup.
-// runSubagentProcess must stop it and its Python group by forced termination.
-func TestPythonSubagentOwnerHelper(t *testing.T) {
+// Bash cancellation must stop it and its Python group by forced termination.
+func TestPythonBashOwnerHelper(t *testing.T) {
 	if os.Getenv("MAI_TEST_PYTHON_OWNER") != "1" {
 		return
 	}
@@ -385,7 +390,7 @@ print(os.getpid(), child.pid)`, false, time.Minute, nil)
 	t.Fatalf("owner unexpectedly returned: %#v", result)
 }
 
-func TestPythonSubagentOwnerDeathStopsProcessGroup(t *testing.T) {
+func TestPythonBashOwnerDeathStopsProcessGroup(t *testing.T) {
 	pythonTestAgent(t)
 	executable, err := os.Executable()
 	if err != nil {
@@ -396,7 +401,7 @@ func TestPythonSubagentOwnerDeathStopsProcessGroup(t *testing.T) {
 		t.Run(strconv.FormatBool(cancelled), func(t *testing.T) {
 			root := t.TempDir()
 			wrapper := filepath.Join(root, "owner")
-			script := "#!/bin/sh\nexec '" + strings.ReplaceAll(executable, "'", "'\\''") + "' -test.run=^TestPythonSubagentOwnerHelper$\n"
+			script := "#!/bin/sh\nexec '" + strings.ReplaceAll(executable, "'", "'\\''") + "' -test.run=^TestPythonBashOwnerHelper$\n"
 			if err := os.WriteFile(wrapper, []byte(script), 0700); err != nil {
 				t.Fatal(err)
 			}
@@ -409,8 +414,12 @@ func TestPythonSubagentOwnerDeathStopsProcessGroup(t *testing.T) {
 				timeout = 10 * time.Second
 			}
 			go func() {
-				result, err := runSubagentProcess(ctx, wrapper, testSubagentLimits(timeout), root, "test", "wait")
-				done <- encodeSubagentResult(result, err)
+				done <- runBash(ctx, bashRequest{
+					Command:   "exec '" + strings.ReplaceAll(wrapper, "'", "'\\''") + "'",
+					TimeoutMS: int(timeout / time.Millisecond),
+					CWD:       root,
+					RepoRoot:  root,
+				})
 			}()
 
 			var kernelPID, childPID int
@@ -431,8 +440,12 @@ func TestPythonSubagentOwnerDeathStopsProcessGroup(t *testing.T) {
 				cancel()
 			}
 
-			result := decodeSubagentResult(t, <-done)
-			if result.OK || result.Cancelled != cancelled || result.TimedOut == cancelled {
+			var result bashResult
+			if err := json.Unmarshal([]byte(<-done), &result); err != nil {
+				t.Fatal(err)
+			}
+
+			if result.OK || result.ExitCode == 0 || result.TimedOut == cancelled {
 				t.Fatalf("termination result: %#v", result)
 			}
 

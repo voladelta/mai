@@ -8,7 +8,7 @@ import (
 )
 
 func TestApplyPatchToolDescribesRepositoryRootPaths(t *testing.T) {
-	for _, definition := range toolDefinitions(false) {
+	for _, definition := range toolDefinitions() {
 		if definition["name"] != "apply_patch" {
 			continue
 		}

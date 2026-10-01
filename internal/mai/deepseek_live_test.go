@@ -30,7 +30,7 @@ func TestLiveDeepSeekResponses(t *testing.T) {
 					t.Fatal(err)
 				}
 				path := filepath.Join(t.TempDir(), "session.json")
-				a := newAgent(io.Discard, io.Discard, path, 2*time.Minute, false, nil)
+				a := newAgent(io.Discard, io.Discard, path, 2*time.Minute, false)
 				if err := a.configureBackend(sess); err != nil {
 					t.Fatal(err)
 				}

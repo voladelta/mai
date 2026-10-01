@@ -159,52 +159,14 @@ def main():
     async def apply_patch(patch):
         return await host_call("apply_patch", {"patch": patch})
 
-    async def spawn_subagent(name, prompt):
-        return await host_call("spawn_subagent", {"name": name, "prompt": prompt})
-
     async def history(query, limit=20, start=0):
         result = await host_call("history", {"query": query, "limit": limit, "start": start})
         if "error" in result:
             raise ValueError(result["error"])
         return result
 
-    class Child:
-        def __init__(self, identifier):
-            self.id = identifier
-
-        def __repr__(self):
-            return "mai.Child(%r)" % self.id
-
-        async def status(self):
-            result = await host_call("child_status", {"id": self.id})
-            if "error" in result:
-                raise RuntimeError(result["error"])
-            return result
-
-        async def cancel(self):
-            result = await host_call("child_cancel", {"id": self.id})
-            if "error" in result:
-                raise RuntimeError(result["error"])
-            return result
-
-        async def wait(self):
-            while True:
-                result = await self.status()
-                if result["status"] != "running":
-                    if result["status"] == "unknown":
-                        raise RuntimeError("Child outcome is unknown; do not relaunch automatically")
-                    return result["result"]
-                await asyncio.sleep(0.1)
-
-    async def spawn(name, prompt):
-        result = await host_call("spawn", {"name": name, "prompt": prompt})
-        if "error" in result:
-            raise RuntimeError(result["error"])
-        return Child(result["id"])
-
-    mai.bash, mai.apply_patch, mai.spawn_subagent = bash, apply_patch, spawn_subagent
+    mai.bash, mai.apply_patch = bash, apply_patch
     mai.history = history
-    mai.spawn = spawn
     sys.modules["mai"] = mai
     module = types.ModuleType("__main__")
     sys.modules["__main__"] = module

@@ -34,7 +34,6 @@ type pythonKernel struct {
 	runtime    *pythonRuntime
 	messages   chan pythonMessage
 	readStop   chan struct{}
-	children   *childRegistry
 }
 
 type pythonResult struct {
@@ -58,9 +57,6 @@ type pythonResult struct {
 }
 
 func (k *pythonKernel) stop() {
-	if k.children != nil {
-		k.children.stop()
-	}
 	if k.cmd == nil {
 		return
 	}
@@ -143,12 +139,8 @@ func (k *pythonKernel) start(cwd string) error {
 	go readPythonFrames(responseR, k.messages, k.readStop)
 	wait := make(chan error, 1)
 	k.wait = wait
-	children := k.children
 	go func() {
 		err := cmd.Wait()
-		if children != nil {
-			children.stop()
-		}
 		wait <- err
 		close(wait)
 	}()
@@ -302,15 +294,8 @@ func (a *agent) executePython(ctx context.Context, sess *session, arguments stri
 		return textToolOutput(toolError("invalid python arguments", err))
 	}
 	fmt.Fprintln(a.stderr, "→ python")
-	if err := a.prepareChildren(); err != nil {
-		a.children = &childRegistry{runs: make(map[string]*childRun), failure: err}
-	}
-	if a.python.cmd == nil && a.children.isClosed() {
-		a.children = a.children.nextGeneration()
-	}
-	a.python.children = a.children
 	start := len(sess.PythonActivities)
-	result := a.python.execute(ctx, sess.CWD, code, reset, a.cellTimeout, a.pythonOperations(ctx, sess, outerCall))
+	result := a.python.execute(ctx, sess.CWD, code, reset, a.cellTimeout, a.pythonOperations(sess, outerCall))
 	result.Activities, result.ActivitiesOmitted = summarizePythonActivities(sess.PythonActivities[start:])
 	return textToolOutput(marshalToolResult(result))
 }

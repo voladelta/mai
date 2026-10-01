@@ -43,13 +43,7 @@ assert result['stderr'] == 'error'`)
 		t.Fatalf("rejected operation changed file: %v", err)
 	}
 
-	a.customAgent = &customAgent{Name: "child"}
-	result = pythonCell(t, a, sess, "result = await mai.spawn_subagent('other', 'work')\nassert 'cannot spawn' in result['error']")
-	if !result.OK || result.Activities[0].Status != "failed" {
-		t.Fatalf("child restriction: %#v", result)
-	}
-
-	if _, ok := a.pythonOperations(context.Background(), sess, "outer")["python"]; ok {
+	if _, ok := a.pythonOperations(sess, "outer")["python"]; ok {
 		t.Fatal("recursive Python was accepted")
 	}
 }
@@ -277,7 +271,7 @@ func TestPythonCancellationDuringHostApproval(t *testing.T) {
 	done := make(chan pythonResult, 1)
 	go func() {
 		code := fmt.Sprintf("await mai.bash(%q)", "rm "+outside)
-		done <- a.python.execute(ctx, sess.CWD, code, false, 5*time.Second, a.pythonOperations(ctx, sess, "outer"))
+		done <- a.python.execute(ctx, sess.CWD, code, false, 5*time.Second, a.pythonOperations(sess, "outer"))
 	}()
 	select {
 	case <-started:

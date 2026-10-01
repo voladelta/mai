@@ -25,7 +25,6 @@ Usage:
 
 Examples:
   mai "add tests for the parser"
-  mai --subagent verifier "review the current diff"
   mai "start a saved task" --persist
   mai "now fix the failing test" --last
   mai "refactor this" -e h
@@ -38,13 +37,12 @@ Options:
   --last                 Resume the current saved task in the current project.
   -e, --effort EFFORT    Use l, h, or max (low, high, max).
   -m, --model MODEL      Use ds-flash or ds-pro for this task.
+  --max-turns COUNT      Set the model-turn limit for this run (default: 64).
   --timeout DURATION     Set the per-request first-byte/idle timeout (default: 10m).
   --cell-timeout DURATION      Set the wall-clock limit for each Python cell (default: 10m).
-  --subagent-timeout DURATION  Set the wall-clock limit for each subagent run (default: 1h).
   --no-input             Do not ask for interactive approval.
   -s, --skip-skills      Skip skill discovery for this run.
   --jsonl                 Write task, model, and tool events as JSON Lines.
-  --subagent NAME        Run with an installed custom agent.
 
 Tasks are stateless unless you use --persist or --last.
 The built-in default is ds-flash/high.
@@ -95,26 +93,12 @@ func runTask(opts options, stdout, stderr io.Writer) int {
 		return 1
 	}
 	taskCfg := configForTask(opts)
-	var selectedAgent *customAgent
-	if opts.subagent != "" {
-		root, err := defaultAgentsRoot()
-		if err != nil {
-			return reportError(err)
-		}
-		loaded, err := loadCustomAgent(root, opts.subagent)
-		if err != nil {
-			return reportError(err)
-		}
-		selectedAgent = &loaded
-		taskCfg.Model = loaded.Model
-		taskCfg.Effort = loaded.Effort
-	}
 	active, err := startSession(taskCfg, opts)
 	if err != nil {
 		return reportError(err)
 	}
 	defer active.close()
-	runner := newAgent(stdout, stderr, active.path, opts.timeout, !opts.noInput && isTerminal(os.Stdin), selectedAgent)
+	runner := newAgent(stdout, stderr, active.path, opts.timeout, !opts.noInput && isTerminal(os.Stdin))
 	if opts.jsonl {
 		runner.modelOutput = jsonlTextWriter{output: stdout}
 	}
@@ -143,7 +127,7 @@ func runTask(opts options, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	runner.cellTimeout = opts.cellTimeout
-	runner.subagentTimeout = opts.subagentTimeout
+	runner.maxTurns = opts.maxTurns
 	runner.skipSkills = opts.skipSkills
 	if opts.jsonl {
 		runner.events = stdout

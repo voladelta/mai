@@ -36,6 +36,101 @@ func TestMainWithoutPromptShowsBuiltInDefault(t *testing.T) {
 	}
 }
 
+func TestMainEnforcesMaxTurns(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		args      []string
+		finalTurn int
+		wantTurns int
+		wantCode  int
+	}{
+		{name: "default stops at 64", args: []string{"work"}, wantTurns: 64, wantCode: 1},
+		{name: "custom limit", args: []string{"work", "--max-turns=2"}, wantTurns: 2, wantCode: 1},
+		{name: "completion at limit", args: []string{"work", "--max-turns=2"}, finalTurn: 2, wantTurns: 2},
+		{name: "more than 64", args: []string{"work", "--max-turns=65"}, finalTurn: 65, wantTurns: 65},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			writeTestDeepSeekConfig(t)
+			requests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests++
+				if requests == test.finalTurn {
+					deepseekTestResponse(w, `[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}]`)
+					return
+				}
+
+				call := functionCall{
+					Type:      "function_call",
+					CallID:    fmt.Sprintf("call-%d", requests),
+					Name:      "edit_context",
+					Arguments: `{"action":"inspect"}`,
+				}
+				deepseekTestResponse(w, string(mustJSON(t, []functionCall{call})))
+			}))
+			defer server.Close()
+			t.Setenv("MAI_DEEPSEEK_URL", server.URL)
+
+			var stdout, stderr bytes.Buffer
+			if code := Main(test.args, &stdout, &stderr); code != test.wantCode {
+				t.Fatalf("exit code = %d, want %d; stderr = %s", code, test.wantCode, stderr.String())
+			}
+
+			if requests != test.wantTurns {
+				t.Fatalf("model requests = %d, want %d", requests, test.wantTurns)
+			}
+
+			if test.wantCode != 0 && !strings.Contains(stderr.String(), fmt.Sprintf("agent stopped after %d model turns", test.wantTurns)) {
+				t.Fatalf("stderr = %s", stderr.String())
+			}
+		})
+	}
+}
+
+func TestMaxTurnsKeepsCompletedToolResultForResume(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeTestDeepSeekConfig(t)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests == 1 {
+			deepseekTestResponse(w, `[{"type":"function_call","call_id":"saved-call","name":"bash","arguments":"{\"command\":\"printf saved-result\"}"}]`)
+			return
+		}
+
+		var body struct {
+			Input []json.RawMessage `json:"input"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+			return
+		}
+
+		if len(body.Input) != 4 || !bytes.Contains(body.Input[2], []byte("saved-result")) || !bytes.Contains(body.Input[2], []byte("saved-call")) {
+			t.Errorf("resume input lost completed tool result: %s", mustJSON(t, body.Input))
+		}
+
+		deepseekTestResponse(w, `[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}]`)
+	}))
+	defer server.Close()
+	t.Setenv("MAI_DEEPSEEK_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	if code := Main([]string{"work", "--persist", "--max-turns=1"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "stopped after 1 model turns") {
+		t.Fatalf("limited run: exit code = %d, stderr = %s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := Main([]string{"continue", "--last", "--max-turns=2"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("resume: exit code = %d, stderr = %s", code, stderr.String())
+	}
+
+	if requests != 2 || stdout.String() != "done\n" {
+		t.Fatalf("resume requests = %d, stdout = %q", requests, stdout.String())
+	}
+}
+
 func TestMainJSONLProducesOnlyEventsOnStdout(t *testing.T) {
 	t.Chdir(t.TempDir())
 	writeTestDeepSeekConfig(t)
@@ -258,7 +353,6 @@ func TestToolCompletedEventFailureKeepsSavedResult(t *testing.T) {
 func TestStatelessTaskDoesNotCreateMaiDirectory(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
-	t.Setenv("MAI_AGENTS_DIR", t.TempDir())
 	writeTestDeepSeekFailureServer(t)
 	var stdout, stderr bytes.Buffer
 	if code := Main([]string{"hello"}, &stdout, &stderr); code != 1 {
@@ -272,7 +366,6 @@ func TestStatelessTaskDoesNotCreateMaiDirectory(t *testing.T) {
 func TestPersistCreatesProjectSessionAndCurrentPointer(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
-	t.Setenv("MAI_AGENTS_DIR", t.TempDir())
 	writeTestDeepSeekFailureServer(t)
 	var stdout, stderr bytes.Buffer
 	if code := Main([]string{"hello", "--persist", "-e", "h"}, &stdout, &stderr); code != 1 {
@@ -382,7 +475,7 @@ func TestMainHelpDocumentsPersistenceOptions(t *testing.T) {
 	if code := Main([]string{"--unknown", "--help"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
-	for _, text := range []string{"--effort", "--model", "--persist", "--last", "--timeout", "--cell-timeout", "--subagent-timeout", "--no-input", "--subagent", "Documentation and support"} {
+	for _, text := range []string{"--effort", "--model", "--persist", "--last", "--max-turns", "--timeout", "--cell-timeout", "--no-input", "Documentation and support"} {
 		if !strings.Contains(stdout.String(), text) {
 			t.Fatalf("help is missing %q:\n%s", text, stdout.String())
 		}

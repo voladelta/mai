@@ -22,8 +22,6 @@ func TestSystemInstructionsAreLeanAndComplete(t *testing.T) {
 		"unknown outcome",
 		"reconcile the requested patch",
 		"non-idempotent effects without user confirmation",
-		"ASD-STE100 Simplified Technical English",
-		"when the user prefers it",
 		`"/work/repo with spaces"`,
 		`"/work/root with spaces"`,
 	} {

@@ -91,7 +91,7 @@ func TestDeepSeekResponsesToolReasoningAndResume(t *testing.T) {
 	t.Setenv("MAI_DEEPSEEK_URL", server.URL+"/responses")
 	sess := deepseekTestSession(t)
 	path := filepath.Join(t.TempDir(), "session.json")
-	a := newAgent(io.Discard, io.Discard, path, time.Second, false, nil)
+	a := newAgent(io.Discard, io.Discard, path, time.Second, false)
 	if err := a.configureBackend(sess); err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,6 @@ func TestDeepSeekRejectsIncompleteResponsesAndOpaqueHistory(t *testing.T) {
 
 func TestDeepSeekCLIResumeChangesEffortWithoutCodexItems(t *testing.T) {
 	t.Chdir(t.TempDir())
-	t.Setenv("MAI_AGENTS_DIR", t.TempDir())
 	t.Setenv("DEEPSEEK_API_KEY", "private-test-key")
 	t.Setenv("MAI_CONTEXT_WINDOW", "")
 	requests := 0
@@ -237,7 +236,7 @@ func TestDeepSeekIdleTimeoutAndRedirectIsolation(t *testing.T) {
 			t.Setenv("MAI_CONTEXT_WINDOW", "")
 			t.Setenv("MAI_DEEPSEEK_URL", server.URL)
 			sess := deepseekTestSession(t)
-			a := newAgent(io.Discard, io.Discard, "", 30*time.Millisecond, false, nil)
+			a := newAgent(io.Discard, io.Discard, "", 30*time.Millisecond, false)
 			if err := a.configureBackend(sess); err != nil {
 				t.Fatal(err)
 			}

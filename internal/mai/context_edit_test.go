@@ -449,7 +449,7 @@ func TestAgentExecutesContextEditWithoutReplayingBash(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	a := newAgent(io.Discard, io.Discard, filepath.Join(sess.CWD, "session.json"), time.Second, false, nil)
+	a := newAgent(io.Discard, io.Discard, filepath.Join(sess.CWD, "session.json"), time.Second, false)
 	a.backend = &deepseekClient{httpClient: server.Client(), stdout: io.Discard, endpoint: server.URL}
 	for turn := 0; turn < 3; turn++ {
 		done, err := a.runTurn(context.Background(), sess, "instructions")
@@ -468,7 +468,7 @@ func TestAgentExecutesContextEditWithoutReplayingBash(t *testing.T) {
 func TestPortableCompactionReceivesProjectionButArchivesOriginal(t *testing.T) {
 	sess := contextEditFixture(t)
 	path := filepath.Join(sess.CWD, "session.json")
-	a := newAgent(io.Discard, io.Discard, path, time.Second, false, nil)
+	a := newAgent(io.Discard, io.Discard, path, time.Second, false)
 	shrinkContext(t, a, sess, contextDigest(sess.History[3]), "Build completed")
 	if err := appendUserPrompt(sess, "continue"); err != nil {
 		t.Fatal(err)

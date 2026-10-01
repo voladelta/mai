@@ -244,8 +244,8 @@ func compactJSON(raw json.RawMessage) string {
 	return b.String()
 }
 
-func toolDefinitions(allowSubagents bool) []map[string]any {
-	definitions := []map[string]any{
+func toolDefinitions() []map[string]any {
+	return []map[string]any{
 		{
 			"type": "function", "name": "edit_context",
 			"description": "Shorten completed successful Bash stdout in future model requests, preserving originals for history search. Shrink directly with current call IDs and digests supplied in context hints, or inspect to obtain them. Keep exact facts, corrections and decisions still needed for the task. Summaries are model-authored context, not fresh evidence. Other output fields and request items stay intact. This changes context only, never command effects. Each summary must reduce estimated size. Prefer large obsolete outputs when savings justify another request. Continue the task after editing.",
@@ -331,19 +331,4 @@ func toolDefinitions(allowSubagents bool) []map[string]any {
 			},
 		},
 	}
-	if allowSubagents {
-		definitions = append(definitions, map[string]any{
-			"type": "function", "name": "spawn_subagent",
-			"description": "Run one installed custom agent synchronously in a stateless mai subprocess. The call returns after the child completes.",
-			"parameters": map[string]any{
-				"type": "object", "additionalProperties": false,
-				"properties": map[string]any{
-					"name":   map[string]string{"type": "string", "description": "The custom agent name shown in the instructions."},
-					"prompt": map[string]string{"type": "string", "description": "The complete task for the child agent."},
-				},
-				"required": []string{"name", "prompt"},
-			},
-		})
-	}
-	return definitions
 }

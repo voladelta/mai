@@ -19,14 +19,6 @@ func TestRegularFileReadersRejectFIFOWithoutWriter(t *testing.T) {
 			_, err := viewImage(filepath.Dir(path), filepath.Dir(path), path)
 			return err
 		}},
-		{name: "custom_agent", read: func(path string) error {
-			_, err := loadCustomAgentFile(path)
-			return err
-		}},
-		{name: "child_journal", read: func(path string) error {
-			_, err := openChildRegistry(strings.TrimSuffix(path, ".children.json"))
-			return err
-		}},
 		{name: "saved_state", read: func(path string) error {
 			_, err := readRegularFile(path)
 			return err
@@ -42,7 +34,7 @@ func TestRegularFileReadersRejectFIFOWithoutWriter(t *testing.T) {
 
 	for _, reader := range readers {
 		t.Run(reader.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "input.children.json")
+			path := filepath.Join(t.TempDir(), "input")
 			if err := syscall.Mkfifo(path, 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -124,55 +116,5 @@ func TestReadSkillSizeBoundaryAndInternalSymlink(t *testing.T) {
 	mustWrite(t, path, content+"a")
 	if _, err := readSkill(root, "demo", "link.txt"); err == nil || !strings.Contains(err.Error(), "skill file limit") {
 		t.Fatalf("oversize skill error = %v", err)
-	}
-}
-
-func TestLoadCustomAgentFileSizeBoundaryAndSymlink(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "demo.toml")
-	content := "name = \"demo\"\ndescription = \"Demo\"\ndeveloper_instructions = \"Do the work\"\nmodel_reasoning_effort = \"high\"\n#"
-	content += strings.Repeat("a", maxAgentFileBytes-len(content))
-	mustWrite(t, path, content)
-
-	if _, err := loadCustomAgentFile(path); err != nil {
-		t.Fatalf("exact-limit configuration: %v", err)
-	}
-
-	link := path + ".link"
-	if err := os.Symlink(path, link); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := loadCustomAgentFile(link); err == nil {
-		t.Fatal("accepted configuration symlink")
-	}
-
-	mustWrite(t, path, content+"a")
-	if _, err := loadCustomAgentFile(path); err == nil || !strings.Contains(err.Error(), "agent configuration exceeds") {
-		t.Fatalf("oversize configuration error = %v", err)
-	}
-}
-
-func TestChildJournalRejectsOversizeAndSymlink(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "session")
-	journal := path + ".children.json"
-	target := filepath.Join(t.TempDir(), "journal")
-	mustWrite(t, target, "[]")
-	if err := os.Symlink(target, journal); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := openChildRegistry(path); err == nil || !strings.Contains(err.Error(), "read child journal") {
-		t.Fatalf("symlink journal error = %v", err)
-	}
-
-	if err := os.Remove(journal); err != nil {
-		t.Fatal(err)
-	}
-	mustWrite(t, journal, "[]")
-	if err := os.Truncate(journal, maxChildJournalBytes+1); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := openChildRegistry(path); err == nil || !strings.Contains(err.Error(), "bounded regular file") {
-		t.Fatalf("oversize journal error = %v", err)
 	}
 }

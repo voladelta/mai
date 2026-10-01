@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -77,7 +76,6 @@ func writeTestDeepSeekConfig(t *testing.T) {
 	t.Helper()
 	t.Setenv("DEEPSEEK_API_KEY", "test-key")
 	t.Setenv("MAI_CONTEXT_WINDOW", "")
-	t.Setenv("MAI_AGENTS_DIR", filepath.Join(t.TempDir(), "agents"))
 }
 
 func writeTestDeepSeekFailureServer(t *testing.T) {

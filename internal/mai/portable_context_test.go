@@ -42,7 +42,7 @@ func TestPortableCheckpointArchivesOriginalAndRetainsActiveTurn(t *testing.T) {
 	before, _ := json.Marshal(sess)
 	last := append(json.RawMessage(nil), sess.History[len(sess.History)-1]...)
 	backend := &checkpointStub{reply: "Goal: batch 128. Deploy UNKNOWN. Retrieve original release with call ID call-a."}
-	a := newAgent(io.Discard, io.Discard, filepath.Join(t.TempDir(), "session.json"), time.Second, false, nil)
+	a := newAgent(io.Discard, io.Discard, filepath.Join(t.TempDir(), "session.json"), time.Second, false)
 	a.backend = backend
 	if err := a.compactIfNeeded(context.Background(), sess, "instructions"); err != nil {
 		t.Fatal(err)
@@ -94,7 +94,7 @@ func TestPortableCheckpointFailureLeavesSessionUnchanged(t *testing.T) {
 	for _, reply := range []string{"", strings.Repeat("x", (16<<10)+1)} {
 		sess := portableFixture(t)
 		before, _ := json.Marshal(sess)
-		a := newAgent(io.Discard, io.Discard, "", time.Second, false, nil)
+		a := newAgent(io.Discard, io.Discard, "", time.Second, false)
 		a.backend = &checkpointStub{reply: reply}
 		if err := a.compactIfNeeded(context.Background(), sess, "instructions"); err == nil {
 			t.Fatal("invalid summary accepted")
@@ -162,7 +162,7 @@ func TestPortableCheckpointTriggersAtEightyPercent(t *testing.T) {
 				}
 				before := mustJSON(t, sess)
 				backend := &checkpointStub{reply: "Checkpoint retained."}
-				a := newAgent(io.Discard, io.Discard, "", time.Second, false, nil)
+				a := newAgent(io.Discard, io.Discard, "", time.Second, false)
 				a.backend = backend
 				if window != modelContextWindow {
 					a.contextWindow = window
@@ -202,7 +202,7 @@ func TestPortableCheckpointCompactsLargeTextHistory(t *testing.T) {
 	}
 	activeTurn := append(json.RawMessage(nil), sess.History[len(sess.History)-1]...)
 	backend := &checkpointStub{reply: "Large history checkpoint retained."}
-	a := newAgent(io.Discard, io.Discard, "", time.Second, false, nil)
+	a := newAgent(io.Discard, io.Discard, "", time.Second, false)
 	a.backend = backend
 
 	if err := a.compactIfNeeded(context.Background(), sess, "instructions"); err != nil {

@@ -7,18 +7,52 @@ import (
 )
 
 func TestParseIndependentTimeouts(t *testing.T) {
-	got, err := parseOptions([]string{"work", "--timeout", "3s", "--cell-timeout=4m", "--subagent-timeout", "2h"})
+	got, err := parseOptions([]string{"work", "--timeout", "3s", "--cell-timeout=4m"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.timeout != 3*time.Second || got.cellTimeout != 4*time.Minute || got.subagentTimeout != 2*time.Hour {
-		t.Fatalf("timeouts = request %s, cell %s, subagent %s", got.timeout, got.cellTimeout, got.subagentTimeout)
+	if got.timeout != 3*time.Second || got.cellTimeout != 4*time.Minute {
+		t.Fatalf("timeouts = request %s, cell %s", got.timeout, got.cellTimeout)
 	}
 
-	for _, flag := range []string{"--timeout", "--cell-timeout", "--subagent-timeout"} {
+	for _, flag := range []string{"--timeout", "--cell-timeout"} {
 		if _, err := parseOptions([]string{"work", flag, "0s"}); err == nil {
 			t.Fatalf("%s accepted a zero duration", flag)
 		}
+	}
+}
+
+func TestParseMaxTurns(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		args []string
+		want int
+	}{
+		{name: "default", args: []string{"work"}, want: 64},
+		{name: "separate value", args: []string{"work", "--max-turns", "128"}, want: 128},
+		{name: "inline value on resume", args: []string{"continue", "--last", "--max-turns=256"}, want: 256},
+		{name: "resume default", args: []string{"continue", "--last"}, want: 64},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := parseOptions(test.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got.maxTurns != test.want {
+				t.Fatalf("max turns = %d, want %d", got.maxTurns, test.want)
+			}
+		})
+	}
+
+	for _, value := range []string{"", "0", "-1", "1.5", "many", "999999999999999999999999999999"} {
+		if _, err := parseOptions([]string{"work", "--max-turns=" + value}); err == nil || !strings.Contains(err.Error(), "positive integer") {
+			t.Fatalf("max turns %q: error = %v", value, err)
+		}
+	}
+
+	if _, err := parseOptions([]string{"work", "--max-turns"}); err == nil || !strings.Contains(err.Error(), "requires a value") {
+		t.Fatalf("missing max turns: error = %v", err)
 	}
 }
 
@@ -59,21 +93,6 @@ func TestParseOptionsInterspersed(t *testing.T) {
 			want: options{prompt: "--help", timeout: defaultHTTPTimeout},
 		},
 		{
-			name: "literal short help in subagent prompt",
-			args: []string{"--subagent", "repo_scout", "--", "-h"},
-			want: options{prompt: "-h", subagent: "repo_scout", noInput: true, timeout: defaultHTTPTimeout},
-		},
-		{
-			name: "help text used as a subagent name",
-			args: []string{"work", "--subagent", "--help"},
-			want: options{prompt: "work", subagent: "--help", noInput: true, timeout: defaultHTTPTimeout},
-		},
-		{
-			name: "custom subagent implies no input",
-			args: []string{"map", "the", "parser", "--subagent", "repo_scout"},
-			want: options{prompt: "map the parser", subagent: "repo_scout", noInput: true, timeout: defaultHTTPTimeout},
-		},
-		{
 			name: "short skip skills flag with resume",
 			args: []string{"continue", "--last", "-s"},
 			want: options{prompt: "continue", last: true, skipSkills: true, timeout: defaultHTTPTimeout},
@@ -86,7 +105,7 @@ func TestParseOptionsInterspersed(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			test.want.cellTimeout = defaultCellTimeout
-			test.want.subagentTimeout = defaultSubagentTimeout
+			test.want.maxTurns = defaultMaxTurns
 			got, err := parseOptions(test.args)
 			if err != nil {
 				t.Fatal(err)
@@ -112,15 +131,11 @@ func TestParseOptionsRejectsInvalid(t *testing.T) {
 		t.Fatal("expected invalid timeout error")
 	}
 	for _, args := range [][]string{
-		{"hello", "--subagent", "../repo_scout"},
-		{"hello", "--subagent", "repo_scout", "--persist"},
-		{"hello", "--subagent", "repo_scout", "--last"},
-		{"hello", "--subagent", "repo_scout", "--model", "ds-pro"},
-		{"hello", "--subagent", "repo_scout", "--effort", "h"},
-		{strings.Repeat("x", maxSubagentPromptBytes+1), "--subagent", "repo_scout"},
+		{"hello", "--subagent", "repo_scout"},
+		{"hello", "--subagent-timeout", "1h"},
 	} {
 		if _, err := parseOptions(args); err == nil {
-			t.Fatalf("expected invalid subagent options for %v", args)
+			t.Fatalf("expected removed subagent option to be rejected for %v", args)
 		}
 	}
 }
@@ -146,7 +161,7 @@ func TestParseOptionsHelpOverridesOtherArguments(t *testing.T) {
 }
 
 func TestParseOptionsDoesNotTreatOptionValuesAsHelp(t *testing.T) {
-	for _, flag := range []string{"--model", "--effort", "--timeout"} {
+	for _, flag := range []string{"--model", "--effort", "--timeout", "--max-turns"} {
 		t.Run(flag, func(t *testing.T) {
 			if _, err := parseOptions([]string{"work", flag, "--help"}); err == nil {
 				t.Fatal("invalid option value was interpreted as a help request")

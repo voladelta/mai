@@ -285,7 +285,7 @@ func TestAgentRoutesRegisteredSkillTools(t *testing.T) {
 		t.Fatalf("image bytes leaked into text output: %s", content[0]["text"])
 	}
 
-	definitions := toolDefinitions(false)
+	definitions := toolDefinitions()
 	registered := make(map[string]bool, len(definitions))
 	var skillDefinition map[string]any
 	for _, definition := range definitions {

@@ -59,7 +59,7 @@ func TestPythonOwnerChainHelper(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, mode+"-go"), []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
 		t.Fatal(err)
 	}
-	a := &agent{stderr: io.Discard, requestTimeout: time.Minute, cellTimeout: time.Minute, subagentTimeout: time.Minute}
+	a := &agent{stderr: io.Discard, requestTimeout: time.Minute, cellTimeout: time.Minute}
 	sess := &session{CWD: root, RepoRoot: root}
 	identity := pythonCell(t, a, sess, "import os; os.getpid()")
 	if !identity.OK {
@@ -70,17 +70,8 @@ func TestPythonOwnerChainHelper(t *testing.T) {
 	}
 	var code string
 	if mode == "parent" {
-		a.executable = filepath.Join(root, "child-wrapper")
-		a.customAgents = map[string]customAgent{"review": {Name: "review"}}
-		code = `await mai.spawn_subagent('review', 'wait')`
-		if os.Getenv("MAI_BACKGROUND_OWNER_TEST") == "1" {
-			if got := pythonCell(t, a, sess, `child = await mai.spawn('review', 'wait')`); !got.OK {
-				t.Fatalf("background admission failed: %#v", got)
-			}
-			code = `import time; time.sleep(60)`
-		}
+		code = fmt.Sprintf("import subprocess\nsubprocess.run([%q], check=True)", filepath.Join(root, "child-wrapper"))
 	} else {
-		a.customAgent = &customAgent{Name: "review"}
 		code = `await mai.bash('printf %s "$$" > bash; sleep 60 & printf %s "$!" > sleep; wait')`
 	}
 	args, _ := json.Marshal(map[string]string{"code": code})
@@ -150,11 +141,6 @@ func TestPythonForcedOwnerDeathStopsNestedHostProcesses(t *testing.T) {
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
-}
-
-func TestBackgroundChildForcedOwnerDeathStopsDescendants(t *testing.T) {
-	t.Setenv("MAI_BACKGROUND_OWNER_TEST", "1")
-	TestPythonForcedOwnerDeathStopsNestedHostProcesses(t)
 }
 
 func TestPythonReturnedAwaitablesAreValues(t *testing.T) {

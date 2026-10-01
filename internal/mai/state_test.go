@@ -303,14 +303,6 @@ func TestRepairInterruptedBashRequiresConfirmationBeforeUnsafeRetry(t *testing.T
 	}
 }
 
-func TestInterruptedSubagentRequiresInspectionBeforeRetry(t *testing.T) {
-	instruction := interruptedToolInstruction("spawn_subagent")
-	if !strings.Contains(instruction, "Inspect the repository") ||
-		!strings.Contains(instruction, "Do not spawn the subagent again") {
-		t.Fatalf("unsafe subagent recovery instruction: %s", instruction)
-	}
-}
-
 func TestInterruptedToolRecoveryPersists(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.json")
 	sess := &session{

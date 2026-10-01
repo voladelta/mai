@@ -88,7 +88,7 @@ func runPortableProviderCoding(t *testing.T, model, mode, seed string) (trial po
 	log := records.String()
 	factID := appendBudgetLog(t, sess, "source", log)
 	var events bytes.Buffer
-	a := newAgent(io.Discard, io.Discard, path, 2*time.Minute, false, nil)
+	a := newAgent(io.Discard, io.Discard, path, 2*time.Minute, false)
 	if err := a.configureBackend(sess); err != nil {
 		trial.Error = err.Error()
 		return

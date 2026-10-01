@@ -3,27 +3,27 @@ package mai
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
 
 type options struct {
-	prompt          string
-	last            bool
-	persist         bool
-	effort          string
-	effortExplicit  bool
-	model           string
-	modelExplicit   bool
-	help            bool
-	version         bool
-	noInput         bool
-	skipSkills      bool
-	jsonl           bool
-	subagent        string
-	timeout         time.Duration
-	cellTimeout     time.Duration
-	subagentTimeout time.Duration
+	prompt         string
+	last           bool
+	persist        bool
+	effort         string
+	effortExplicit bool
+	model          string
+	modelExplicit  bool
+	help           bool
+	version        bool
+	noInput        bool
+	skipSkills     bool
+	jsonl          bool
+	maxTurns       int
+	timeout        time.Duration
+	cellTimeout    time.Duration
 }
 
 type optionKind int
@@ -36,12 +36,11 @@ const (
 	optionNoInput
 	optionSkipSkills
 	optionJSONL
-	optionSubagent
 	optionEffort
 	optionModel
 	optionTimeout
 	optionCellTimeout
-	optionSubagentTimeout
+	optionMaxTurns
 )
 
 var optionKinds = map[string]optionKind{
@@ -51,17 +50,20 @@ var optionKinds = map[string]optionKind{
 	"--persist":  optionPersist,
 	"--no-input": optionNoInput,
 	"-s":         optionSkipSkills, "--skip-skills": optionSkipSkills,
-	"--jsonl":    optionJSONL,
-	"--subagent": optionSubagent,
-	"-e":         optionEffort, "--effort": optionEffort,
+	"--jsonl": optionJSONL,
+	"-e":      optionEffort, "--effort": optionEffort,
 	"-m": optionModel, "--model": optionModel,
-	"--timeout":          optionTimeout,
-	"--cell-timeout":     optionCellTimeout,
-	"--subagent-timeout": optionSubagentTimeout,
+	"--timeout":      optionTimeout,
+	"--cell-timeout": optionCellTimeout,
+	"--max-turns":    optionMaxTurns,
 }
 
 func parseOptions(args []string) (options, error) {
-	out := options{timeout: defaultHTTPTimeout, cellTimeout: defaultCellTimeout, subagentTimeout: defaultSubagentTimeout}
+	out := options{
+		timeout:     defaultHTTPTimeout,
+		cellTimeout: defaultCellTimeout,
+		maxTurns:    defaultMaxTurns,
+	}
 	if helpRequested(args) {
 		out.help = true
 		return out, nil
@@ -135,7 +137,7 @@ func parseOptionTokens(args []string, out *options) ([]string, error) {
 }
 
 func (kind optionKind) takesValue() bool {
-	return kind == optionSubagent || kind == optionEffort || kind == optionModel || kind == optionTimeout || kind == optionCellTimeout || kind == optionSubagentTimeout
+	return kind == optionEffort || kind == optionModel || kind == optionTimeout || kind == optionCellTimeout || kind == optionMaxTurns
 }
 
 func (out *options) setOption(kind optionKind, value string) error {
@@ -152,12 +154,16 @@ func (out *options) setOption(kind optionKind, value string) error {
 		out.skipSkills = true
 	case optionJSONL:
 		out.jsonl = true
-	case optionSubagent:
-		out.subagent = value
 	case optionEffort:
 		out.effort, out.effortExplicit = value, true
 	case optionModel:
 		out.model, out.modelExplicit = value, true
+	case optionMaxTurns:
+		maxTurns, err := strconv.Atoi(value)
+		if err != nil || maxTurns <= 0 {
+			return fmt.Errorf("invalid --max-turns %q (use a positive integer)", value)
+		}
+		out.maxTurns = maxTurns
 	case optionTimeout:
 		timeout, err := parseTimeout(value)
 		if err != nil {
@@ -170,24 +176,11 @@ func (out *options) setOption(kind optionKind, value string) error {
 			return err
 		}
 		out.cellTimeout = timeout
-	case optionSubagentTimeout:
-		timeout, err := parseTimeout(value)
-		if err != nil {
-			return err
-		}
-		out.subagentTimeout = timeout
 	}
 	return nil
 }
 
 func (out *options) normalizeSelections() error {
-	out.subagent = strings.TrimSpace(out.subagent)
-	if out.subagent != "" {
-		if err := validateSubagentName(out.subagent); err != nil {
-			return err
-		}
-		out.noInput = true
-	}
 	if out.effortExplicit {
 		out.effort = normalizeEffort(out.effort)
 		if _, ok := effortIDs[out.effort]; !ok {
@@ -206,18 +199,6 @@ func (out *options) normalizeSelections() error {
 func (out options) validateMode(argCount int) error {
 	if out.last && out.persist {
 		return errors.New("--last and --persist cannot be used together")
-	}
-	if out.subagent != "" {
-		switch {
-		case out.last || out.persist:
-			return errors.New("--subagent cannot be used with --last or --persist")
-		case out.effortExplicit:
-			return errors.New("--subagent cannot be used with --effort")
-		case out.modelExplicit:
-			return errors.New("--subagent cannot be used with --model")
-		case len(out.prompt) > maxSubagentPromptBytes:
-			return fmt.Errorf("subagent prompt exceeds %d bytes", maxSubagentPromptBytes)
-		}
 	}
 	if out.prompt == "" && argCount > 0 {
 		return errors.New("prompt is required")

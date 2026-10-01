@@ -22,7 +22,6 @@ type deepseekClient struct {
 	endpoint       string
 	apiKey         string
 	stdout         io.Writer
-	allowSubagents bool
 	requestTimeout time.Duration
 	contextWindow  int64
 }
@@ -56,7 +55,7 @@ func (a *agent) configureBackend(sess *session) error {
 	a.contextWindow = window
 	a.backend = &deepseekClient{
 		httpClient: &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
-		endpoint:   endpoint, apiKey: key, stdout: a.modelOutput, allowSubagents: a.allowSubagents,
+		endpoint:   endpoint, apiKey: key, stdout: a.modelOutput,
 		requestTimeout: a.requestTimeout, contextWindow: window,
 	}
 	return nil
@@ -234,7 +233,7 @@ func (c *deepseekClient) request(ctx context.Context, sess *session, instruction
 	}
 	if toolsAllowed {
 		var tools []map[string]any
-		for _, definition := range toolDefinitions(c.allowSubagents) {
+		for _, definition := range toolDefinitions() {
 			if sess.Model == "ds-pro" && (definition["name"] == "view_image" || definition["name"] == "read_skill") {
 				definition["description"] = definition["description"].(string) + " For image output on Pro, Mai makes one Flash request and returns a labeled text description instead of image content."
 			}
