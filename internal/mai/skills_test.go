@@ -172,6 +172,82 @@ func TestSkipSkillsBypassesDiscoveryAndExplicitLoading(t *testing.T) {
 	}
 }
 
+func TestSkillFrontMatterControlsAutomaticSelection(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		frontMatter string
+		policy      string
+		wantVisible bool
+	}{
+		{name: "omitted", wantVisible: true},
+		{name: "false", frontMatter: "disable-model-invocation: false\n", wantVisible: true},
+		{name: "true", frontMatter: "disable-model-invocation: true\n"},
+		{name: "true with comment", frontMatter: "disable-model-invocation: true # explicit only\n"},
+		{name: "front matter opt-out wins", frontMatter: "disable-model-invocation: true\n", policy: "true"},
+		{name: "policy opt-out wins", frontMatter: "disable-model-invocation: false\n", policy: "false"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := testSkillRoot(t)
+			mustWrite(t, filepath.Join(root, "manual-dir", "SKILL.md"),
+				"---\nname: manual-only\ndescription: A selectable skill.\n"+test.frontMatter+"---\n\n# Manual instructions\n")
+			if test.policy != "" {
+				mustWrite(t, filepath.Join(root, "manual-dir", "agents", "openai.yaml"),
+					"policy:\n  allow_implicit_invocation: "+test.policy+"\n")
+			}
+
+			result, err := buildSkillContext([]string{root}, "Use a selectable skill.")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if strings.Contains(result.Instructions, "manual-only") != test.wantVisible {
+				t.Fatalf("catalog visibility should be %v:\n%s", test.wantVisible, result.Instructions)
+			}
+			if len(result.Warnings) != 0 {
+				t.Fatalf("unexpected warnings: %v", result.Warnings)
+			}
+
+			for _, mention := range []string{"manual-only", "manual-dir"} {
+				explicit, err := buildSkillContext([]string{root}, "Use $"+mention+".")
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				if !strings.Contains(explicit.Instructions, "### Explicit skill: $manual-only (id: manual-dir)") ||
+					!strings.Contains(explicit.Instructions, "# Manual instructions") {
+					t.Fatalf("explicit invocation did not load complete instructions:\n%s", explicit.Instructions)
+				}
+				if len(explicit.Warnings) != 0 {
+					t.Fatalf("unexpected explicit invocation warnings: %v", explicit.Warnings)
+				}
+			}
+		})
+	}
+}
+
+func TestSkillFrontMatterRejectsNonBooleanInvocationFlag(t *testing.T) {
+	for _, value := range []string{"sometimes", "", "1", `"true"`} {
+		t.Run(value, func(t *testing.T) {
+			root := testSkillRoot(t)
+			mustWrite(t, filepath.Join(root, "invalid", "SKILL.md"),
+				"---\nname: invalid\ndescription: Invalid invocation flag.\ndisable-model-invocation: "+value+"\n---\n")
+			writeTestSkill(t, root, "valid", "valid", "Still available.")
+
+			result, err := buildSkillContext([]string{root}, "Inspect files.")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if strings.Contains(result.Instructions, "Invalid invocation flag.") || !strings.Contains(result.Instructions, "Still available.") {
+				t.Fatalf("invalid flag affected catalog incorrectly:\n%s", result.Instructions)
+			}
+			if len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], "non-boolean disable-model-invocation") {
+				t.Fatalf("missing invalid flag warning: %v", result.Warnings)
+			}
+		})
+	}
+}
+
 func TestImplicitPolicyDefaultsTrueAndParsesFalse(t *testing.T) {
 	for _, test := range []struct {
 		name    string
@@ -418,7 +494,7 @@ func TestAgentRoutesRegisteredSkillTools(t *testing.T) {
 }
 
 func TestParseSkillFrontMatterSupportsFoldedDescription(t *testing.T) {
-	name, description, err := parseSkillFrontMatter("---\nname: folded\ndescription: >-\n  First line.\n  Second line.\n---\n")
+	name, description, _, err := parseSkillFrontMatter("---\nname: folded\ndescription: >-\n  First line.\n  Second line.\n---\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,11 +505,11 @@ func TestParseSkillFrontMatterSupportsFoldedDescription(t *testing.T) {
 
 func TestParseSkillFrontMatterEnforcesDescriptionLimit(t *testing.T) {
 	valid := strings.Repeat("a", maxSkillDescriptionChars)
-	if _, description, err := parseSkillFrontMatter("---\nname: valid\ndescription: " + valid + "\n---\n"); err != nil || description != valid {
+	if _, description, _, err := parseSkillFrontMatter("---\nname: valid\ndescription: " + valid + "\n---\n"); err != nil || description != valid {
 		t.Fatalf("valid description was rejected: length=%d err=%v", len([]rune(description)), err)
 	}
 	tooLong := strings.Repeat("a", maxSkillDescriptionChars+1)
-	if _, _, err := parseSkillFrontMatter("---\nname: invalid\ndescription: " + tooLong + "\n---\n"); err == nil || !strings.Contains(err.Error(), "1024") {
+	if _, _, _, err := parseSkillFrontMatter("---\nname: invalid\ndescription: " + tooLong + "\n---\n"); err == nil || !strings.Contains(err.Error(), "1024") {
 		t.Fatalf("overlong description error = %v", err)
 	}
 }

@@ -189,7 +189,7 @@ func loadSkillSummary(root, id string) (skillSummary, error) {
 	if err != nil {
 		return skillSummary{}, err
 	}
-	name, description, err := parseSkillFrontMatter(string(b))
+	name, description, disableModelInvocation, err := parseSkillFrontMatter(string(b))
 	if err != nil {
 		return skillSummary{}, err
 	}
@@ -197,7 +197,13 @@ func loadSkillSummary(root, id string) (skillSummary, error) {
 	if err != nil {
 		return skillSummary{}, err
 	}
-	return skillSummary{ID: id, Name: name, Description: description, AllowImplicit: allowImplicit, root: root}, nil
+	return skillSummary{
+		ID:            id,
+		Name:          name,
+		Description:   description,
+		AllowImplicit: allowImplicit && !disableModelInvocation,
+		root:          root,
+	}, nil
 }
 
 func loadImplicitPolicy(skillDir string) (bool, error) {
@@ -422,25 +428,28 @@ func readBoundedRegularFile(path string) ([]byte, error) {
 	return b, nil
 }
 
-func parseSkillFrontMatter(content string) (string, string, error) {
+func parseSkillFrontMatter(content string) (string, string, bool, error) {
 	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
 	if len(lines) < 3 || strings.TrimSpace(lines[0]) != "---" {
-		return "", "", errors.New("SKILL.md has no YAML front matter")
+		return "", "", false, errors.New("SKILL.md has no YAML front matter")
 	}
+
 	var name, description string
+	var disableModelInvocation bool
 	for i := 1; i < len(lines); i++ {
 		line := lines[i]
 		if strings.TrimSpace(line) == "---" {
 			name = strings.TrimSpace(name)
 			description = strings.TrimSpace(description)
 			if name == "" || description == "" {
-				return "", "", errors.New("SKILL.md front matter requires name and description")
+				return "", "", false, errors.New("SKILL.md front matter requires name and description")
 			}
 			if len([]rune(description)) > maxSkillDescriptionChars {
-				return "", "", fmt.Errorf("SKILL.md front matter description exceeds %d characters", maxSkillDescriptionChars)
+				return "", "", false, fmt.Errorf("SKILL.md front matter description exceeds %d characters", maxSkillDescriptionChars)
 			}
-			return name, description, nil
+			return name, description, disableModelInvocation, nil
 		}
+
 		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
 			continue
 		}
@@ -449,10 +458,24 @@ func parseSkillFrontMatter(content string) (string, string, error) {
 			continue
 		}
 		key = strings.TrimSpace(key)
-		if key != "name" && key != "description" {
+		if key != "name" && key != "description" && key != "disable-model-invocation" {
 			continue
 		}
+
 		value = strings.TrimSpace(value)
+		if key == "disable-model-invocation" {
+			value, _, _ = strings.Cut(value, "#")
+			switch strings.ToLower(strings.TrimSpace(value)) {
+			case "true":
+				disableModelInvocation = true
+			case "false":
+				disableModelInvocation = false
+			default:
+				return "", "", false, fmt.Errorf("SKILL.md front matter line %d has a non-boolean disable-model-invocation", i+1)
+			}
+			continue
+		}
+
 		if key == "description" && (strings.HasPrefix(value, ">") || strings.HasPrefix(value, "|")) {
 			var parts []string
 			for i+1 < len(lines) && (strings.HasPrefix(lines[i+1], " ") || strings.TrimSpace(lines[i+1]) == "") {
@@ -470,7 +493,7 @@ func parseSkillFrontMatter(content string) (string, string, error) {
 			description = yamlScalar(value)
 		}
 	}
-	return "", "", errors.New("SKILL.md front matter is not closed")
+	return "", "", false, errors.New("SKILL.md front matter is not closed")
 }
 
 func yamlScalar(value string) string {

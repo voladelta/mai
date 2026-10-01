@@ -22,8 +22,10 @@ root; outside Git, it uses the current working directory. Missing skill
 directories are ignored. Each model request includes
 all eligible skill names and descriptions, then loads a complete `SKILL.md` only
 when needed. Each skill description must be 1,024 characters or fewer.
-Set `policy.allow_implicit_invocation` to `false` in `agents/openai.yaml` to hide
+Set `disable-model-invocation: true` in `SKILL.md` YAML front matter to hide
 a skill from automatic selection; an explicit `$skill-name` still loads it.
+Omitting the field or setting it to `false` allows automatic selection unless
+`policy.allow_implicit_invocation` is `false` in `agents/openai.yaml`.
 Use `-s` or `--skip-skills` to skip skill discovery for one run, including
 resolution of explicit `$skill-name` mentions. The flag also works with
 `--last` and must be passed again on each resumed run. The `read_skill` tool
