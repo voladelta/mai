@@ -15,7 +15,11 @@ The agent has 6 tools:
 - `view_image` shows a local image to the model
 - `edit_context` shortens successful Bash stdout in future model requests while keeping the original searchable
 
-Skills are read only from `~/.agents/skills`. Each model request includes
+Skills are read from `agents/skills` in the current repository, then from
+`~/.agents/skills`. Repository skills take priority when a directory id or skill
+name matches. When launched from a subdirectory, Mai uses the Git repository
+root; outside Git, it uses the current working directory. Missing skill
+directories are ignored. Each model request includes
 all eligible skill names and descriptions, then loads a complete `SKILL.md` only
 when needed. Each skill description must be 1,024 characters or fewer.
 Set `policy.allow_implicit_invocation` to `false` in `agents/openai.yaml` to hide

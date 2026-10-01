@@ -137,7 +137,7 @@ func TestProImageToolsUseFlashAndContinueWithText(t *testing.T) {
 				defer server.Close()
 				var output bytes.Buffer
 				a := &agent{
-					stdout: &output, stderr: io.Discard, skillsRoot: root,
+					stdout: &output, stderr: io.Discard, skillsRoots: []string{root},
 					sessionPath: filepath.Join(sess.CWD, "session.json"),
 					backend:     &deepseekClient{httpClient: server.Client(), endpoint: server.URL, apiKey: "test", stdout: &output, requestTimeout: time.Second},
 				}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -28,7 +29,7 @@ type agent struct {
 	stderr         io.Writer
 	sessionPath    string
 	approve        approvalFunc
-	skillsRoot     string
+	skillsRoots    []string
 	skillsError    error
 	skipSkills     bool
 	requestTimeout time.Duration
@@ -46,9 +47,18 @@ type functionCall struct {
 
 func newAgent(stdout, stderr io.Writer, sessionPath string, requestTimeout time.Duration, inputAllowed bool) *agent {
 	root, err := defaultSkillsRoot()
+	var roots []string
+	if err == nil {
+		var cwd string
+		cwd, err = currentDir()
+		if err == nil {
+			roots = []string{filepath.Join(findRepoRoot(cwd), "agents", "skills"), root}
+		}
+	}
+
 	a := &agent{
 		stdout: stdout, modelOutput: stdout, stderr: stderr, sessionPath: sessionPath,
-		skillsRoot: root, skillsError: err,
+		skillsRoots: roots, skillsError: err,
 		requestTimeout: requestTimeout,
 		cellTimeout:    defaultCellTimeout,
 		maxTurns:       defaultMaxTurns,
@@ -92,7 +102,7 @@ func (a *agent) loadSkillInstructions(userPrompt string) string {
 		fmt.Fprintf(a.stderr, "mai: skills unavailable: %v\n", a.skillsError)
 		return ""
 	}
-	skillContext, err := buildSkillContext(a.skillsRoot, userPrompt)
+	skillContext, err := buildSkillContext(a.skillsRoots, userPrompt)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			fmt.Fprintf(a.stderr, "mai: skills unavailable: %v\n", err)
@@ -332,7 +342,7 @@ func (a *agent) executeReadSkill(ctx context.Context, sess *session, arguments s
 		file = "SKILL.md"
 	}
 	fmt.Fprintf(a.stderr, "→ read_skill: %s/%s\n", args.Path, file)
-	result, err := readSkill(a.skillsRoot, args.Path, args.File)
+	result, err := readSkill(a.skillsRoots, args.Path, args.File)
 	if err != nil {
 		return textToolOutput(toolError("read_skill failed", err))
 	}

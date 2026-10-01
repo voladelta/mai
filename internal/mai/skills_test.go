@@ -6,10 +6,118 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestAgentLoadsRepositorySkillsBeforeGlobalSkills(t *testing.T) {
+	repo := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cmd := exec.Command("git", "init", repo)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
+	}
+
+	local := filepath.Join(repo, "agents", "skills")
+	global := filepath.Join(home, ".agents", "skills")
+	writeTestSkill(t, local, "shared", "local-name", "Repository version.")
+	writeTestSkill(t, global, "shared", "global-name", "Shadowed by directory id.")
+	writeTestSkill(t, local, "local-dir", "same-name", "Repository named skill.")
+	writeTestSkill(t, global, "global-dir", "same-name", "Shadowed by name.")
+	writeTestSkill(t, global, "global-only", "global-only", "Global fallback.")
+	mustWrite(t, filepath.Join(local, "shared", "guide.md"), "Local guide.")
+	mustWrite(t, filepath.Join(global, "shared", "guide.md"), "Global guide.")
+	mustWrite(t, filepath.Join(global, "shared", "global-only.md"), "Do not mix skill files.")
+
+	subdir := filepath.Join(repo, "src")
+	if err := os.MkdirAll(subdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(subdir)
+	a := newAgent(io.Discard, io.Discard, "", time.Second, false)
+	instructions := a.loadSkillInstructions("Use $same-name and $shared.")
+	for _, want := range []string{"Repository version.", "Repository named skill.", "Global fallback.", "# local-name instructions", "# same-name instructions"} {
+		if !strings.Contains(instructions, want) {
+			t.Fatalf("missing %q in instructions:\n%s", want, instructions)
+		}
+	}
+	if strings.Contains(instructions, "Shadowed") || strings.Contains(instructions, "ambiguous") {
+		t.Fatalf("global collision was not overridden:\n%s", instructions)
+	}
+
+	for _, test := range []struct {
+		arguments string
+		want      string
+	}{
+		{arguments: `{"path":"shared"}`, want: "# local-name instructions"},
+		{arguments: `{"path":"shared","file":"guide.md"}`, want: "Local guide."},
+		{arguments: `{"path":"global-only"}`, want: "# global-only instructions"},
+		{arguments: `{"path":"shared","file":"global-only.md"}`, want: `\"ok\":false`},
+	} {
+		result := a.executeTool(context.Background(), &session{}, functionCall{Name: "read_skill", Arguments: test.arguments})
+		if !strings.Contains(string(result), test.want) {
+			t.Fatalf("read_skill(%s) = %s, want %q", test.arguments, result, test.want)
+		}
+	}
+}
+
+func TestSkillDiscoveryWithMissingRootsAndBrokenRoot(t *testing.T) {
+	root := testSkillRoot(t)
+	writeTestSkill(t, root, "demo", "demo", "Available skill.")
+	missing := filepath.Join(t.TempDir(), "missing")
+	broken := filepath.Join(t.TempDir(), "file")
+	mustWrite(t, broken, "not a directory")
+
+	for _, test := range []struct {
+		name         string
+		roots        []string
+		wantSkill    bool
+		wantWarnings int
+	}{
+		{name: "global only", roots: []string{missing, root}, wantSkill: true},
+		{name: "local only", roots: []string{root, missing}, wantSkill: true},
+		{name: "neither", roots: []string{missing}},
+		{name: "broken global preserves local", roots: []string{root, broken}, wantSkill: true, wantWarnings: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := buildSkillContext(test.roots, "Use $demo.")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if strings.Contains(result.Instructions, "# demo instructions") != test.wantSkill || len(result.Warnings) != test.wantWarnings {
+				t.Fatalf("unexpected context: %#v", result)
+			}
+		})
+	}
+}
+
+func TestAgentLoadsLocalOptOutWithoutGlobalSkillsOutsideGit(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("HOME", t.TempDir())
+	root := filepath.Join(dir, "agents", "skills")
+	writeTestSkill(t, root, "manual", "manual", "Explicit use only.")
+	mustWrite(t, filepath.Join(root, "manual", "agents", "openai.yaml"), "policy:\n  allow_implicit_invocation: false\n")
+	var warnings strings.Builder
+	a := newAgent(io.Discard, &warnings, "", time.Second, false)
+
+	if instructions := a.loadSkillInstructions("inspect files"); strings.Contains(instructions, "Explicit use only.") {
+		t.Fatalf("opt-out local skill appeared in the catalog:\n%s", instructions)
+	}
+
+	if instructions := a.loadSkillInstructions("Use $manual."); !strings.Contains(instructions, "# manual instructions") {
+		t.Fatalf("local explicit skill was not loaded without global skills:\n%s", instructions)
+	}
+
+	if warnings.Len() != 0 {
+		t.Fatalf("missing global directory caused warnings: %s", warnings.String())
+	}
+}
 
 func TestBuildSkillContextListsImplicitSkillsAndLoadsExplicitOptOut(t *testing.T) {
 	root := testSkillRoot(t)
@@ -17,7 +125,7 @@ func TestBuildSkillContextListsImplicitSkillsAndLoadsExplicitOptOut(t *testing.T
 	writeTestSkill(t, root, "manual-dir", "manual-only", "Run only when explicitly requested.")
 	mustWrite(t, filepath.Join(root, "manual-dir", "agents", "openai.yaml"), "policy:\n  allow_implicit_invocation: false\n")
 
-	result, err := buildSkillContext(root, "Use $manual-only for this request. Mention $manual-only only once.")
+	result, err := buildSkillContext([]string{root}, "Use $manual-only for this request. Mention $manual-only only once.")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,9 +159,9 @@ func TestSkipSkillsBypassesDiscoveryAndExplicitLoading(t *testing.T) {
 
 	var warnings strings.Builder
 	a := &agent{
-		stderr:     &warnings,
-		skillsRoot: root,
-		skipSkills: true,
+		stderr:      &warnings,
+		skillsRoots: []string{root},
+		skipSkills:  true,
 	}
 
 	if instructions := a.loadSkillInstructions("Use $demo for this request"); instructions != "" {
@@ -93,7 +201,7 @@ func TestImplicitPolicyDefaultsTrueAndParsesFalse(t *testing.T) {
 func TestUnknownDollarNameIsNotTreatedAsMissingSkill(t *testing.T) {
 	root := testSkillRoot(t)
 	writeTestSkill(t, root, "demo", "demo", "A demonstration skill.")
-	result, err := buildSkillContext(root, "Print the value of $path, but do not use a skill.")
+	result, err := buildSkillContext([]string{root}, "Print the value of $path, but do not use a skill.")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +217,7 @@ func TestSkillCatalogIncludesEveryValidDescription(t *testing.T) {
 		id := fmt.Sprintf("skill-%02d", i)
 		writeTestSkill(t, root, id, id, description)
 	}
-	result, err := buildSkillContext(root, "inspect the repository")
+	result, err := buildSkillContext([]string{root}, "inspect the repository")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +249,7 @@ func TestReadSkillReturnsCompleteFileAndSupportingFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := readSkill(root, "demo", "")
+	result, err := readSkill([]string{root}, "demo", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +257,7 @@ func TestReadSkillReturnsCompleteFileAndSupportingFiles(t *testing.T) {
 		t.Fatalf("unexpected skill result: %#v", result)
 	}
 
-	result, err = readSkill(root, "demo", "references/guide.md")
+	result, err = readSkill([]string{root}, "demo", "references/guide.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +265,7 @@ func TestReadSkillReturnsCompleteFileAndSupportingFiles(t *testing.T) {
 		t.Fatalf("unexpected reference result: %#v", result)
 	}
 
-	result, err = readSkill(root, "demo", "assets/icon.png")
+	result, err = readSkill([]string{root}, "demo", "assets/icon.png")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +280,7 @@ func TestReadSkillRejectsEscapesAndUnscopedFiles(t *testing.T) {
 	mustWrite(t, filepath.Join(root, "secret.txt"), "secret")
 
 	for _, path := range []string{"../secret.txt", "/etc/passwd"} {
-		if _, err := readSkill(root, "demo", path); err == nil {
+		if _, err := readSkill([]string{root}, "demo", path); err == nil {
 			t.Fatalf("readSkill accepted %q", path)
 		}
 	}
@@ -183,11 +291,11 @@ func TestReadSkillRejectsEscapesAndUnscopedFiles(t *testing.T) {
 	if err := os.Symlink(filepath.Join(root, "secret.txt"), filepath.Join(root, "demo", "references", "escape.txt")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readSkill(root, "demo", "references/escape.txt"); err == nil {
+	if _, err := readSkill([]string{root}, "demo", "references/escape.txt"); err == nil {
 		t.Fatal("readSkill accepted a symlink escape")
 	}
 	mustWrite(t, filepath.Join(root, "demo", "assets", "data.bin"), string([]byte{0, 1, 2}))
-	if _, err := readSkill(root, "demo", "assets/data.bin"); err == nil || !strings.Contains(err.Error(), "unsupported media type") {
+	if _, err := readSkill([]string{root}, "demo", "assets/data.bin"); err == nil || !strings.Contains(err.Error(), "unsupported media type") {
 		t.Fatalf("unexpected binary file error: %v", err)
 	}
 }
@@ -196,7 +304,7 @@ func TestProSkillImageFailureKeepsHistoryUsable(t *testing.T) {
 	root := testSkillRoot(t)
 	writeTestSkill(t, root, "demo", "demo", "A demonstration skill.")
 	mustWrite(t, filepath.Join(root, "demo", "assets", "icon.png"), string([]byte{0x89, 'P', 'N', 'G', 0, 1}))
-	a := &agent{stdout: io.Discard, stderr: io.Discard, skillsRoot: root}
+	a := &agent{stdout: io.Discard, stderr: io.Discard, skillsRoots: []string{root}}
 	sess := deepseekTestSession(t)
 	sess.Model = "ds-pro"
 	call := functionCall{
@@ -246,7 +354,7 @@ func TestAgentRoutesRegisteredSkillTools(t *testing.T) {
 	root := testSkillRoot(t)
 	writeTestSkill(t, root, "demo", "demo", "A demonstration skill.")
 	mustWrite(t, filepath.Join(root, "demo", "references", "guide.md"), "Guide.\n")
-	a := &agent{stderr: io.Discard, skillsRoot: root}
+	a := &agent{stderr: io.Discard, skillsRoots: []string{root}}
 
 	calls := []struct {
 		arguments string

@@ -28,6 +28,7 @@ type skillSummary struct {
 	Name          string
 	Description   string
 	AllowImplicit bool
+	root          string
 }
 
 type skillContext struct {
@@ -59,8 +60,8 @@ func defaultSkillsRoot() (string, error) {
 	return filepath.Join(home, ".agents", "skills"), nil
 }
 
-func buildSkillContext(root, userPrompt string) (skillContext, error) {
-	skills, warnings, err := loadSkills(root)
+func buildSkillContext(roots []string, userPrompt string) (skillContext, error) {
+	skills, warnings, err := loadSkills(roots)
 	if err != nil {
 		return skillContext{}, err
 	}
@@ -79,7 +80,7 @@ func buildSkillContext(root, userPrompt string) (skillContext, error) {
 		case 0:
 			continue
 		case 1:
-			file, readErr := readSkill(root, matches[0].ID, "")
+			file, readErr := readSkill([]string{matches[0].root}, matches[0].ID, "")
 			if readErr != nil {
 				warnings = append(warnings, fmt.Sprintf("explicit skill $%s could not be read: %v", mention, readErr))
 				continue
@@ -109,7 +110,45 @@ func buildSkillContext(root, userPrompt string) (skillContext, error) {
 	return skillContext{Instructions: instructions.String(), Warnings: warnings}, nil
 }
 
-func loadSkills(root string) ([]skillSummary, []string, error) {
+func loadSkills(roots []string) ([]skillSummary, []string, error) {
+	var skills []skillSummary
+	var warnings []string
+	seenIDs := make(map[string]bool)
+	seenNames := make(map[string]bool)
+	for _, root := range roots {
+		found, rootWarnings, err := loadSkillsRoot(root)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("%s: %v", root, err))
+			continue
+		}
+
+		warnings = append(warnings, rootWarnings...)
+		for _, skill := range found {
+			if seenIDs[skill.ID] || seenNames[skill.Name] {
+				continue
+			}
+
+			skills = append(skills, skill)
+		}
+		for _, skill := range found {
+			seenIDs[skill.ID] = true
+			seenNames[skill.Name] = true
+		}
+	}
+
+	sort.Slice(skills, func(i, j int) bool {
+		if skills[i].Name != skills[j].Name {
+			return skills[i].Name < skills[j].Name
+		}
+		return skills[i].ID < skills[j].ID
+	})
+	return skills, warnings, nil
+}
+
+func loadSkillsRoot(root string) ([]skillSummary, []string, error) {
 	root, err := canonicalPath(root)
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolve skills directory: %w", err)
@@ -134,12 +173,6 @@ func loadSkills(root string) ([]skillSummary, []string, error) {
 		}
 		skills = append(skills, summary)
 	}
-	sort.Slice(skills, func(i, j int) bool {
-		if skills[i].Name != skills[j].Name {
-			return skills[i].Name < skills[j].Name
-		}
-		return skills[i].ID < skills[j].ID
-	})
 	return skills, warnings, nil
 }
 
@@ -164,7 +197,7 @@ func loadSkillSummary(root, id string) (skillSummary, error) {
 	if err != nil {
 		return skillSummary{}, err
 	}
-	return skillSummary{ID: id, Name: name, Description: description, AllowImplicit: allowImplicit}, nil
+	return skillSummary{ID: id, Name: name, Description: description, AllowImplicit: allowImplicit, root: root}, nil
 }
 
 func loadImplicitPolicy(skillDir string) (bool, error) {
@@ -272,10 +305,21 @@ func renderSkillCatalog(skills []skillSummary) string {
 	return strings.Join(lines, "\n")
 }
 
-func readSkill(root, id, file string) (skillFileResult, error) {
-	dir, err := secureSkillDir(root, id)
-	if err != nil {
-		return skillFileResult{}, err
+func readSkill(roots []string, id, file string) (skillFileResult, error) {
+	var dir string
+	for _, root := range roots {
+		var err error
+		dir, err = secureSkillDir(root, id)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return skillFileResult{}, err
+		}
+		break
+	}
+	if dir == "" {
+		return skillFileResult{}, fmt.Errorf("skill %q: %w", id, os.ErrNotExist)
 	}
 	if file == "" {
 		file = "SKILL.md"

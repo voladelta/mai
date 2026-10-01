@@ -108,13 +108,13 @@ func TestReadSkillSizeBoundaryAndInternalSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := readSkill(root, "demo", "link.txt")
+	result, err := readSkill([]string{root}, "demo", "link.txt")
 	if err != nil || result.Content != content {
 		t.Fatalf("exact-limit symlink read: bytes=%d, error=%v", len(result.Content), err)
 	}
 
 	mustWrite(t, path, content+"a")
-	if _, err := readSkill(root, "demo", "link.txt"); err == nil || !strings.Contains(err.Error(), "skill file limit") {
+	if _, err := readSkill([]string{root}, "demo", "link.txt"); err == nil || !strings.Contains(err.Error(), "skill file limit") {
 		t.Fatalf("oversize skill error = %v", err)
 	}
 }
