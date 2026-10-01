@@ -5,7 +5,7 @@ Use an asymmetric editorial-cover composition with relaxed energy. Exactly one f
 The single dominant object is a recognizable hybrid robot face and GPU chip: square processor body, layered heat-sink terraces, pins and circuit paths turned into ridges, ledges, and walkways. Several very small human-like agent figures climb, walk, pause, and inspect it at different heights; one peeks around an outer edge. Their scale makes the ordinary chip feel like a surreal built world. Keep forms readable at thumbnail size. Use economical cobalt contours, solid dark ink masses, halftone recesses, and sharp exposed-paper cutouts to separate terrain and figures. No flower or cup; those are only examples of scale transformation.
 
 Typography: wide geometric grotesk display and minimal monospaced support, with a clear 8:1 hierarchy. Exact display text: "mai" in large lowercase letters, placed in an open zone and tightly locked to the chip silhouette without covering the small figures. Exact short support line: "Little agents, giant circuits". The headline may touch the chip contour but remains fully readable. Right-align three smaller monospaced lines beneath the subtitle, in this exact order:
-7 tools / skills / subagents
+6 tools / skills
 Native Go / persistent Python
 DeepSeek Responses API
 No other wording.
