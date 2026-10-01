@@ -56,7 +56,7 @@ func openChildRegistry(path string) (*childRegistry, error) {
 		return r, nil
 	}
 	r.path = path + ".children.json"
-	file, err := os.OpenFile(r.path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	file, err := os.OpenFile(r.path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if errors.Is(err, os.ErrNotExist) {
 		return r, nil
 	}

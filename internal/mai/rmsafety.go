@@ -198,7 +198,19 @@ func rmApprovalReason(invocation rmInvocation, cwd, repoRoot string) string {
 	if invocation.directoryMayHaveChanged {
 		return "the command changes directory before invoking rm"
 	}
+
+	optionsEnded := false
 	for _, target := range invocation.args {
+		if !optionsEnded {
+			if target.text == "--" {
+				optionsEnded = true
+				continue
+			}
+			if strings.HasPrefix(target.text, "-") {
+				continue
+			}
+		}
+
 		if reason := rmTargetApprovalReason(target, cwd, repoRoot); reason != "" {
 			return reason
 		}
@@ -207,9 +219,6 @@ func rmApprovalReason(invocation rmInvocation, cwd, repoRoot string) string {
 }
 
 func rmTargetApprovalReason(target shellToken, cwd, repoRoot string) string {
-	if target.text == "--" || strings.HasPrefix(target.text, "-") {
-		return ""
-	}
 	if target.dynamic || hasShellExpansion(target.text) {
 		return fmt.Sprintf("rm target %q is dynamic", target.text)
 	}

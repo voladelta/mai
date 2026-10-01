@@ -16,7 +16,8 @@ func transcriptPath(sessionPath string) string {
 }
 
 func openTranscript(path string, flags int) (*os.File, error) {
-	file, err := os.OpenFile(path, flags|syscall.O_NOFOLLOW, 0o600)
+	// Nonblocking open lets validation reject a FIFO without waiting for a writer.
+	file, err := os.OpenFile(path, flags|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o600)
 	if err != nil {
 		return nil, err
 	}

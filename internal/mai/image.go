@@ -13,6 +13,7 @@ import (
 	_ "image/png"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 )
 
@@ -75,7 +76,7 @@ func viewImage(root, cwd, path string) (imageFileResult, error) {
 	if !pathWithin(root, resolved) {
 		return imageFileResult{}, errors.New("image path is outside the repository")
 	}
-	file, err := os.Open(resolved)
+	file, err := os.OpenFile(resolved, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return imageFileResult{}, fmt.Errorf("open image: %w", err)
 	}

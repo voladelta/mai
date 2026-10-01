@@ -1,10 +1,44 @@
 package mai
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestRMDashPrefixedOperandsAfterDoubleDash(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	victim := filepath.Join(outside, "victim")
+	if err := os.WriteFile(victim, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "-external")); err != nil {
+		t.Fatal(err)
+	}
+
+	output := runBash(context.Background(), bashRequest{
+		Command: "rm -f -- -external/victim", CWD: root, RepoRoot: root,
+	})
+	if !strings.Contains(output, "rm approval required") {
+		t.Errorf("external operand was not denied: %s", output)
+	}
+	if content, err := os.ReadFile(victim); err != nil || string(content) != "keep" {
+		t.Errorf("outside victim changed: %q, %v", content, err)
+	}
+
+	inside := filepath.Join(root, "-inside")
+	if err := os.WriteFile(inside, []byte("remove"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output = runBash(context.Background(), bashRequest{
+		Command: "rm -f -- -inside", CWD: root, RepoRoot: root,
+	})
+	if _, err := os.Stat(inside); !os.IsNotExist(err) {
+		t.Fatalf("inside operand was not removed: %v; %s", err, output)
+	}
+}
 
 func TestRMResolvesSymlinkBeforeParentTraversal(t *testing.T) {
 	root := t.TempDir()

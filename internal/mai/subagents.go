@@ -121,7 +121,7 @@ func loadCustomAgent(root, name string) (customAgent, error) {
 }
 
 func loadCustomAgentFile(path string) (customAgent, error) {
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return customAgent{}, err
 	}

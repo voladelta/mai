@@ -303,3 +303,62 @@ func TestDeepSeekRejectsMalformedCompletedToolItems(t *testing.T) {
 		}
 	}
 }
+
+func TestDeepSeekChecksToolCallIDAgainstHistoryBeforeEffects(t *testing.T) {
+	for _, callID := range []string{"existing", "fresh"} {
+		t.Run(callID, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				call := functionCall{
+					Type: "function_call", CallID: callID, Name: "bash",
+					Arguments: `{"command":"printf executed > marker"}`,
+				}
+				deepseekTestResponse(w, "["+string(mustJSON(t, call))+"]")
+			}))
+			defer server.Close()
+
+			sess := deepseekTestSession(t)
+			sess.appendEstimatedHistory(
+				json.RawMessage(`{"type":"function_call","call_id":"existing","name":"bash","arguments":"{}"}`),
+				json.RawMessage(`{"type":"function_call_output","call_id":"existing","output":"done"}`),
+			)
+			path := filepath.Join(t.TempDir(), "session.json")
+			if err := saveJSON(path, sess); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			a := &agent{
+				backend: &deepseekClient{httpClient: server.Client(), endpoint: server.URL, stdout: io.Discard},
+				stdout:  io.Discard, stderr: io.Discard, sessionPath: path,
+			}
+
+			done, err := a.runTurn(context.Background(), sess, "test")
+			marker := filepath.Join(sess.CWD, "marker")
+			if callID == "fresh" {
+				if err != nil || done {
+					t.Fatalf("fresh call: done=%v error=%v", done, err)
+				}
+				if content, err := os.ReadFile(marker); err != nil || string(content) != "executed" {
+					t.Fatalf("fresh call did not execute: %q, %v", content, err)
+				}
+			} else {
+				if err == nil {
+					t.Error("accepted a tool call ID already in history")
+				}
+				if _, err := os.Stat(marker); !os.IsNotExist(err) {
+					t.Errorf("reused call performed effects: %v", err)
+				}
+				after, err := os.ReadFile(path)
+				if err != nil || !bytes.Equal(before, after) {
+					t.Error("rejected response changed saved history")
+				}
+			}
+
+			if err := validateDeepSeekHistory(sess.History, sess.Model); err != nil {
+				t.Fatalf("left invalid history: %v", err)
+			}
+		})
+	}
+}

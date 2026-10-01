@@ -278,6 +278,14 @@ func (c *deepseekClient) request(ctx context.Context, sess *session, instruction
 		return streamResult{wrote: result.wrote}, errors.New("DeepSeek Responses stream failed or incomplete")
 	}
 	seen := map[string]bool{}
+	previousCalls, err := extractFunctionCalls(history)
+	if err != nil {
+		return streamResult{}, err
+	}
+	for _, call := range previousCalls {
+		seen[call.CallID] = true
+	}
+
 	for index, raw := range result.items {
 		var item struct {
 			Type      string          `json:"type"`
