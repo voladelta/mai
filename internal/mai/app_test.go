@@ -31,22 +31,22 @@ func TestMainWithoutPromptShowsBuiltInDefault(t *testing.T) {
 	if code := Main(nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "Built-in default: luna/medium.") {
+	if !strings.Contains(stdout.String(), "Built-in default: ds-flash/high.") {
 		t.Fatalf("stdout does not show the built-in default:\n%s", stdout.String())
 	}
 }
 
 func TestMainJSONLProducesOnlyEventsOnStdout(t *testing.T) {
 	t.Chdir(t.TempDir())
-	writeTestCodexAuth(t)
+	writeTestDeepSeekConfig(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintln(w, `data: {"type":"response.output_text.delta","delta":"hello"}`)
 		fmt.Fprintln(w)
-		fmt.Fprintln(w, `data: {"type":"response.completed","response":{"status":"completed","output":[{"type":"message"}],"usage":{"total_tokens":7}}}`)
+		fmt.Fprintln(w, `data: {"type":"response.completed","response":{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hello"}]}],"usage":{"total_tokens":7}}}`)
 		fmt.Fprintln(w)
 	}))
 	defer server.Close()
-	t.Setenv("MAI_CODEX_URL", server.URL)
+	t.Setenv("MAI_DEEPSEEK_URL", server.URL)
 
 	var stdout, stderr bytes.Buffer
 	if code := Main([]string{"hello", "--jsonl"}, &stdout, &stderr); code != 0 {
@@ -80,12 +80,12 @@ func TestMainJSONLProducesOnlyEventsOnStdout(t *testing.T) {
 
 func TestMainJSONLReportsFailedModelDuration(t *testing.T) {
 	t.Chdir(t.TempDir())
-	writeTestCodexAuth(t)
+	writeTestDeepSeekConfig(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	defer server.Close()
-	t.Setenv("MAI_CODEX_URL", server.URL)
+	t.Setenv("MAI_DEEPSEEK_URL", server.URL)
 
 	var stdout, stderr bytes.Buffer
 	if code := Main([]string{"hello", "--jsonl"}, &stdout, &stderr); code != 1 {
@@ -115,13 +115,13 @@ func TestMainJSONLReportsFailedModelDuration(t *testing.T) {
 
 func TestMainPrintsCompletedTextWithoutDeltas(t *testing.T) {
 	t.Chdir(t.TempDir())
-	writeTestCodexAuth(t)
+	writeTestDeepSeekConfig(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintln(w, `data: {"type":"response.completed","response":{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hello"}]}]}}`)
 		fmt.Fprintln(w)
 	}))
 	defer server.Close()
-	t.Setenv("MAI_CODEX_URL", server.URL)
+	t.Setenv("MAI_DEEPSEEK_URL", server.URL)
 
 	var ordinary, ordinaryErr bytes.Buffer
 	if code := Main([]string{"hello"}, &ordinary, &ordinaryErr); code != 0 || ordinary.String() != "hello\n" {
@@ -152,7 +152,7 @@ func TestMainPrintsCompletedTextWithoutDeltas(t *testing.T) {
 
 func TestMainJSONLReportsToolCalls(t *testing.T) {
 	t.Chdir(t.TempDir())
-	writeTestCodexAuth(t)
+	writeTestDeepSeekConfig(t)
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
@@ -160,14 +160,14 @@ func TestMainJSONLReportsToolCalls(t *testing.T) {
 			fmt.Fprintln(w, `data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","call_id":"call-1","name":"bash","arguments":"{\"command\":\"printf ok\"}"}}`)
 			fmt.Fprintln(w)
 		} else {
-			fmt.Fprintln(w, `data: {"type":"response.output_item.done","output_index":0,"item":{"type":"message"}}`)
+			fmt.Fprintln(w, `data: {"type":"response.output_item.done","output_index":0,"item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hello"}]}}`)
 			fmt.Fprintln(w)
 		}
 		fmt.Fprintln(w, `data: {"type":"response.completed","response":{"status":"completed"}}`)
 		fmt.Fprintln(w)
 	}))
 	defer server.Close()
-	t.Setenv("MAI_CODEX_URL", server.URL)
+	t.Setenv("MAI_DEEPSEEK_URL", server.URL)
 
 	var stdout, stderr bytes.Buffer
 	if code := Main([]string{"run tool", "--jsonl"}, &stdout, &stderr); code != 0 {
@@ -205,8 +205,8 @@ func TestToolCompletedEventFailureKeepsSavedResult(t *testing.T) {
 		ID:       "01234567-89ab-cdef-0123-456789abcdef",
 		CWD:      root,
 		RepoRoot: root,
-		Model:    "luna",
-		Effort:   "m",
+		Model:    "ds-flash",
+		Effort:   "h",
 		History: []json.RawMessage{
 			json.RawMessage(`{"type":"function_call","call_id":"call-1","name":"bash","arguments":"{\"command\":\"printf complete > effect.txt\"}"}`),
 		},
@@ -258,7 +258,8 @@ func TestToolCompletedEventFailureKeepsSavedResult(t *testing.T) {
 func TestStatelessTaskDoesNotCreateMaiDirectory(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
-	t.Setenv("CODEX_HOME", t.TempDir())
+	t.Setenv("MAI_AGENTS_DIR", t.TempDir())
+	writeTestDeepSeekFailureServer(t)
 	var stdout, stderr bytes.Buffer
 	if code := Main([]string{"hello"}, &stdout, &stderr); code != 1 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
@@ -271,7 +272,8 @@ func TestStatelessTaskDoesNotCreateMaiDirectory(t *testing.T) {
 func TestPersistCreatesProjectSessionAndCurrentPointer(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
-	t.Setenv("CODEX_HOME", t.TempDir())
+	t.Setenv("MAI_AGENTS_DIR", t.TempDir())
+	writeTestDeepSeekFailureServer(t)
 	var stdout, stderr bytes.Buffer
 	if code := Main([]string{"hello", "--persist", "-e", "h"}, &stdout, &stderr); code != 1 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
@@ -285,7 +287,7 @@ func TestPersistCreatesProjectSessionAndCurrentPointer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sess.ID != id || sess.Model != "luna" || sess.Effort != "h" || sess.RequestEffort != "h" || len(sess.History) != 1 {
+	if sess.ID != id || sess.Model != "ds-flash" || sess.Effort != "h" || len(sess.History) != 1 {
 		t.Fatalf("saved session = %#v", sess)
 	}
 }
@@ -293,7 +295,7 @@ func TestPersistCreatesProjectSessionAndCurrentPointer(t *testing.T) {
 func TestConcurrentPersistedTasksKeepSeparateHistory(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
-	cfg := taskConfig{Model: defaultModel, Effort: "m"}
+	cfg := taskConfig{Model: defaultModel, Effort: "h"}
 
 	first, err := startSession(cfg, options{persist: true})
 	if err != nil {
@@ -344,7 +346,7 @@ func TestConcurrentPersistedTasksKeepSeparateHistory(t *testing.T) {
 func TestLastRejectsSessionThatIsAlreadyRunning(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
-	active, err := startSession(taskConfig{Model: defaultModel, Effort: "m"}, options{persist: true})
+	active, err := startSession(taskConfig{Model: defaultModel, Effort: "h"}, options{persist: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,7 +357,7 @@ func TestLastRejectsSessionThatIsAlreadyRunning(t *testing.T) {
 	if err := active.saveInitial(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := startSession(taskConfig{Effort: "m"}, options{last: true}); err == nil || !strings.Contains(err.Error(), "already running") {
+	if _, err := startSession(taskConfig{Effort: "h"}, options{last: true}); err == nil || !strings.Contains(err.Error(), "already running") {
 		t.Fatalf("concurrent --last error = %v", err)
 	}
 }
@@ -390,9 +392,9 @@ func TestMainHelpDocumentsPersistenceOptions(t *testing.T) {
 	}
 }
 
-func TestModelSelectionAndResumePreserveRequestPrefix(t *testing.T) {
+func TestResumePreservesHistoryAndUsesCurrentEffort(t *testing.T) {
 	t.Chdir(t.TempDir())
-	writeTestCodexAuth(t)
+	writeTestDeepSeekConfig(t)
 	var requests []map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
@@ -404,81 +406,48 @@ func TestModelSelectionAndResumePreserveRequestPrefix(t *testing.T) {
 		writeSSEItem(t, w, `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}`, 100)
 	}))
 	defer server.Close()
-	t.Setenv("MAI_CODEX_URL", server.URL)
-	for _, args := range [][]string{
-		{"first", "--persist"},
-		{"second", "--last", "-e", "h", "-m", "luna"},
-		{"third", "--last"},
-		{"fourth", "--last", "-e", "l", "-m", "sol"},
-	} {
+	t.Setenv("MAI_DEEPSEEK_URL", server.URL)
+	for _, args := range [][]string{{"first", "--persist"}, {"second", "--last", "-e", "l"}, {"third", "--last"}} {
 		var stdout, stderr bytes.Buffer
 		if code := Main(args, &stdout, &stderr); code != 0 {
-			t.Fatalf("Main(%v) = %d: %s", args, code, stderr.String())
+			t.Fatalf("%v: %s", args, stderr.String())
 		}
 	}
 	for i, request := range requests {
-		wantModel, wantEffort := []string{"gpt-6-luna", "gpt-6-luna", "gpt-6-luna", "gpt-6-sol"}[i], "medium"
-		if request["model"] != wantModel || request["reasoning"].(map[string]any)["effort"] != wantEffort {
-			t.Fatalf("request %d model/effort = %v / %v", i, request["model"], request["reasoning"])
+		wantEffort := []string{"high", "low", "low"}[i]
+		if request["model"] != "deepseek-flash" || request["reasoning"].(map[string]any)["effort"] != wantEffort {
+			t.Fatalf("model/effort %v", request)
 		}
-		if request["prompt_cache_key"] != requests[0]["prompt_cache_key"] {
-			t.Fatalf("request %d changed cache key", i)
+		if _, exists := request["prompt_cache_key"]; exists {
+			t.Fatal("unsupported cache key")
 		}
 		input := request["input"].([]any)
-		var updates []string
-		for index, raw := range input {
-			item := raw.(map[string]any)
-			if item["type"] == "configuration_update" {
-				updates = append(updates, item["reasoning"].(map[string]any)["effort"].(string))
-				if index+1 >= len(input) || input[index+1].(map[string]any)["role"] != "user" {
-					t.Fatalf("update does not precede user: %v", input)
-				}
+		for _, raw := range input {
+			if raw.(map[string]any)["type"] == "configuration_update" {
+				t.Fatal("unsupported configuration item")
 			}
 		}
-		want := []string{"", "high", "high", "high,low"}[i]
-		if strings.Join(updates, ",") != want {
-			t.Fatalf("request %d updates = %v, want %s", i, updates, want)
-		}
-		if i > 0 && i < 4 {
+		if i > 0 {
 			prior := requests[i-1]["input"].([]any)
 			if !bytes.Equal(mustJSON(t, input[:len(prior)]), mustJSON(t, prior)) {
-				t.Fatalf("request %d rewrote history prefix", i)
+				t.Fatal("history prefix changed")
 			}
 		}
 	}
 }
 
-func TestLastMigratesOlderModelToLuna(t *testing.T) {
+func TestLastRejectsRemovedSubscriptionModel(t *testing.T) {
 	t.Chdir(t.TempDir())
-	active, err := startSession(taskConfig{Model: defaultModel, Effort: "m"}, options{persist: true})
+	active, err := startSession(taskConfig{Model: defaultModel, Effort: "h"}, options{persist: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	active.session.Model = "astra"
-	if err := appendUserPrompt(active.session, "original"); err != nil {
-		t.Fatal(err)
-	}
+	active.session.Model = "luna"
 	if err := active.saveInitial(); err != nil {
 		t.Fatal(err)
 	}
-	original := append([]byte(nil), active.session.History[0]...)
 	active.close()
-	resumed, err := startSession(configForTask(options{}), options{last: true, effortExplicit: true, effort: "h"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resumed.close()
-	if err := appendUserPrompt(resumed.session, "continue"); err != nil {
-		t.Fatal(err)
-	}
-	if err := resumed.saveInitial(); err != nil {
-		t.Fatal(err)
-	}
-	saved, err := loadSession(resumed.path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if saved.Model != "luna" || saved.Effort != "h" || saved.RequestEffort != "h" || len(saved.History) != 2 || compactJSON(saved.History[0]) != compactJSON(original) {
-		t.Fatalf("migrated session = %#v", saved)
+	if _, err := startSession(configForTask(options{}), options{last: true}); err == nil {
+		t.Fatal("removed model silently migrated")
 	}
 }

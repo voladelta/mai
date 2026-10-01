@@ -29,10 +29,10 @@ func contextEditFixture(t *testing.T) *session {
 	})
 	sess := &session{
 		Version: stateVersion, ID: "01234567-89ab-cdef-0123-456789abcdef",
-		CWD: dir, RepoRoot: dir, Model: "luna", Effort: "m", RequestEffort: "m",
+		CWD: dir, RepoRoot: dir, Model: "ds-flash", Effort: "h",
 		History: []json.RawMessage{
 			json.RawMessage(`{"role":"user","content":"Preserve user requirements"}`),
-			json.RawMessage(`{"type":"reasoning","encrypted_content":"opaque"}`),
+			json.RawMessage(`{"type":"reasoning","content":[{"type":"reasoning_text","text":"private reasoning"}]}`),
 			call, output,
 		},
 	}
@@ -68,16 +68,15 @@ func TestContextHintsPreserveRequestPrefixAndAllowDirectShrink(t *testing.T) {
 		fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[]}}\n\n")
 	}))
 	defer server.Close()
-	client := newCodexClient(io.Discard, time.Second)
-	client.endpoint = server.URL
+	client := &deepseekClient{httpClient: server.Client(), stdout: io.Discard, endpoint: server.URL}
 
 	for _, pressure := range []int64{0, modelContextWindow / 2} {
 		sess.ContextTokens = pressure
-		if _, err := client.requestOnce(context.Background(), sess, "Stable instructions", credentials{}, false); err != nil {
+		if _, err := client.request(context.Background(), sess, "Stable instructions", true); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := client.requestOnce(context.Background(), sess, "Stable instructions", credentials{}, true); err != nil {
+	if _, err := client.request(context.Background(), sess, "Stable instructions", false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -299,7 +298,7 @@ func TestContextEditSaveFailureAndCorruptedResumeDoNotApply(t *testing.T) {
 }
 
 func TestAgentExecutesContextEditWithoutReplayingBash(t *testing.T) {
-	writeTestCodexAuth(t)
+	writeTestDeepSeekConfig(t)
 	sess := contextEditFixture(t)
 	digest := contextDigest(sess.History[3])
 	requests := 0
@@ -333,7 +332,7 @@ func TestAgentExecutesContextEditWithoutReplayingBash(t *testing.T) {
 	}))
 	defer server.Close()
 	a := newAgent(io.Discard, io.Discard, filepath.Join(sess.CWD, "session.json"), time.Second, false, nil)
-	a.client.endpoint = server.URL
+	a.backend = &deepseekClient{httpClient: server.Client(), stdout: io.Discard, endpoint: server.URL}
 	for turn := 0; turn < 3; turn++ {
 		done, err := a.runTurn(context.Background(), sess, "instructions")
 		if err != nil {
@@ -348,53 +347,32 @@ func TestAgentExecutesContextEditWithoutReplayingBash(t *testing.T) {
 	}
 }
 
-func TestNativeCompactionReceivesProjectionButArchivesOriginal(t *testing.T) {
-	writeTestCodexAuth(t)
+func TestPortableCompactionReceivesProjectionButArchivesOriginal(t *testing.T) {
 	sess := contextEditFixture(t)
 	path := filepath.Join(sess.CWD, "session.json")
 	a := newAgent(io.Discard, io.Discard, path, time.Second, false, nil)
-	var events bytes.Buffer
-	a.events = &events
 	shrinkContext(t, a, sess, contextDigest(sess.History[3]), "Build completed")
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request struct {
-			Input []json.RawMessage `json:"input"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Fatal(err)
-		}
-		if !bytes.Contains(request.Input[3], []byte("Build completed")) || bytes.Contains(request.Input[3], []byte("ORIGINAL-RECALL-FACT")) {
-			t.Errorf("compaction did not use projection: %s", request.Input[3])
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		writeSSEItem(t, w, `{"type":"compaction","encrypted_content":"summary"}`, 250_000)
-	}))
-	defer server.Close()
-	a.client.endpoint = server.URL
+	if err := appendUserPrompt(sess, "continue"); err != nil {
+		t.Fatal(err)
+	}
+	backend := &checkpointStub{reply: "Goal: build completed. Retrieve original logs with call ID logs."}
+	a.backend = backend
 	sess.ContextTokens = modelContextWindow
 	if err := a.compactIfNeeded(context.Background(), sess, "instructions"); err != nil {
 		t.Fatal(err)
 	}
-	var event struct {
-		Type       string      `json:"type"`
-		DurationMS *int64      `json:"duration_ms"`
-		Usage      *tokenUsage `json:"usage"`
+	if len(backend.sources) != 1 || !strings.Contains(backend.sources[0], "Build completed") || strings.Contains(backend.sources[0], "ORIGINAL-RECALL-FACT") {
+		t.Fatal("checkpoint did not receive projection")
 	}
-	if err := json.Unmarshal(events.Bytes(), &event); err != nil {
-		t.Fatal(err)
-	}
-	if event.Type != "compaction.completed" || event.DurationMS == nil || event.Usage == nil || event.Usage.TotalTokens != 250_000 {
-		t.Fatalf("compaction telemetry lost: %s", events.Bytes())
-	}
-	if len(sess.ContextEdits) != 0 {
-		t.Fatal("compaction kept stale projection indexes")
-	}
-	loaded, err := loadSession(path)
+	saved, err := loadSession(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := searchTranscript(loaded, json.RawMessage(`{"query":"ORIGINAL-RECALL-FACT","limit":20}`), "")
-	if !bytes.Contains(got, []byte(`"total":1`)) {
-		t.Fatalf("original lost through compaction/resume: %s", got)
+	result := searchTranscript(saved, mustJSONValue(t, map[string]any{"query": "ORIGINAL-RECALL-FACT", "limit": 20}), "")
+	if !bytes.Contains(result, []byte("ORIGINAL-RECALL-FACT")) {
+		t.Fatal("original log not archived")
+	}
+	if len(saved.ContextEdits) != 0 {
+		t.Fatal("superseded projection retained")
 	}
 }

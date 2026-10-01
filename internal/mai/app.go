@@ -29,15 +29,15 @@ Examples:
   mai "start a saved task" --persist
   mai "now fix the failing test" --last
   mai "refactor this" -e h
-  mai "quick review" -m luna
+  mai "quick review" -m ds-flash
 
 Options:
   -h, --help             Show this help text.
   --version              Show the mai version.
   --persist              Save this new task in the current project.
   --last                 Resume the current saved task in the current project.
-  -e, --effort EFFORT    Use l, m, h, x, or max for this task.
-  -m, --model MODEL      Use sol, 6.1-sol, luna, ds-flash or ds-pro.
+  -e, --effort EFFORT    Use l, h, or max (low, high, max).
+  -m, --model MODEL      Use ds-flash or ds-pro for this task.
   --timeout DURATION     Set the per-request first-byte/idle timeout (default: 10m).
   --cell-timeout DURATION      Set the wall-clock limit for each Python cell (default: 10m).
   --subagent-timeout DURATION  Set the wall-clock limit for each subagent run (default: 1h).
@@ -47,7 +47,7 @@ Options:
   --subagent NAME        Run with an installed custom agent.
 
 Tasks are stateless unless you use --persist or --last.
-The built-in default is luna/medium.
+The built-in default is ds-flash/high.
 
 Documentation and support: https://github.com/voladelta/mai
 `
@@ -78,7 +78,7 @@ Usage:
 Example:
   mai "add tests for the parser"
 
-Built-in default: luna/medium.
+Built-in default: ds-flash/high.
 Run 'mai --help' for more information.
 `)
 		return 0
@@ -116,7 +116,7 @@ func runTask(opts options, stdout, stderr io.Writer) int {
 	defer active.close()
 	runner := newAgent(stdout, stderr, active.path, opts.timeout, !opts.noInput && isTerminal(os.Stdin), selectedAgent)
 	if opts.jsonl {
-		runner.client.stdout = jsonlTextWriter{output: stdout}
+		runner.modelOutput = jsonlTextWriter{output: stdout}
 	}
 	if err := repairInterruptedToolCalls(active.session); err != nil {
 		return reportError(fmt.Errorf("repair interrupted task: %w", err))
@@ -147,7 +147,6 @@ func runTask(opts options, stdout, stderr io.Writer) int {
 	runner.skipSkills = opts.skipSkills
 	if opts.jsonl {
 		runner.events = stdout
-		runner.client.stdout = jsonlTextWriter{output: stdout}
 	}
 	taskStarted := time.Now()
 	if err := runner.run(ctx, active.session, opts.prompt); err != nil {
@@ -195,12 +194,9 @@ func (task *activeTask) close() {
 }
 
 func configForTask(opts options) taskConfig {
-	cfg := taskConfig{Model: defaultModel, Effort: "m"}
+	cfg := taskConfig{Model: defaultModel, Effort: "h"}
 	if opts.modelExplicit {
 		cfg.Model = opts.model
-	}
-	if deepseekModel(cfg.Model) {
-		cfg.Effort = "h"
 	}
 	if opts.effortExplicit {
 		cfg.Effort = opts.effort
@@ -255,22 +251,11 @@ func startSession(cfg taskConfig, opts options) (*activeTask, error) {
 		lock.Close()
 		return nil, errors.New("saved task does not belong to this project")
 	}
-	legacyModel := sess.Backend == "" && !supportedModel(sess.Model)
-	if legacyModel {
-		// Older saved tasks use the current default on resume.
-		sess.Model = defaultModel
-	}
 	if opts.modelExplicit {
-		if deepseekModel(opts.model) && !deepseekModel(sess.Model) && !opts.effortExplicit {
-			sess.Effort = "h"
-		}
 		sess.Model = opts.model
 	}
 	if opts.effortExplicit {
 		sess.Effort = opts.effort
-	}
-	if legacyModel {
-		sess.RequestEffort = sess.Effort
 	}
 	if err := os.Chdir(sess.CWD); err != nil {
 		lock.Close()
@@ -280,41 +265,12 @@ func startSession(cfg taskConfig, opts options) (*activeTask, error) {
 }
 
 func appendUserPrompt(sess *session, prompt string) error {
-	if deepseekModel(sess.Model) {
-		// Responses uses a top-level effort, not Codex configuration items.
-		sess.RequestEffort = sess.Effort
-	}
 	userItem, err := json.Marshal(map[string]any{
 		"role":    "user",
 		"content": []map[string]string{{"type": "input_text", "text": prompt}},
 	})
 	if err != nil {
 		return fmt.Errorf("encode prompt: %w", err)
-	}
-	effective := effortIDs[sess.RequestEffort]
-	for _, raw := range sess.History {
-		var item struct {
-			Type      string `json:"type"`
-			Reasoning struct {
-				Effort string `json:"effort"`
-			} `json:"reasoning"`
-		}
-		if err := json.Unmarshal(raw, &item); err != nil {
-			return fmt.Errorf("parse saved history: %w", err)
-		}
-		if item.Type == "configuration_update" {
-			effective = item.Reasoning.Effort
-		}
-	}
-	if !deepseekModel(sess.Model) && effective != effortIDs[sess.Effort] {
-		update, err := json.Marshal(map[string]any{
-			"type":      "configuration_update",
-			"reasoning": map[string]string{"effort": effortIDs[sess.Effort]},
-		})
-		if err != nil {
-			return err
-		}
-		sess.appendEstimatedHistory(update)
 	}
 	sess.appendEstimatedHistory(userItem)
 	return nil
@@ -332,7 +288,7 @@ func createSession(cfg taskConfig) (*session, error) {
 	}
 	return &session{
 		Version: stateVersion, ID: id, CWD: cwd, RepoRoot: root,
-		Model: cfg.Model, Effort: cfg.Effort, RequestEffort: cfg.Effort,
+		Model: cfg.Model, Effort: cfg.Effort,
 	}, nil
 }
 

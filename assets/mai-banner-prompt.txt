@@ -5,11 +5,11 @@ Use an asymmetric editorial-cover composition with relaxed energy. Exactly one f
 The single dominant object is a recognizable hybrid robot face and GPU chip: square processor body, layered heat-sink terraces, pins and circuit paths turned into ridges, ledges, and walkways. Several very small human-like agent figures climb, walk, pause, and inspect it at different heights; one peeks around an outer edge. Their scale makes the ordinary chip feel like a surreal built world. Keep forms readable at thumbnail size. Use economical cobalt contours, solid dark ink masses, halftone recesses, and sharp exposed-paper cutouts to separate terrain and figures. No flower or cup; those are only examples of scale transformation.
 
 Typography: wide geometric grotesk display and minimal monospaced support, with a clear 8:1 hierarchy. Exact display text: "mai" in large lowercase letters, placed in an open zone and tightly locked to the chip silhouette without covering the small figures. Exact short support line: "Little agents, giant circuits". The headline may touch the chip contour but remains fully readable. Right-align three smaller monospaced lines beneath the subtitle, in this exact order:
-6 tools / skills / subagents
-Persistent Python
-Existing ChatGPT Sub
+7 tools / skills / subagents
+Native Go / persistent Python
+DeepSeek Responses API
 No other wording.
 
 Mechanical silkscreen texture: visible regular dots, restrained ink density variation, slight ink edge grain, crisp linework and clean plate separation. Contemporary, playful, curious. No gradients, glossy photography, cinematic lighting, 3D rendering, hard shadows, lens blur, cards, UI panels, border, stickers, logos, QR codes, fake signatures, extra colors, or additional text.
 
-The base image was generated without the three metadata lines. Those lines were typeset with Menlo at 28 px in Cobalt #2148B8, right-aligned 75 px from the right edge, after image generation so every character is exact.
+The banner was edited with image generation to preserve the original illustration and replace the three metadata lines. Verify all lettering at full size before using it.

@@ -293,7 +293,7 @@ func TestPythonMissingRuntimeIsActionable(t *testing.T) {
 
 func TestPythonHistoryCompactionAndRunCleanup(t *testing.T) {
 	a, sess := pythonTestAgent(t)
-	writeTestCodexAuth(t)
+	writeTestDeepSeekConfig(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -301,28 +301,26 @@ func TestPythonHistoryCompactionAndRunCleanup(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
-		if hasCompactionTrigger(body["input"]) {
-			writeSSEItem(t, w, `{"type":"compaction","encrypted_content":"summary"}`, 100)
-			return
-		}
 		writeSSEItem(t, w, `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}`, 100)
 	}))
 	defer server.Close()
 	a.stdout = io.Discard
-	a.client = newCodexClient(io.Discard, time.Second)
-	a.client.endpoint = server.URL
+	a.backend = &deepseekClient{httpClient: server.Client(), stdout: io.Discard, endpoint: server.URL}
 	a.sessionPath = filepath.Join(t.TempDir(), "session.json")
 	sess.Version, sess.ID = stateVersion, "01234567-89ab-cdef-0123-456789abcdef"
-	sess.Model, sess.Effort, sess.RepoRoot = "luna", "m", sess.CWD
+	sess.Model, sess.Effort, sess.RepoRoot = "ds-flash", "h", sess.CWD
+	_ = appendUserPrompt(sess, strings.Repeat("context ", 1000))
+	sess.History = append(sess.History, mustJSONValue(t, functionCall{Type: "function_call", Name: "python", CallID: "cell", Arguments: `{"code":"value = 42"}`}))
 	err := a.executeCalls(context.Background(), sess, []functionCall{{Name: "python", CallID: "cell", Arguments: `{"code":"value = 42"}`}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	saved, err := loadSession(a.sessionPath)
-	if err != nil || len(saved.History) != 1 || historyItemType(saved.History[0]) != "function_call_output" {
+	if err != nil || len(saved.History) != 3 || historyItemType(saved.History[2]) != "function_call_output" {
 		t.Fatalf("Python result not persisted: %#v, %v", saved, err)
 	}
 
+	_ = appendUserPrompt(sess, "continue")
 	sess.ContextTokens = modelContextWindow
 	if err := a.compactIfNeeded(context.Background(), sess, "instructions"); err != nil {
 		t.Fatal(err)

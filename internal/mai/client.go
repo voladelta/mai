@@ -3,35 +3,18 @@ package mai
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net"
-	"net/http"
-	"os"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 )
 
-const (
-	defaultCodexURL    = "https://chatgpt.com/backend-api/codex/responses"
-	defaultHTTPTimeout = 10 * time.Minute
-	maxRequestAttempts = 3
-	maxRetryDelay      = 5 * time.Second
-)
+const defaultHTTPTimeout = 10 * time.Minute
 
-type codexClient struct {
-	httpClient     *http.Client
-	requestTimeout time.Duration
-	endpoint       string
-	stdout         io.Writer
-	allowSubagents bool
-	textOnly       bool
-}
+type responseStream struct{ stdout io.Writer }
 
 type streamResult struct {
 	items       []json.RawMessage
@@ -76,27 +59,13 @@ type sseCollector struct {
 	usage     *tokenUsage
 }
 
-type httpStatusError struct {
-	status        int
-	body          string
-	retryAfter    time.Duration
-	hasRetryAfter bool
-}
+type providerFailure struct{ context, code, detail string }
 
-type providerFailure struct {
-	context string
-	code    string
-	detail  string
-}
+func (e *providerFailure) Error() string { return e.context + ": " + e.detail }
 
-func (e *providerFailure) Error() string {
-	return e.context + ": " + e.detail
-}
-
-var errIncompleteStream = errors.New("Codex stream ended before response.completed")
-var errStreamRead = errors.New("read Codex stream")
-var errOutputWrite = errors.New("write Codex output")
-var errRequestIdleTimeout = errors.New("Codex request idle timeout")
+var errIncompleteStream = errors.New("Responses stream ended before response.completed")
+var errStreamRead = errors.New("read Responses stream")
+var errOutputWrite = errors.New("write Responses output")
 
 type idleResetReader struct {
 	reader  io.Reader
@@ -112,246 +81,7 @@ func (r idleResetReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func (e *httpStatusError) Error() string {
-	if e.body == "" {
-		return fmt.Sprintf("Codex backend returned HTTP %d", e.status)
-	}
-	return fmt.Sprintf("Codex backend returned HTTP %d: %s", e.status, e.body)
-}
-
-func newCodexClient(stdout io.Writer, timeout time.Duration) *codexClient {
-	endpoint := os.Getenv("MAI_CODEX_URL")
-	if endpoint == "" {
-		endpoint = defaultCodexURL
-	}
-	return &codexClient{
-		httpClient:     &http.Client{},
-		requestTimeout: timeout,
-		endpoint:       endpoint,
-		stdout:         stdout,
-	}
-}
-
-func (c *codexClient) stream(ctx context.Context, sess *session, instructions string) (streamResult, error) {
-	return c.withCredentials(func(creds credentials) (streamResult, error) {
-		return c.requestWithCredentials(ctx, sess, instructions, creds, false)
-	})
-}
-
-func (c *codexClient) compact(ctx context.Context, sess *session, instructions string) (json.RawMessage, *tokenUsage, error) {
-	result, err := c.withCredentials(func(creds credentials) (streamResult, error) {
-		return c.compactWithCredentials(ctx, sess, instructions, creds)
-	})
-	if err != nil {
-		return nil, result.usage, err
-	}
-	var compaction json.RawMessage
-	for _, raw := range result.items {
-		var item struct {
-			Type             string `json:"type"`
-			EncryptedContent string `json:"encrypted_content"`
-		}
-		if err := json.Unmarshal(raw, &item); err != nil {
-			return nil, result.usage, fmt.Errorf("parse Codex compaction output: %w", err)
-		}
-		if item.Type != "compaction" && item.Type != "compaction_summary" {
-			continue
-		}
-		if compaction != nil {
-			return nil, result.usage, errors.New("Codex compaction returned more than one compaction item")
-		}
-		if item.EncryptedContent == "" {
-			return nil, result.usage, errors.New("Codex compaction returned empty encrypted content")
-		}
-		compaction = raw
-	}
-	if compaction == nil {
-		return nil, result.usage, fmt.Errorf("Codex compaction returned no compaction item in %d output items", len(result.items))
-	}
-	return compaction, result.usage, nil
-}
-
-func (c *codexClient) withCredentials(request func(credentials) (streamResult, error)) (streamResult, error) {
-	first, err := loadCredentials()
-	if err != nil {
-		return streamResult{}, err
-	}
-	result, err := request(first)
-	var statusErr *httpStatusError
-	if !errors.As(err, &statusErr) || statusErr.status != http.StatusUnauthorized {
-		return result, err
-	}
-
-	second, reloadErr := loadCredentials()
-	if reloadErr != nil {
-		return streamResult{}, reloadErr
-	}
-	if first.AccessToken == second.AccessToken {
-		return streamResult{}, loginError(second.Source)
-	}
-	return request(second)
-}
-
-func (c *codexClient) requestWithCredentials(ctx context.Context, sess *session, instructions string, creds credentials, compaction bool) (streamResult, error) {
-	for attempt := 0; ; attempt++ {
-		result, err := c.requestOnce(ctx, sess, instructions, creds, compaction)
-		if err == nil || result.wrote || attempt == maxRequestAttempts-1 || !retryableRequestError(err) {
-			return result, err
-		}
-		delay := time.Duration(200<<attempt) * time.Millisecond
-		var statusErr *httpStatusError
-		if errors.As(err, &statusErr) && statusErr.hasRetryAfter {
-			delay = statusErr.retryAfter
-		}
-		if delay > maxRetryDelay {
-			delay = maxRetryDelay
-		}
-		timer := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return streamResult{}, ctx.Err()
-		case <-timer.C:
-		}
-	}
-}
-
-func retryableRequestError(err error) bool {
-	if errors.Is(err, errOutputWrite) {
-		return false
-	}
-	var providerErr *providerFailure
-	if errors.As(err, &providerErr) {
-		switch providerErr.code {
-		case "rate_limit_exceeded", "requests_limit_reached", "slow_down", "server_error", "overloaded", "server_is_overloaded", "service_unavailable", "internal_error", "timeout":
-			return true
-		default:
-			return false
-		}
-	}
-	var statusErr *httpStatusError
-	if errors.As(err, &statusErr) {
-		body := strings.ToLower(statusErr.body)
-		quotaFailure := strings.Contains(body, "quota") ||
-			strings.Contains(body, "usage_limit") ||
-			strings.Contains(body, "credit_balance_exhausted") ||
-			strings.Contains(body, "billing_hard_limit")
-		if statusErr.status == http.StatusTooManyRequests && quotaFailure {
-			return false
-		}
-		return statusErr.status == http.StatusRequestTimeout || statusErr.status == http.StatusTooManyRequests || statusErr.status >= 500
-	}
-	var netErr net.Error
-	return errors.Is(err, errIncompleteStream) || errors.Is(err, errStreamRead) || errors.Is(err, io.EOF) || (errors.As(err, &netErr) && netErr.Temporary())
-}
-
-func (c *codexClient) requestOnce(ctx context.Context, sess *session, instructions string, creds credentials, compaction bool) (streamResult, error) {
-	history, err := sess.requestHistory()
-	if err != nil {
-		return streamResult{}, fmt.Errorf("render request context: %w", err)
-	}
-	if !compaction && sess.ContextTokens >= modelContextWindow/2 {
-		if hint := contextEditHint(history); hint != nil {
-			history = append(history, hint)
-		}
-	}
-	body := map[string]any{
-		"model":               modelID(sess.Model),
-		"store":               false,
-		"stream":              true,
-		"instructions":        instructions,
-		"input":               history,
-		"tools":               toolDefinitions(c.allowSubagents),
-		"tool_choice":         "auto",
-		"parallel_tool_calls": false,
-		"reasoning": map[string]any{
-			"effort":  effortIDs[sess.RequestEffort],
-			"summary": "auto",
-		},
-		"text":             map[string]string{"verbosity": "low"},
-		"include":          []string{"reasoning.encrypted_content"},
-		"prompt_cache_key": sess.ID,
-	}
-	if c.textOnly {
-		body["tools"] = []any{}
-		body["tool_choice"] = "none"
-	}
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return streamResult{}, fmt.Errorf("encode Codex request: %w", err)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(payload))
-	if err != nil {
-		return streamResult{}, fmt.Errorf("create Codex request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+creds.AccessToken)
-	req.Header.Set("chatgpt-account-id", creds.AccountID)
-	req.Header.Set("originator", "mai")
-	req.Header.Set("User-Agent", "mai/"+version)
-	req.Header.Set("OpenAI-Beta", "responses=experimental")
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("session-id", sess.ID)
-	req.Header.Set("x-client-request-id", sess.ID)
-	req.Header.Set("x-codex-beta-features", "remote_compaction_v2")
-	if compaction {
-		req.Header.Set("x-codex-turn-metadata", `{"request_kind":"compaction"}`)
-	}
-
-	requestCtx, cancel := context.WithCancelCause(ctx)
-	defer cancel(nil)
-	idleTimer := time.AfterFunc(c.requestTimeout, func() { cancel(errRequestIdleTimeout) })
-	defer idleTimer.Stop()
-	req = req.WithContext(requestCtx)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		if errors.Is(context.Cause(requestCtx), errRequestIdleTimeout) {
-			return streamResult{}, fmt.Errorf("Codex request idle timed out after %s; use --timeout to change the limit", c.requestTimeout)
-		}
-		return streamResult{}, fmt.Errorf("call Codex backend: %w", err)
-	}
-	defer resp.Body.Close()
-	idleTimer.Reset(c.requestTimeout)
-	responseBody := idleResetReader{reader: resp.Body, timer: idleTimer, timeout: c.requestTimeout}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		b, _ := io.ReadAll(io.LimitReader(responseBody, 64<<10))
-		retryAfter, hasRetryAfter := parseRetryAfter(resp.Header.Get("Retry-After"))
-		return streamResult{}, &httpStatusError{
-			status: resp.StatusCode, body: strings.TrimSpace(string(b)),
-			retryAfter: retryAfter, hasRetryAfter: hasRetryAfter,
-		}
-	}
-	result, err := c.readSSE(responseBody)
-	if err != nil && errors.Is(context.Cause(requestCtx), errRequestIdleTimeout) {
-		return result, fmt.Errorf("Codex request idle timed out after %s; use --timeout to change the limit", c.requestTimeout)
-	}
-	return result, err
-}
-
-func parseRetryAfter(value string) (time.Duration, bool) {
-	if seconds, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64); err == nil && seconds >= 0 {
-		if seconds > int64(maxRetryDelay/time.Second) {
-			return maxRetryDelay, true
-		}
-		return time.Duration(seconds) * time.Second, true
-	}
-	if when, err := http.ParseTime(value); err == nil {
-		return max(0, time.Until(when)), true
-	}
-	return 0, false
-}
-
-func (c *codexClient) compactWithCredentials(ctx context.Context, sess *session, instructions string, creds credentials) (streamResult, error) {
-	trigger := json.RawMessage(`{"type":"compaction_trigger"}`)
-	compactSession := *sess
-	compactSession.History = append(append([]json.RawMessage(nil), sess.History...), trigger)
-	quietClient := *c
-	quietClient.stdout = io.Discard
-	return quietClient.requestWithCredentials(ctx, &compactSession, instructions, creds, true)
-}
-
-func (c *codexClient) readSSE(r io.Reader) (streamResult, error) {
+func (c *responseStream) readSSE(r io.Reader) (streamResult, error) {
 	reader := bufio.NewReaderSize(r, 64<<10)
 	collector := sseCollector{stdout: c.stdout, items: make(map[int]json.RawMessage)}
 	var dataLines []string
@@ -401,7 +131,7 @@ func (collector *sseCollector) consume(data string) error {
 
 	var event sseEvent
 	if err := json.Unmarshal([]byte(data), &event); err != nil {
-		return fmt.Errorf("parse Codex stream event: %w", err)
+		return fmt.Errorf("parse Responses stream event: %w", err)
 	}
 	switch event.Type {
 	case "response.output_text.delta":
@@ -410,7 +140,7 @@ func (collector *sseCollector) consume(data string) error {
 		collector.collectItem(event.OutputIndex, event.Item)
 	case "response.completed":
 		return collector.complete(event.Response)
-	case "response.failed", "error":
+	case "response.failed", "response.incomplete", "error":
 		return collector.fail(event)
 	}
 	return nil
@@ -435,10 +165,10 @@ func (collector *sseCollector) collectItem(index int, item json.RawMessage) {
 
 func (collector *sseCollector) complete(response *sseResponse) error {
 	if response == nil {
-		return errors.New("Codex response.completed is missing response")
+		return errors.New("Responses response.completed is missing response")
 	}
 	if response.Status != "completed" {
-		return newProviderFailure(fmt.Sprintf("Codex response ended with status %q", response.Status), response.Error)
+		return newProviderFailure(fmt.Sprintf("Responses response ended with status %q", response.Status), response.Error)
 	}
 
 	collector.completed = true
@@ -458,7 +188,7 @@ func (collector *sseCollector) complete(response *sseResponse) error {
 				} `json:"content"`
 			}
 			if err := json.Unmarshal(item, &message); err != nil {
-				return fmt.Errorf("parse Codex output item: %w", err)
+				return fmt.Errorf("parse Responses output item: %w", err)
 			}
 			if message.Type != "message" || message.Role != "assistant" {
 				continue
@@ -482,15 +212,15 @@ func (collector *sseCollector) complete(response *sseResponse) error {
 
 func (collector *sseCollector) fail(event sseEvent) error {
 	if event.Response != nil {
-		return newProviderFailure("Codex response failed", event.Response.Error)
+		return newProviderFailure("Responses response failed", event.Response.Error)
 	}
 	if len(event.Error) == 0 && (event.Code != "" || event.Message != "") {
 		return &providerFailure{
-			context: "Codex stream failed", code: strings.ToLower(event.Code),
+			context: "Responses stream failed", code: strings.ToLower(event.Code),
 			detail: fmt.Sprintf("%s (%s)", event.Message, event.Code),
 		}
 	}
-	return newProviderFailure("Codex stream failed", event.Error)
+	return newProviderFailure("Responses stream failed", event.Error)
 }
 
 func newProviderFailure(context string, raw json.RawMessage) error {
@@ -617,11 +347,11 @@ func toolDefinitions(allowSubagents bool) []map[string]any {
 		},
 		{
 			"type": "function", "name": "apply_patch",
-			"description": "Create, update, move, or delete repository files with a Codex-style patch bounded by *** Begin Patch and *** End Patch. Paths are relative to the repository root.",
+			"description": "Create, update, move, or delete repository files with a structured patch bounded by *** Begin Patch and *** End Patch. Paths are relative to the repository root.",
 			"parameters": map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
-					"patch": map[string]string{"type": "string", "description": "A complete Codex apply_patch document."},
+					"patch": map[string]string{"type": "string", "description": "A complete apply_patch document."},
 				},
 				"required": []string{"patch"},
 			},

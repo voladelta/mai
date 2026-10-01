@@ -16,7 +16,7 @@ import (
 )
 
 // DeepSeek Responses is stateless. Keep its plain reasoning and complete tool
-// history locally; never send Codex credentials or opaque Codex checkpoints.
+// history locally and send plain checkpoints on subsequent requests.
 type deepseekClient struct {
 	httpClient     *http.Client
 	endpoint       string
@@ -24,9 +24,10 @@ type deepseekClient struct {
 	stdout         io.Writer
 	allowSubagents bool
 	requestTimeout time.Duration
+	contextWindow  int64
 }
 
-func (a *agent) configureDeepSeek(sess *session) error {
+func (a *agent) configureBackend(sess *session) error {
 	if !deepseekModel(sess.Model) || !deepseekEffort(sess.Effort) {
 		return errors.New("DeepSeek requires ds-flash or ds-pro and effort l, h or max")
 	}
@@ -42,10 +43,6 @@ func (a *agent) configureDeepSeek(sess *session) error {
 	if key == "" {
 		return errors.New("DeepSeek requires DEEPSEEK_API_KEY")
 	}
-	identity := "deepseek:" + endpoint + ":" + sess.Model
-	if sess.Backend != "" && sess.Backend != identity {
-		return errors.New("saved task's DeepSeek endpoint/model differs from current configuration; start a new task")
-	}
 	if err := validateDeepSeekHistory(sess.History, sess.Model); err != nil {
 		return err
 	}
@@ -56,14 +53,11 @@ func (a *agent) configureDeepSeek(sess *session) error {
 			return errors.New("DeepSeek MAI_CONTEXT_WINDOW must be 32768..1000000")
 		}
 	}
-	sess.Backend = identity
-	sess.RequestEffort = sess.Effort
-	a.portable = true
 	a.contextWindow = window
 	a.backend = &deepseekClient{
 		httpClient: &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
-		endpoint:   endpoint, apiKey: key, stdout: a.client.stdout, allowSubagents: a.client.allowSubagents,
-		requestTimeout: a.requestTimeout,
+		endpoint:   endpoint, apiKey: key, stdout: a.modelOutput, allowSubagents: a.allowSubagents,
+		requestTimeout: a.requestTimeout, contextWindow: window,
 	}
 	return nil
 }
@@ -85,7 +79,7 @@ func validateDeepSeekHistory(history []json.RawMessage, model string) error {
 		switch item.Type {
 		case "", "message", "reasoning":
 			if item.Encrypted != "" {
-				return errors.New("DeepSeek cannot replay encrypted Codex reasoning; start a new task")
+				return errors.New("DeepSeek cannot replay encrypted reasoning; start a new task")
 			}
 			if item.Type == "reasoning" {
 				var parts []struct {
@@ -157,6 +151,15 @@ func (c *deepseekClient) request(ctx context.Context, sess *session, instruction
 	if err != nil {
 		return streamResult{}, err
 	}
+	window := c.contextWindow
+	if window == 0 {
+		window = modelContextWindow
+	}
+	if toolsAllowed && sess.ContextTokens >= window/2 {
+		if hint := contextEditHint(history); hint != nil {
+			history = append(history, hint)
+		}
+	}
 	if err := validateDeepSeekHistory(history, sess.Model); err != nil {
 		return streamResult{}, err
 	}
@@ -218,9 +221,8 @@ func (c *deepseekClient) request(ctx context.Context, sess *session, instruction
 	if !toolsAllowed {
 		output = io.Discard
 	}
-	// The Responses event format is shared; Codex authentication/request fields
-	// are deliberately not reused. Failed streams never admit tool calls.
-	parser := codexClient{stdout: output}
+	// Failed streams never admit tool calls.
+	parser := responseStream{stdout: output}
 	result, err := parser.readSSE(io.LimitReader(reader, 16<<20))
 	if err != nil {
 		return streamResult{wrote: result.wrote}, errors.New("DeepSeek Responses stream failed or incomplete")
@@ -256,7 +258,7 @@ func (c *deepseekClient) request(ctx context.Context, sess *session, instruction
 			return streamResult{}, errors.New("unsupported DeepSeek response item")
 		}
 		if item.Type == "reasoning" {
-			// Live Responses also supplies an opaque compatibility field. Replay
+			// Live Responses also supplies an opaque encrypted field. Replay
 			// only the documented plain content after proving it is present.
 			var fields map[string]json.RawMessage
 			if err := json.Unmarshal(raw, &fields); err != nil {

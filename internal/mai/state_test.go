@@ -79,14 +79,14 @@ func TestSeparateSessionsUseSeparateFiles(t *testing.T) {
 	}
 	ids := []string{"01234567-89ab-cdef-0123-456789abcdef", "fedcba98-7654-3210-fedc-ba9876543210"}
 	for _, id := range ids {
-		sess := session{Version: stateVersion, ID: id, CWD: root, RepoRoot: root, Model: "luna", Effort: "m"}
+		sess := session{Version: stateVersion, ID: id, CWD: root, RepoRoot: root, Model: "ds-flash", Effort: "h"}
 		if err := saveJSON(sessionPath(paths, id), sess); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for _, id := range ids {
 		sess, err := loadSession(sessionPath(paths, id))
-		if err != nil || sess.ID != id || sess.RequestEffort != sess.Effort {
+		if err != nil || sess.ID != id {
 			t.Fatalf("load session %s: %#v, %v", id, sess, err)
 		}
 	}
@@ -97,7 +97,7 @@ func TestLoadSessionEstimatesTokensForOlderState(t *testing.T) {
 	path := filepath.Join(root, "session.json")
 	sess := session{
 		Version: stateVersion, ID: "01234567-89ab-cdef-0123-456789abcdef",
-		CWD: root, RepoRoot: root, Model: "luna", Effort: "m",
+		CWD: root, RepoRoot: root, Model: "ds-flash", Effort: "h",
 		History: []json.RawMessage{json.RawMessage(`{"role":"user","content":"existing history"}`)},
 	}
 	if err := saveJSON(path, sess); err != nil {
@@ -118,23 +118,22 @@ func TestLoadSessionRejectsInvalidState(t *testing.T) {
 		mutate  func(*session)
 		wantErr string
 	}{
-		"unsupported version":    {mutate: func(s *session) { s.Version = 2 }, wantErr: "incomplete or unsupported"},
-		"invalid id":             {mutate: func(s *session) { s.ID = "not-an-id" }, wantErr: "incomplete or unsupported"},
-		"missing cwd":            {mutate: func(s *session) { s.CWD = "" }, wantErr: "incomplete or unsupported"},
-		"negative tokens":        {mutate: func(s *session) { s.ContextTokens = -1 }, wantErr: "incomplete or unsupported"},
-		"negative skip":          {mutate: func(s *session) { s.TranscriptSkip = -1 }, wantErr: "invalid transcript position"},
-		"skip beyond history":    {mutate: func(s *session) { s.TranscriptSkip = 1 }, wantErr: "invalid transcript position"},
-		"negative transcript":    {mutate: func(s *session) { s.TranscriptEnd = -1 }, wantErr: "invalid transcript position"},
-		"invalid model":          {mutate: func(s *session) { s.Model = "bogus" }, wantErr: `invalid model "bogus"`},
-		"invalid effort":         {mutate: func(s *session) { s.Effort = "bogus" }, wantErr: `invalid effort "bogus"`},
-		"invalid request effort": {mutate: func(s *session) { s.RequestEffort = "bogus" }, wantErr: `invalid request effort "bogus"`},
-		"missing transcript":     {mutate: func(s *session) { s.TranscriptEnd = 10 }, wantErr: "open saved transcript"},
+		"unsupported version": {mutate: func(s *session) { s.Version = stateVersion - 1 }, wantErr: "incomplete or unsupported"},
+		"invalid id":          {mutate: func(s *session) { s.ID = "not-an-id" }, wantErr: "incomplete or unsupported"},
+		"missing cwd":         {mutate: func(s *session) { s.CWD = "" }, wantErr: "incomplete or unsupported"},
+		"negative tokens":     {mutate: func(s *session) { s.ContextTokens = -1 }, wantErr: "incomplete or unsupported"},
+		"negative skip":       {mutate: func(s *session) { s.TranscriptSkip = -1 }, wantErr: "invalid transcript position"},
+		"skip beyond history": {mutate: func(s *session) { s.TranscriptSkip = 1 }, wantErr: "invalid transcript position"},
+		"negative transcript": {mutate: func(s *session) { s.TranscriptEnd = -1 }, wantErr: "invalid transcript position"},
+		"invalid model":       {mutate: func(s *session) { s.Model = "bogus" }, wantErr: `invalid model "bogus"`},
+		"invalid effort":      {mutate: func(s *session) { s.Effort = "bogus" }, wantErr: `invalid effort "bogus"`},
+		"missing transcript":  {mutate: func(s *session) { s.TranscriptEnd = 10 }, wantErr: "open saved transcript"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "session.json")
 			sess := session{
 				Version: stateVersion, ID: "01234567-89ab-cdef-0123-456789abcdef",
-				CWD: root, RepoRoot: root, Model: "luna", Effort: "m",
+				CWD: root, RepoRoot: root, Model: "ds-flash", Effort: "h",
 			}
 			test.mutate(&sess)
 			if err := saveJSON(path, sess); err != nil {
@@ -152,7 +151,7 @@ func TestLoadSessionChecksSavedTranscriptPosition(t *testing.T) {
 	path := filepath.Join(root, "session.json")
 	sess := session{
 		Version: stateVersion, ID: "01234567-89ab-cdef-0123-456789abcdef",
-		CWD: root, RepoRoot: root, Model: "luna", Effort: "m", TranscriptEnd: 100,
+		CWD: root, RepoRoot: root, Model: "ds-flash", Effort: "h", TranscriptEnd: 100,
 	}
 	if err := saveJSON(path, sess); err != nil {
 		t.Fatal(err)
@@ -316,7 +315,7 @@ func TestInterruptedToolRecoveryPersists(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.json")
 	sess := &session{
 		Version: stateVersion, ID: "01234567-89ab-cdef-0123-456789abcdef", CWD: t.TempDir(), RepoRoot: t.TempDir(),
-		Model: "luna", Effort: "max",
+		Model: "ds-flash", Effort: "max",
 		History: []json.RawMessage{
 			json.RawMessage(`{"type":"function_call","call_id":"pending","name":"apply_patch","arguments":"{}"}`),
 		},

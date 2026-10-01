@@ -58,15 +58,14 @@ func (result subagentResult) status(setupErr error) string {
 }
 
 func defaultAgentsRoot() (string, error) {
-	codexHome := os.Getenv("CODEX_HOME")
-	if codexHome == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("find home directory: %w", err)
-		}
-		codexHome = filepath.Join(home, ".codex")
+	if root := os.Getenv("MAI_AGENTS_DIR"); root != "" {
+		return root, nil
 	}
-	return filepath.Join(codexHome, "agents"), nil
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("find home directory: %w", err)
+	}
+	return filepath.Join(home, ".agents", "agents"), nil
 }
 
 func loadCustomAgents(root string) (map[string]customAgent, []string, error) {

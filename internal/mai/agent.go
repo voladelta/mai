@@ -19,15 +19,14 @@ const (
 )
 
 const (
-	autoCompactPercent        = 90
-	retainedMessageTokenLimit = 64_000
+	autoCompactPercent = 90
 )
 
 type agent struct {
-	client          *codexClient
 	backend         modelBackend
-	portable        bool
 	contextWindow   int64
+	modelOutput     io.Writer
+	allowSubagents  bool
 	stdout          io.Writer
 	stderr          io.Writer
 	sessionPath     string
@@ -75,15 +74,14 @@ func newAgent(stdout, stderr io.Writer, sessionPath string, requestTimeout time.
 		}
 	}
 	a := &agent{
-		stdout: stdout, stderr: stderr, sessionPath: sessionPath,
+		stdout: stdout, modelOutput: stdout, stderr: stderr, sessionPath: sessionPath,
 		skillsRoot: root, skillsError: err,
 		customAgent:  customRole,
 		customAgents: customAgents, agentWarnings: agentWarnings, agentsError: agentsErr,
 		executable: executable, requestTimeout: requestTimeout,
 		cellTimeout: defaultCellTimeout, subagentTimeout: defaultSubagentTimeout,
 	}
-	a.client = newCodexClient(stdout, requestTimeout)
-	a.client.allowSubagents = agentsErr == nil && len(customAgents) > 0
+	a.allowSubagents = agentsErr == nil && len(customAgents) > 0
 	if inputAllowed {
 		a.approve = a.terminalApproval
 	}
@@ -175,7 +173,7 @@ func (a *agent) runTurn(ctx context.Context, sess *session, instructions string)
 	modelStarted := time.Now()
 	backend := a.backend
 	if backend == nil {
-		backend = a.client
+		return false, errors.New("model backend is not configured")
 	}
 	result, err := backend.stream(ctx, sess, instructions)
 	modelDuration := time.Since(modelStarted).Milliseconds()
@@ -238,23 +236,11 @@ func (a *agent) compactIfNeeded(ctx context.Context, sess *session, instructions
 	if sess.ContextTokens < window*autoCompactPercent/100 {
 		return nil
 	}
-	started := time.Now()
-	var history []json.RawMessage
-	var usage *tokenUsage
-	var err error
-	if a.portable {
-		backend := a.backend
-		if backend == nil {
-			backend = a.client
-		}
-		history, usage, err = portableHistory(ctx, sess, backend)
-	} else {
-		var compaction json.RawMessage
-		compaction, usage, err = a.client.compact(ctx, sess, instructions)
-		if err == nil {
-			history, err = compactedHistory(sess.History, compaction)
-		}
+	if a.backend == nil {
+		return errors.New("model backend is not configured")
 	}
+	started := time.Now()
+	history, usage, err := portableHistory(ctx, sess, a.backend)
 	if err != nil {
 		return fmt.Errorf("compact conversation: %w", err)
 	}
@@ -264,9 +250,6 @@ func (a *agent) compactIfNeeded(ctx context.Context, sess *session, instructions
 	if err := archiveTranscript(a.sessionPath, sess, &next); err != nil {
 		return err
 	}
-	// Compaction replaces the prompt prefix and removes configuration updates.
-	// Start the replacement prefix at the current effort.
-	next.RequestEffort = next.Effort
 	next.ContextTokens = estimateHistoryTokens(history) + estimateInstructionTokens(instructions)
 	if a.sessionPath != "" {
 		if err := saveJSON(a.sessionPath, &next); err != nil {
@@ -274,10 +257,7 @@ func (a *agent) compactIfNeeded(ctx context.Context, sess *session, instructions
 		}
 	}
 	*sess = next
-	completed := map[string]any{"type": "compaction.completed", "duration_ms": time.Since(started).Milliseconds()}
-	if a.portable {
-		completed["strategy"] = "portable"
-	}
+	completed := map[string]any{"type": "compaction.completed", "strategy": "portable", "duration_ms": time.Since(started).Milliseconds()}
 	if usage != nil {
 		completed["usage"] = usage
 	}
@@ -286,32 +266,6 @@ func (a *agent) compactIfNeeded(ctx context.Context, sess *session, instructions
 
 func estimateInstructionTokens(instructions string) int64 {
 	return (int64(len(instructions)) + 3) / 4
-}
-
-func compactedHistory(history []json.RawMessage, compaction json.RawMessage) ([]json.RawMessage, error) {
-	remaining := int64(retainedMessageTokenLimit)
-	retained := make([]json.RawMessage, 0, len(history)+1)
-	for i := len(history) - 1; i >= 0; i-- {
-		var item struct {
-			Role string `json:"role"`
-		}
-		if err := json.Unmarshal(history[i], &item); err != nil {
-			return nil, fmt.Errorf("parse history for compaction: %w", err)
-		}
-		if item.Role != "user" && item.Role != "developer" && item.Role != "system" {
-			continue
-		}
-		tokens := estimateHistoryItemTokens(history[i])
-		if tokens > remaining {
-			break
-		}
-		remaining -= tokens
-		retained = append(retained, history[i])
-	}
-	for left, right := 0, len(retained)-1; left < right; left, right = left+1, right-1 {
-		retained[left], retained[right] = retained[right], retained[left]
-	}
-	return append(retained, compaction), nil
 }
 
 func (a *agent) executeCalls(ctx context.Context, sess *session, calls []functionCall) error {
@@ -387,7 +341,7 @@ func extractFunctionCalls(items []json.RawMessage) ([]functionCall, error) {
 			return nil, fmt.Errorf("parse function call: %w", err)
 		}
 		if call.CallID == "" || call.Name == "" {
-			return nil, errors.New("Codex returned an incomplete function call")
+			return nil, errors.New("Model returned an incomplete function call")
 		}
 		calls = append(calls, call)
 	}

@@ -14,7 +14,7 @@ import (
 	"syscall"
 )
 
-const stateVersion = 1
+const stateVersion = 2
 
 type taskConfig struct {
 	Model  string
@@ -27,9 +27,7 @@ type session struct {
 	CWD              string            `json:"cwd"`
 	RepoRoot         string            `json:"repo_root"`
 	Model            string            `json:"model"`
-	Backend          string            `json:"backend,omitempty"`
 	Effort           string            `json:"effort"`
-	RequestEffort    string            `json:"request_effort,omitempty"`
 	ContextTokens    int64             `json:"context_tokens,omitempty"`
 	History          []json.RawMessage `json:"history"`
 	ContextEdits     []contextEdit     `json:"context_edits,omitempty"`
@@ -209,22 +207,11 @@ func checkSavedTranscript(path string, end int64) error {
 }
 
 func normalizeSessionSettings(out *session) error {
-	chatModel := strings.HasPrefix(out.Backend, "chat:") && out.Model != "" && len(out.Model) <= 256 && strings.HasSuffix(out.Backend, ":"+out.Model)
-	deepseek := deepseekModel(out.Model) && strings.HasPrefix(out.Backend, "deepseek:") && strings.HasSuffix(out.Backend, ":"+out.Model)
-	if out.Backend != "" && !chatModel && !deepseek {
-		return errors.New("saved session has invalid chat backend/model")
-	}
-	if !chatModel && !supportedModel(out.Model) && out.Model != "astra" && out.Model != "terra" {
+	if !supportedModel(out.Model) {
 		return fmt.Errorf("saved session has invalid model %q", out.Model)
 	}
 	if _, ok := effortIDs[out.Effort]; !ok {
 		return fmt.Errorf("saved session has invalid effort %q", out.Effort)
-	}
-	if out.RequestEffort == "" {
-		out.RequestEffort = out.Effort
-	}
-	if _, ok := effortIDs[out.RequestEffort]; !ok {
-		return fmt.Errorf("saved session has invalid request effort %q", out.RequestEffort)
 	}
 	return nil
 }
@@ -358,21 +345,11 @@ func estimateHistoryTokens(items []json.RawMessage) int64 {
 	return total
 }
 
-// Matches Codex's high/auto image estimate (about 1844 tokens at four bytes each).
+// Conservative image estimate; inline base64 size is not model token usage.
 const estimatedImageBytes int64 = 7373
 
 func estimateHistoryItemTokens(item json.RawMessage) int64 {
 	rawEstimate := (int64(len(item)) + 3) / 4
-	var envelope struct {
-		Type             string `json:"type"`
-		EncryptedContent string `json:"encrypted_content"`
-	}
-	if json.Unmarshal(item, &envelope) == nil &&
-		(envelope.Type == "compaction" || envelope.Type == "compaction_summary") {
-		// Codex estimates the decoded encrypted payload, less fixed envelope overhead.
-		estimatedBytes := max(0, int64(len(envelope.EncryptedContent))*3/4-650)
-		return (estimatedBytes + 3) / 4
-	}
 
 	estimatedBytes := int64(len(item))
 	if !bytes.Contains(item, []byte("input_image")) {

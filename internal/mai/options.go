@@ -182,17 +182,14 @@ func (out *options) normalizeSelections() error {
 	if out.effortExplicit {
 		out.effort = normalizeEffort(out.effort)
 		if _, ok := effortIDs[out.effort]; !ok {
-			return fmt.Errorf("invalid effort %q (use l, m, h, x, or max)", out.effort)
+			return fmt.Errorf("invalid effort %q (use l, h or max)", out.effort)
 		}
 	}
 	if out.modelExplicit {
 		out.model = normalizeModel(out.model)
 		if !supportedModel(out.model) {
-			return fmt.Errorf("invalid model %q (use sol, 6.1-sol, luna, ds-flash or ds-pro)", out.model)
+			return fmt.Errorf("invalid model %q (use ds-flash or ds-pro)", out.model)
 		}
-	}
-	if deepseekModel(out.model) && out.effortExplicit && !deepseekEffort(out.effort) {
-		return errors.New("DeepSeek effort must be l, h or max (low, high, max)")
 	}
 	return nil
 }
@@ -232,36 +229,20 @@ func normalizeEffort(value string) string {
 	switch value {
 	case "low":
 		return "l"
-	case "medium":
-		return "m"
 	case "high":
 		return "h"
-	case "xhigh":
-		return "x"
 	default:
 		return value
 	}
 }
 
-const defaultModel = "luna"
+const defaultModel = "ds-flash"
 
 func normalizeModel(model string) string {
-	model = strings.ToLower(strings.TrimSpace(model))
-	switch model {
-	case "deepseek-flash":
-		return "ds-flash"
-	case "deepseek-v4-pro":
-		return "ds-pro"
-	}
-	if model == "gpt-6.1-sol" {
-		return "6.1-sol"
-	}
-	return strings.TrimPrefix(model, "gpt-6-")
+	return strings.ToLower(strings.TrimSpace(model))
 }
 
-func supportedModel(model string) bool {
-	return model == "sol" || model == "6.1-sol" || model == "luna" || deepseekModel(model)
-}
+func supportedModel(model string) bool { return deepseekModel(model) }
 
 func deepseekModel(model string) bool {
 	return model == "ds-flash" || model == "ds-pro"
@@ -278,19 +259,14 @@ func modelID(model string) string {
 	if model == "ds-pro" {
 		return "deepseek-v4-pro"
 	}
-	if model == "6.1-sol" {
-		return "gpt-6.1-sol"
-	}
-	return "gpt-6-" + model
+	return model
 }
 
-// Keep the conservative input budget for the private Codex backend.
-const modelContextWindow int64 = 272_000
+// Default input budget for DeepSeek Responses.
+const modelContextWindow int64 = 1_000_000
 
 var effortIDs = map[string]string{
 	"l":   "low",
-	"m":   "medium",
 	"h":   "high",
-	"x":   "xhigh",
 	"max": "max",
 }

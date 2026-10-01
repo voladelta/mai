@@ -16,8 +16,6 @@ func TestLiveDeepSeekResponses(t *testing.T) {
 	if os.Getenv("MAI_LIVE_DEEPSEEK_RESPONSES") != "1" {
 		t.Skip("set MAI_LIVE_DEEPSEEK_RESPONSES=1")
 	}
-	t.Setenv("MAI_PROVIDER", "")
-	t.Setenv("MAI_COMPACTION", "")
 	t.Setenv("MAI_CONTEXT_WINDOW", "32768")
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
@@ -26,7 +24,7 @@ func TestLiveDeepSeekResponses(t *testing.T) {
 			t.Run(model+"/"+effort, func(t *testing.T) {
 				started := time.Now()
 				sess := deepseekTestSession(t)
-				sess.Model, sess.Effort, sess.RequestEffort = model, effort, effort
+				sess.Model, sess.Effort = model, effort
 				sess.History = nil
 				if err := appendUserPrompt(sess, "Run bash exactly once with command printf RESPONSES_OK. Then answer exactly RESPONSES_OK. Do not read or write files, use other tools or network, or access credentials."); err != nil {
 					t.Fatal(err)

@@ -61,7 +61,7 @@ func contextEditHint(history []json.RawMessage) json.RawMessage {
 		return nil
 	}
 	handles, _ := json.Marshal(candidates)
-	text := "Context pressure is high. Consider shortening large obsolete successful Bash stdout if future savings justify editing. Preserve exact facts and decisions still needed; originals remain searchable. You can shrink directly using these current call_id/digest handles, without inspecting first: " + string(handles) + ". Continue the task after editing; no separate acknowledgement is needed. Native compaction remains the fallback."
+	text := "Context pressure is high. Consider shortening large obsolete successful Bash stdout if future savings justify editing. Preserve exact facts and decisions still needed; originals remain searchable. You can shrink directly using these current call_id/digest handles, without inspecting first: " + string(handles) + ". Continue the task after editing; no separate acknowledgement is needed."
 	message, _ := json.Marshal(map[string]any{
 		"role": "developer", "content": []map[string]string{{"type": "input_text", "text": text}},
 	})

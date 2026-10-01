@@ -27,46 +27,33 @@ type portableProviderTrial struct {
 	Error     string           `json:"error,omitempty"`
 }
 
-// Uses a real non-OpenAI model for both compaction and coding. No Codex login,
+// Uses a real non-OpenAI model for both compaction and coding. No subscription login,
 // native compaction, external project, or network-enabled tool is involved.
-func TestLivePortableChatProviders(t *testing.T) {
-	if os.Getenv("MAI_LIVE_PORTABLE_CHAT") != "1" {
-		t.Skip("set MAI_LIVE_PORTABLE_CHAT=1")
+func TestLiveDeepSeekCoding(t *testing.T) {
+	if os.Getenv("MAI_LIVE_DEEPSEEK_CODING") != "1" {
+		t.Skip("set MAI_LIVE_DEEPSEEK_CODING=1")
 	}
-	endpoint, keyEnv, models := os.Getenv("MAI_CHAT_URL"), os.Getenv("MAI_CHAT_KEY_ENV"), os.Getenv("MAI_CHAT_TEST_MODELS")
-	if endpoint == "" || keyEnv == "" || os.Getenv(keyEnv) == "" || models == "" {
-		t.Fatal("chat URL, key variable, and MAI_CHAT_TEST_MODELS required")
+	t.Setenv("MAI_CONTEXT_WINDOW", "32768")
+	seed, err := newSessionID()
+	if err != nil {
+		t.Fatal(err)
 	}
 	var trials []portableProviderTrial
-	t.Setenv("MAI_PROVIDER", "chat")
-	t.Setenv("MAI_COMPACTION", "portable")
-	t.Setenv("MAI_CONTEXT_WINDOW", "32768")
-	for index, model := range strings.Split(models, ",") {
-		t.Setenv("MAI_CHAT_MODEL", strings.TrimSpace(model))
-		seed, err := newSessionID()
-		if err != nil {
-			t.Fatal(err)
-		}
-		modes := []string{"portable"}
-		if os.Getenv("MAI_CHAT_TEST_FULL_CONTROL") == "1" {
-			modes = []string{"full", "portable"}
-			if index%2 != 0 {
-				modes = []string{"portable", "full"}
+	for _, mode := range []string{"full", "portable"} {
+		trial := runPortableProviderCoding(t, "ds-flash", mode, seed)
+		trials = append(trials, trial)
+		if path := os.Getenv("MAI_CONTEXT_RESEARCH_REPORT"); path != "" {
+			data, err := json.MarshalIndent(trials, "", "  ")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := atomicWriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
 			}
 		}
-		for _, mode := range modes {
-			trial := runPortableProviderCoding(t, strings.TrimSpace(model), mode, seed)
-			trials = append(trials, trial)
-			t.Logf("PORTABLE_PROVIDER model=%s mode=%s passed=%v recall=%v error=%s", model, mode, trial.Correct, trial.Recall, trial.Error)
-			if path := os.Getenv("MAI_CONTEXT_RESEARCH_REPORT"); path != "" {
-				body, _ := json.MarshalIndent(map[string]any{"trials": trials, "limitations": []string{"One staged coding trial per model/arm; conformance evidence, not a performance ranking", "Portable checkpoints forced twice; native unavailable", "Optional full-history control disables compaction with a larger test budget and uses identical paired facts", "Text/tool Chat Completions subset, no media or streaming"}}, "", "  ")
-				if err := atomicWriteFile(path, body, 0600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if !trial.Correct || !trial.Recall || trial.Error != "" {
-				t.Errorf("model %s failed portable coding", model)
-			}
+		t.Logf("DEEPSEEK_CODING mode=%s passed=%v recall=%v error=%s", mode, trial.Correct, trial.Recall, trial.Error)
+		if !trial.Correct || !trial.Recall || trial.Error != "" {
+			t.Errorf("coding trial failed: %s", trial.Error)
 		}
 	}
 }
@@ -76,7 +63,7 @@ func runPortableProviderCoding(t *testing.T, model, mode, seed string) (trial po
 	started := time.Now()
 	trial.Model = model
 	trial.Mode, trial.Seed = mode, seed
-	trial.Reasoning = "disabled"
+	trial.Reasoning = "high"
 	defer func() { trial.WallMS = time.Since(started).Milliseconds() }()
 	dir := t.TempDir()
 	path := filepath.Join(t.TempDir(), "session.json")
@@ -86,11 +73,7 @@ func runPortableProviderCoding(t *testing.T, model, mode, seed string) (trial po
 		}
 	}
 	id, _ := newSessionID()
-	sess := &session{Version: stateVersion, ID: id, CWD: dir, RepoRoot: dir, Model: "luna", Effort: "m", RequestEffort: "m"}
-	if os.Getenv("MAI_PROVIDER") == "codex" {
-		sess.Model = normalizeModel(model)
-		trial.Reasoning = "medium"
-	}
+	sess := &session{Version: stateVersion, ID: id, CWD: dir, RepoRoot: dir, Model: defaultModel, Effort: "h"}
 	_ = appendUserPrompt(sess, "Use verified facts in saved build-log evidence to implement the requested configuration. The log is stored in task history, not project files.")
 	facts := "Verified release: REL-" + seed[:8] + ". Current audit: AUD-" + seed[9:13] + ". Retired audit: OLD-" + seed[14:18] + ". Initial batch: 64. Deploy interrupted before saved result; outcome UNKNOWN.\n"
 	// Non-repeating records exercise bounded chunk folding instead of letting
@@ -196,62 +179,3 @@ func TestHiddenContinuity(t *testing.T) {
 
 // The same fixture, facts, grading and recovery checks run against every
 // model. Provider-specific reasoning settings are recorded, not equated.
-func TestLivePortableModelComparison(t *testing.T) {
-	if os.Getenv("MAI_LIVE_PORTABLE_MODEL_COMPARISON") != "1" {
-		t.Skip("set MAI_LIVE_PORTABLE_MODEL_COMPARISON=1")
-	}
-	if os.Getenv("MAI_CHAT_URL") == "" || os.Getenv(os.Getenv("MAI_CHAT_KEY_ENV")) == "" || os.Getenv("MAI_CONTEXT_RESEARCH_REPORT") == "" {
-		t.Fatal("chat endpoint/key variable and report path required")
-	}
-	t.Setenv("MAI_COMPACTION", "portable")
-	t.Setenv("MAI_CONTEXT_WINDOW", "32768")
-	models := []struct{ provider, model string }{
-		{"chat", "deepseek-flash"},
-		{"codex", "gpt-6.1-sol"},
-		{"codex", "gpt-6-luna"},
-	}
-	var trials []portableProviderTrial
-	for repeat := 1; repeat <= 2; repeat++ {
-		seed, err := newSessionID()
-		if err != nil {
-			t.Fatal(err)
-		}
-		for index := range models {
-			selected := models[(index+repeat-1)%len(models)]
-			t.Setenv("MAI_PROVIDER", selected.provider)
-			t.Setenv("MAI_CHAT_MODEL", selected.model)
-			modes := []string{"full", "portable"}
-			if (index+repeat)%2 == 0 {
-				modes = []string{"portable", "full"}
-			}
-			for _, mode := range modes {
-				trial := runPortableProviderCoding(t, selected.model, mode, seed)
-				trial.Repeat = repeat
-				trials = append(trials, trial)
-				t.Logf("MODEL_COMPARISON repeat=%d model=%s mode=%s passed=%v recall=%v error=%s", repeat, selected.model, mode, trial.Correct, trial.Recall, trial.Error)
-				encoded, err := json.MarshalIndent(map[string]any{
-					"trials":                      trials,
-					"repetitions":                 2,
-					"fixture":                     "three_stage_go_coding_unique_logs",
-					"portable_checkpoints_forced": 2,
-					"limitations": []string{
-						"Two matched repetitions; descriptive pilot, not a general model ranking",
-						"GPT medium effort and DeepSeek non-thinking are different reasoning configurations",
-						"Each model generates its own checkpoints; worker and summarizer effects are combined",
-						"Full history fits the providers; forced checkpoints measure management overhead",
-						"No native compaction in either arm; this compares model behavior on the portable mechanism",
-					},
-				}, "", "  ")
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := atomicWriteFile(os.Getenv("MAI_CONTEXT_RESEARCH_REPORT"), encoded, 0600); err != nil {
-					t.Fatal(err)
-				}
-				if !trial.Correct || !trial.Recall || trial.Error != "" {
-					t.Errorf("model %s mode %s failed", selected.model, mode)
-				}
-			}
-		}
-	}
-}

@@ -35,18 +35,18 @@ func TestParseOptionsInterspersed(t *testing.T) {
 		},
 		{
 			name: "long forms around prompt",
-			args: []string{"hello", "--effort", "xhigh", "--persist"},
-			want: options{prompt: "hello", persist: true, effort: "x", effortExplicit: true, timeout: defaultHTTPTimeout},
+			args: []string{"hello", "--effort", "max", "--persist"},
+			want: options{prompt: "hello", persist: true, effort: "max", effortExplicit: true, timeout: defaultHTTPTimeout},
 		},
 		{
 			name: "model selection",
-			args: []string{"hello", "-m", "LUNA"},
-			want: options{prompt: "hello", model: "luna", modelExplicit: true, timeout: defaultHTTPTimeout},
+			args: []string{"hello", "-m", "DS-FLASH"},
+			want: options{prompt: "hello", model: "ds-flash", modelExplicit: true, timeout: defaultHTTPTimeout},
 		},
 		{
-			name: "full model ID",
-			args: []string{"hello", "--model=gpt-6-sol"},
-			want: options{prompt: "hello", model: "sol", modelExplicit: true, timeout: defaultHTTPTimeout},
+			name: "Pro model alias",
+			args: []string{"hello", "--model=ds-pro"},
+			want: options{prompt: "hello", model: "ds-pro", modelExplicit: true, timeout: defaultHTTPTimeout},
 		},
 		{
 			name: "end of options",
@@ -103,7 +103,7 @@ func TestParseOptionsRejectsInvalid(t *testing.T) {
 		{"hello", "--subagent", "../repo_scout"},
 		{"hello", "--subagent", "repo_scout", "--persist"},
 		{"hello", "--subagent", "repo_scout", "--last"},
-		{"hello", "--subagent", "repo_scout", "--model", "sol"},
+		{"hello", "--subagent", "repo_scout", "--model", "ds-pro"},
 		{"hello", "--subagent", "repo_scout", "--effort", "h"},
 		{strings.Repeat("x", maxSubagentPromptBytes+1), "--subagent", "repo_scout"},
 	} {
@@ -134,7 +134,7 @@ func TestParseOptionsHelpOverridesOtherArguments(t *testing.T) {
 }
 
 func TestModelSelectionRejectsOtherModels(t *testing.T) {
-	for _, model := range []string{"astra", "terra", "gpt-6-astra", "unknown", ""} {
+	for _, model := range []string{"sol", "luna", "gpt-6.1-sol", "deepseek-flash", "deepseek-v4-pro", "unknown", ""} {
 		if _, err := parseOptions([]string{"hello", "--model=" + model}); err == nil || !strings.Contains(err.Error(), "invalid model") {
 			t.Fatalf("%q: error = %v", model, err)
 		}

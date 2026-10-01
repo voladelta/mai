@@ -68,15 +68,15 @@ func TestRunSubagentMissingExecutableReturnsFailedResult(t *testing.T) {
 	}
 }
 
-func TestLoadCustomAgentParsesCodexAgentFile(t *testing.T) {
+func TestLoadCustomAgentParsesAgentFile(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "agents")
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	writeAgentConfig(t, root, "repo_scout", `name = "repo_scout"
 description = "Map the repository."
-model = "gpt-6-luna"
-model_reasoning_effort = "medium"
+model = "ds-flash"
+model_reasoning_effort = "high"
 sandbox_mode = "read-only"
 
 developer_instructions = """
@@ -94,7 +94,7 @@ enabled = true
 		t.Fatal(err)
 	}
 	if agent.Name != "repo_scout" || agent.Description != "Map the repository." ||
-		agent.Model != "luna" || agent.Effort != "m" {
+		agent.Model != "ds-flash" || agent.Effort != "h" {
 		t.Fatalf("custom agent = %#v", agent)
 	}
 	if agent.DeveloperInstructions != "Map the minimum context.\nKeep quoted \"symbols\" exact." {
@@ -129,16 +129,16 @@ func TestLoadCustomAgentsOmitsInvalidAndMismatchedFiles(t *testing.T) {
 }
 
 func TestNewAgentEnablesCatalogWhenCustomAgentExists(t *testing.T) {
-	codexHome := t.TempDir()
-	t.Setenv("CODEX_HOME", codexHome)
-	agentsRoot := filepath.Join(codexHome, "agents")
+	agentHome := t.TempDir()
+	agentsRoot := filepath.Join(agentHome, "agents")
+	t.Setenv("MAI_AGENTS_DIR", agentsRoot)
 	if err := os.MkdirAll(agentsRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	writeAgentConfig(t, agentsRoot, "repo_scout", validAgentConfig("repo_scout"))
 
 	a := newAgent(&bytes.Buffer{}, &bytes.Buffer{}, "", time.Second, false, nil)
-	if !a.client.allowSubagents {
+	if !a.allowSubagents {
 		t.Fatal("custom agent did not enable spawn_subagent")
 	}
 	catalog := a.loadSubagentInstructions()
@@ -260,8 +260,8 @@ func TestSpawnSubagentToolRunsConfiguredChild(t *testing.T) {
 }
 
 func TestDirectSubagentUsesConfiguredRoleAndDisablesSpawn(t *testing.T) {
-	writeTestCodexAuth(t)
-	agentsRoot := filepath.Join(os.Getenv("CODEX_HOME"), "agents")
+	writeTestDeepSeekConfig(t)
+	agentsRoot := os.Getenv("MAI_AGENTS_DIR")
 	if err := os.MkdirAll(agentsRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +281,7 @@ func TestDirectSubagentUsesConfiguredRoleAndDisablesSpawn(t *testing.T) {
 		writeSSEItem(t, w, `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"mapped"}]}`, 100)
 	}))
 	defer server.Close()
-	t.Setenv("MAI_CODEX_URL", server.URL)
+	t.Setenv("MAI_DEEPSEEK_URL", server.URL)
 	root := t.TempDir()
 	t.Chdir(root)
 
@@ -290,11 +290,11 @@ func TestDirectSubagentUsesConfiguredRoleAndDisablesSpawn(t *testing.T) {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
 	body := <-requestBody
-	if body["model"] != "gpt-6-luna" {
+	if body["model"] != "deepseek-flash" {
 		t.Fatalf("request model = %#v", body["model"])
 	}
 	reasoning, _ := body["reasoning"].(map[string]any)
-	if reasoning["effort"] != "medium" {
+	if reasoning["effort"] != "high" {
 		t.Fatalf("request reasoning = %#v", reasoning)
 	}
 	instructions, _ := body["instructions"].(string)
@@ -322,8 +322,8 @@ func TestDirectSubagentUsesConfiguredRoleAndDisablesSpawn(t *testing.T) {
 func validAgentConfig(name string) string {
 	return `name = "` + name + `"
 description = "Test agent ` + name + `."
-model = "gpt-6-luna"
-model_reasoning_effort = "medium"
+model = "ds-flash"
+model_reasoning_effort = "high"
 developer_instructions = "Instructions for ` + name + `."
 `
 }
@@ -355,19 +355,19 @@ func hasTool(definitions []map[string]any, name string) bool {
 
 func TestCustomAgentDoesNotRequireModel(t *testing.T) {
 	root := t.TempDir()
-	config := strings.ReplaceAll(validAgentConfig("repo_scout"), "model = \"gpt-6-luna\"\n", "")
+	config := strings.ReplaceAll(validAgentConfig("repo_scout"), "model = \"ds-flash\"\n", "")
 	writeAgentConfig(t, root, "repo_scout", config)
 	agent, err := loadCustomAgent(root, "repo_scout")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agent.Model != "luna" {
+	if agent.Model != "ds-flash" {
 		t.Fatalf("default model = %q", agent.Model)
 	}
 }
 
 func TestCustomAgentRejectsUnsupportedModel(t *testing.T) {
-	config := strings.ReplaceAll(validAgentConfig("repo_scout"), "gpt-6-luna", "gpt-5.6-terra")
+	config := strings.ReplaceAll(validAgentConfig("repo_scout"), "ds-flash", "removed-model")
 	if _, err := parseCustomAgent(config); err == nil || !strings.Contains(err.Error(), "unsupported model") {
 		t.Fatalf("unsupported model error = %v", err)
 	}

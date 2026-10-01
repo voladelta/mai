@@ -2,10 +2,9 @@
 
 ![mai project banner](assets/mai-banner.png)
 
-`mai` is a small coding agent for macOS and Linux. It uses your existing Codex
-ChatGPT login by default, so you do not need an OpenAI API key. An experimental
-native Go DeepSeek backend uses the Responses API with portable compaction.
-A generic Chat Completions adapter remains available for other providers.
+Mai is a small coding agent for macOS and Linux, built in Go. It uses the
+DeepSeek Responses API for streaming, reasoning and function tools. Portable
+checkpoints keep long tasks moving while original history remains searchable.
 
 The agent has 7 tools:
 
@@ -28,8 +27,8 @@ resolution of explicit `$skill-name` mentions. The flag also works with
 remains available when you know a skill's directory id.
 Images use typed image output; other binary files are rejected.
 
-Custom agents are read from `$CODEX_HOME/agents`, or `~/.codex/agents` when
-`CODEX_HOME` is not set. Each `<name>.toml` file must define matching `name`,
+Custom agents are read from `~/.agents/agents`, or the directory specified by
+`MAI_AGENTS_DIR`. Each `<name>.toml` file must define matching `name`,
 `description`, and `developer_instructions` fields, plus a reasoning effort.
 
 Choose an installed agent, such as `implementor` for an assigned code change or
@@ -45,23 +44,14 @@ agent's TOML file. It implies `--no-input` and cannot be combined with
 receive the general skill catalog. Its developer instructions must identify any
 required skills.
 
-The default Codex backend uses server-sent events (SSE). The Go standard library
+The DeepSeek Responses backend uses server-sent events (SSE). The Go standard library
 provides everything it needs, so the project has no third-party dependencies.
 
 ## Requirements
 
-You need:
-
-- Go 1.27 or later
-- for the default backend: a ChatGPT account with Codex access and the Codex CLI
-- for DeepSeek: a populated `DEEPSEEK_API_KEY` environment variable
-- for the experimental chat backend: a supported Chat Completions endpoint and API key
-
-For the default backend, log in before you run `mai`:
-
-```bash
-codex login
-```
+You need Go 1.27 or later and a populated `DEEPSEEK_API_KEY` environment
+variable. Python 3.9 or later is optional for the persistent Python tool.
+No Node runtime, SDK or third-party Go dependency is required.
 
 ## Build and install mai
 
@@ -128,24 +118,20 @@ Completed model events also include `input_tokens`, `output_tokens`, and
 `cached_input_tokens` when the backend supplies them. Missing fields mean
 unavailable; `total_tokens` keeps its existing context-size meaning.
 `compaction.completed` includes elapsed time and a `usage` object with the
-backend's available token fields, so native compaction work can be counted too.
-Model duration covers the full Codex request, including any internal retry.
+backend's available token fields, so checkpoint generation can be counted too.
+Model duration covers the full model request.
 Tool duration covers execution of that call; task duration covers the agent run.
 The default output remains human-readable.
 
 ## Choose a model
 
-New tasks use `gpt-6-luna` by default. Select `gpt-6-sol` with `-m sol` or
-`--model gpt-6-sol`. Saved tasks retain their selected model; pass `-m` with
-`--last` to change it. Older saved tasks that used another model switch to Luna
-when resumed.
-
-Use `-m gpt-6.1-sol -e m` for GPT-6.1 Sol with medium effort.
+New tasks use `ds-flash` with high effort. Select `ds-pro` with `-m ds-pro`.
+Use `--last -m ds-pro` to change the model for a saved task.
 
 ### DeepSeek Responses
 
 Selecting `ds-flash` or `ds-pro` automatically uses
-`https://api.deepseek.com/responses`. No Codex login or provider flag is needed.
+`https://api.deepseek.com/responses`. No provider flag is needed.
 Set `DEEPSEEK_API_KEY` in your environment before running:
 
 ```sh
@@ -159,24 +145,20 @@ mai "review this implementation" -m ds-pro -e max
 | `ds-flash` | `deepseek-flash` | `l` / `low`, `h` / `high`, `max` | `high` |
 | `ds-pro` | `deepseek-v4-pro` | `l` / `low`, `h` / `high`, `max` | `high` |
 
-Mai rejects medium and extra-high selections for DeepSeek rather than silently mapping
-them. Full API model names are also accepted with `-m`. Custom agents may use
-these model aliases with `model_reasoning_effort = "low"`, `"high"`, or `"max"`.
+Custom agents may use these aliases with `model_reasoning_effort = "low"`, `"high"`, or `"max"`.
 
 Responses stream through the existing text and function-tool flow. Mai replays
 the full local history, including DeepSeek's plain reasoning between tool calls;
 the API does not retain conversations. Each request allows up to 32,768 output
 tokens, including reasoning. Credentials stay in the environment.
-Saved tasks retain their provider, endpoint, model and effort; resume with the
-same key and endpoint. Start a new task to switch a saved task's provider or
-DeepSeek model.
+Saved tasks retain their model and effort. Use `--last -m ds-pro` to switch
+models within DeepSeek; Pro rejects image-bearing history.
 
 DeepSeek uses portable compaction automatically, at 90% of a default
 1,000,000-token budget. Set `MAI_CONTEXT_WINDOW` to a smaller input budget
-between 32,768 and 1,000,000 if needed. Native Codex compaction is unavailable.
-`MAI_DEEPSEEK_URL` can override the complete Responses URL for a compatible
-service; HTTPS is required except for loopback testing. `MAI_PROVIDER=deepseek`
-is optional; do not combine these models with `MAI_PROVIDER=chat` or `codex`.
+between 32,768 and 1,000,000 if needed.
+`MAI_DEEPSEEK_URL` overrides the complete Responses URL for local testing.
+HTTPS is required except for loopback.
 
 Flash accepts inline image output from `view_image`; Pro does not advertise
 that tool. Responses image parts can reference existing Files API `file_id`
@@ -190,87 +172,32 @@ See the [Responses guide](https://api-docs.deepseek.com/guides/responses_api/),
 [thinking guide](https://api-docs.deepseek.com/guides/thinking_mode/), and
 [cache behavior](https://api-docs.deepseek.com/guides/kv_cache/).
 
-Custom agents may set `model` to `gpt-6-sol`, `gpt-6.1-sol` or `gpt-6-luna` in their TOML
-file. When omitted, they use Luna.
+### Portable compaction
 
-```bash
-mai "complex refactor" -m sol
-mai "continue the refactor" --last -m luna
-```
+Mai uses readable, model-authored continuity checkpoints. The Go context owner
+keeps the current user turn and exact tool results. Checkpoints preserve goals,
+corrections, unresolved outcomes and history search anchors. Consecutive
+identical log lines are encoded with occurrence counts; unique records are
+folded in bounded chunks. Summary requests cannot execute tools. Invalid
+summaries leave session state unchanged.
 
-### Portable compaction and other providers (experimental)
-
-Set `MAI_COMPACTION=portable` to use readable, model-authored continuity
-checkpoints instead of Codex encrypted compaction. The Go context owner keeps
-the current user turn and original transcript, including exact tool results.
-Checkpoints contain goals, corrections, unresolved outcomes and history search
-anchors. Consecutive identical log lines are encoded with their occurrence
-counts before summarization; unique records are folded in bounded chunks.
-Summary requests cannot execute tools. Invalid summaries leave session state
-unchanged. Native remains the default for existing Codex tasks.
-
-Use full history while it fits; portable checkpoints help a task continue when
-context pressure requires compaction. They can add generation time and reduce
+Keep full history while it fits. Checkpoints can add generation time and reduce
 prompt-cache reuse, so smaller requests do not automatically mean lower cost.
-
-To start a portable task with your Codex subscription:
-
-```sh
-MAI_COMPACTION=portable mai "complex refactor" -m gpt-6.1-sol -e m --persist
-MAI_COMPACTION=portable mai "continue the refactor" --last
-```
-
-Set the compaction mode again on resume; it is selected from the environment.
-
-The older opt-in Chat Completions adapter can run both coding and compaction without
-an OpenAI account. Supply a complete endpoint URL, model, key-variable name,
-and a conservative input context budget appropriate to that model:
-
-```sh
-MAI_PROVIDER=chat \
-MAI_CHAT_URL=https://api.deepseek.com/chat/completions \
-MAI_CHAT_MODEL=deepseek-flash \
-MAI_CHAT_KEY_ENV=DEEPSEEK_API_KEY \
-MAI_CONTEXT_WINDOW=65536 \
-mai "add useful tests for the parser" --persist
-```
-
-The named key must already be in the environment. It is never copied into task
-state. Use the same endpoint and model when resuming; saved chat tasks reject a
-different backend. `-m` and reasoning-effort selections apply to Codex; the
-chat model is selected through `MAI_CHAT_MODEL`. For DeepSeek, prefer the
-`ds-flash` / `ds-pro` Responses integration above. Chat automatically uses
-portable compaction at 90% of `MAI_CONTEXT_WINDOW` and buffers each response.
-The adapter supports text and function tools, not images, provider-specific
-thinking state, or every extension to the Chat Completions protocol. DeepSeek
-thinking is explicitly disabled. Native encrypted checkpoints cannot migrate
-to this backend; start a new portable task. An active turn exceeding the budget
-still needs context editing or a smaller tool output: portable compaction does
-not discard pending calls or silently truncate that turn.
 
 ## Choose reasoning effort
 
-Use `-e` to choose the reasoning effort:
+Use `-e l` / `low`, `-e h` / `high`, or `-e max`. New tasks default to
+high effort. A saved task keeps its current effort on `--last` unless you
+override it:
 
-- `l` means low
-- `m` means medium
-- `h` means high
-- `x` means extra high
-- `max` means maximum
-
-Codex tasks use medium effort by default; DeepSeek tasks use high. The
-saved task keeps its values when you use `--last`.
-
-You can use these options with a new or saved task:
-
-```bash
+```sh
 mai "refactor this package" -e h
 mai "continue the refactor" --last -e max
 ```
 
 ## Timeouts and interactive input
 
-Each Codex request has a 10-minute time-to-first-byte and idle timeout. Each
+Each DeepSeek Responses request has a 10-minute time-to-first-byte and idle timeout. Each
 received stream chunk restarts the idle timer, so an active response can run
 longer than 10 minutes. Set a different positive Go-style duration when necessary:
 
@@ -278,10 +205,8 @@ longer than 10 minutes. Set a different positive Go-style duration when necessar
 mai "investigate the failure" --timeout 20m
 ```
 
-Mai retries transient Codex request failures with a bounded delay. It respects
-the server's `Retry-After` header up to a five-second cap. Authentication,
-quota, and other permanent failures are returned without retrying. A failed
-stream is not retried after Mai has printed any of its text.
+Failed requests return an error. Mai does not automatically replay a failed
+request or tool call.
 
 Each Python cell has a separate 10-minute wall-clock limit, and each subagent
 has a separate one-hour wall-clock limit. Change them with `--cell-timeout` and
@@ -446,22 +371,8 @@ the cell returns.
 
 ## Authentication
 
-The default Codex backend reads `$CODEX_HOME/auth.json`. It reads
-`~/.codex/auth.json` when `CODEX_HOME` is not set.
-
-The Codex backend does not read `OPENAI_API_KEY`. DeepSeek reads
-`DEEPSEEK_API_KEY`. The generic chat backend reads the
-environment variable named by `MAI_CHAT_KEY_ENV` and needs no Codex login.
-No backend copies credentials into task state files.
-
-If Codex stores credentials only in the system keychain, set this option in your
-Codex configuration:
-
-```toml
-cli_auth_credentials_store = "file"
-```
-
-Run `codex login` again after you change the option.
+Mai reads `DEEPSEEK_API_KEY`. Credentials are not copied into saved task state
+or logs.
 
 ## Saved tasks
 
@@ -476,18 +387,18 @@ For a directory outside Git, `.mai` is stored in the working directory. Mai
 creates `.mai/.gitignore` so Git does not add the saved state. State directories
 use permission mode `0700`. State files use mode `0600`.
 
+Saved state uses the current format only. Older task files are unsupported;
+start a new task after this state-format change.
+
 Each persisted task has a separate session file. Starting concurrent tasks does
 not replace their history. An atomic update to `current` selects the task that a
 later `--last` command will resume.
 
-The saved history includes completed responses and reasoning state: encrypted
-for Codex, plain text for DeepSeek.
-`mai` sends a stable cache key for each task so compatible requests can reuse
-cached input. `--last -e h` adds a `configuration_update` before the
-new prompt and keeps the original request effort. Later resumes replay those
-updates so an effort change can preserve the cached prefix. Cache hits still
-depend on the backend and cache lifetime. Compacting history starts a new prompt
-prefix at the selected effort.
+Saved history includes completed responses and plain DeepSeek reasoning.
+Reasoning is replayed across tool turns; opaque encrypted history is unsupported.
+Effort changes are sent at the request's top level, without rewriting earlier
+history. DeepSeek caching is automatic and depends on matching prefixes and
+cache lifetime. Mai does not send server-side conversation IDs or cache keys.
 
 Model tool calls and synchronous `spawn_subagent` calls run in sequence. Python
 cells can await host tools, whose operations also run in sequence. Children
@@ -496,17 +407,14 @@ started with `mai.spawn` run concurrently. Mid-turn steering is not enabled.
 Children never create their own saved tasks. A persisted parent saves the
 `spawn_subagent` call and its returned result in the parent task history.
 
-Mai tracks the active context size reported by the backend. Codex uses a
-272,000-token budget; DeepSeek defaults to 1,000,000 and chat requires
-`MAI_CONTEXT_WINDOW`. At 90% of that budget,
-Mai compacts before the next response request. With the default Codex native
-strategy, it sends a Codex V2 compaction request. The compacted history keeps
-recent user messages and the encrypted compaction item. Persisted tasks save this
-replacement history before they continue. Mai archives visible text separately
-so Python can search it after compaction or `--last`; the saved archive grows
-with the task's visible history.
+Mai tracks the active context size reported by DeepSeek. The default budget is
+1,000,000 tokens; `MAI_CONTEXT_WINDOW` can lower it.
+At 90% of the budget, Mai builds a portable checkpoint before the next model
+request. Saved tasks commit replacement history before continuing. Original
+visible text is archived separately for `mai.history` and `--last`; the archive
+grows with the task.
 
-### Native context editing
+### Context editing
 
 Mai provides a native Go `edit_context` tool. The model can inspect eligible
 outputs, then propose a shorter stdout summary using the returned call ID and
@@ -520,22 +428,21 @@ instructions and preceding history intact; actual cache reuse still depends on
 which output is edited.
 
 This first version edits only successful Bash stdout. It preserves stderr,
-exit status, capture paths, call IDs, item order, user instructions, and opaque
-reasoning and compaction items. Failed, timed-out, interrupted, and other tool
+exit status, capture paths, call IDs, item order, user instructions and
+reasoning items. Failed, timed-out, interrupted, and other tool
 outputs are not eligible. Summaries are explicitly marked as model-authored;
 they are not fresh tool evidence. Mai validates structure and size, not whether
 the model preserved every useful fact.
 
 The session stores original history plus a separate projection. `mai.history`
-continues to search original stdout, including after `--last` and native
+continues to search original stdout, including after `--last` and
 compaction. Compaction uses the projected request, archives the original visible
 history, and clears the superseded projection. No command is undone or replayed.
 No Node runtime or bridge is involved.
 
 Context editing can change prompt-cache reuse and add model calls. Reduced
-request size alone does not establish faster or cheaper task completion. Native
-compaction remains the fallback at the existing threshold for Codex tasks using
-the default native strategy. Portable tasks use readable checkpoints instead.
+request size alone does not establish faster or cheaper task completion.
+At the context threshold, Mai builds a portable checkpoint.
 
 ## Safety
 
@@ -564,52 +471,15 @@ go test -race ./...
 go vet ./...
 ```
 
-To run the live history-recall eval with your Codex login:
+With `DEEPSEEK_API_KEY` populated, run the paid Responses conformance probe:
 
-```bash
-MAI_LIVE_HISTORY_EVAL=1 go test -v ./internal/mai -run '^TestLiveHistoryRecall$' -count=1
+```sh
+MAI_LIVE_DEEPSEEK_RESPONSES=1 \
+go test -v ./internal/mai -run '^TestLiveDeepSeekResponses$' -count=1 -timeout=10m
 ```
 
-To check Codex compatibility with shortened stdout and real call/reasoning items:
-
-```bash
-MAI_LIVE_CONTEXT_EDIT_EVAL=1 go test -v ./internal/mai -run '^TestLiveContextEditCompatibility$' -count=1
-```
-
-This probe supplies a synthetic successful Bash result and executes no
-model-proposed command. It checks backend acceptance and exact code retention,
-not long-task performance.
-
-In a three-pair local run, Mai recalled 3/3 random codes from archived history
-and 0/3 without it. This small probe seeds the archive in memory; deterministic
-tests cover two compactions and saved-task resume. See [eval details](evals/README.md#searchable-history-recall).
-
-## Backend status
-
-By default, `mai` uses the ChatGPT Codex backend. This is suitable for personal
-use with your own ChatGPT subscription. The backend is not a public API
-contract; OpenAI may change it without notice.
-
-The experimental Chat Completions backend uses the configured provider's API.
-Its current support covers text and function tools with portable compaction.
-DeepSeek's native Responses integration adds streaming, thinking-mode tool
-continuity and Flash image inputs. It still uses portable text checkpoints.
-
-In a local coding pilot, all three configurations passed coding checks and
-original-history recovery in all four trials each. Mean runtime over two
-matched repetitions per arm was:
-
-| Model configuration | Full history | Two portable checkpoints |
-| --- | ---: | ---: |
-| DeepSeek Flash, thinking disabled | 23.6 s | 47.0 s |
-| GPT-6 Luna, medium | 67.3 s | 90.0 s |
-| GPT-6.1 Sol, medium | 121.4 s | 151.3 s |
-
-Full history fit in every trial; checkpoints were forced to measure their
-overhead. Each model also generated its own summaries. Different reasoning
-settings, cache behavior and the small sample limit comparisons. These results
-show continuity across the tested providers, not a general model ranking or
-evidence of beating native compaction. See the
-[comparison method and command](evals/README.md#cross-model-portable-comparison).
-The Flash measurements used the earlier non-thinking Chat Completions adapter;
-they do not measure the new thinking-mode Responses integration.
+All six Flash/Pro combinations at low, high and max passed the local live
+probe: tool execution, saved-task resume and exact checkpoint fact retention.
+This is protocol conformance, not a coding-performance benchmark.
+See [eval instructions](evals/README.md) for graded repository tasks and
+context-continuity tests.

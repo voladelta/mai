@@ -22,7 +22,7 @@ func deepseekTestSession(t *testing.T) *session {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	sess := &session{Version: stateVersion, ID: id, CWD: dir, RepoRoot: dir, Model: "ds-flash", Effort: "h", RequestEffort: "h"}
+	sess := &session{Version: stateVersion, ID: id, CWD: dir, RepoRoot: dir, Model: "ds-flash", Effort: "h"}
 	if err := appendUserPrompt(sess, "Use the tool, then answer."); err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +35,7 @@ func deepseekTestResponse(w http.ResponseWriter, items string) {
 }
 
 func TestDeepSeekOptionsAndDefaults(t *testing.T) {
-	for _, model := range []string{"ds-flash", "ds-pro", "deepseek-flash", "deepseek-v4-pro"} {
+	for _, model := range []string{"ds-flash", "ds-pro"} {
 		for _, effort := range []string{"l", "low", "h", "high", "max"} {
 			opts, err := parseOptions([]string{"task", "-m", model, "-e", effort})
 			if err != nil || !deepseekModel(opts.model) || !deepseekEffort(opts.effort) {
@@ -56,8 +56,6 @@ func TestDeepSeekOptionsAndDefaults(t *testing.T) {
 
 func TestDeepSeekResponsesToolReasoningAndResume(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "private-test-key")
-	t.Setenv("MAI_PROVIDER", "")
-	t.Setenv("MAI_COMPACTION", "")
 	t.Setenv("MAI_CONTEXT_WINDOW", "")
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -97,7 +95,7 @@ func TestDeepSeekResponsesToolReasoningAndResume(t *testing.T) {
 	if err := a.configureBackend(sess); err != nil {
 		t.Fatal(err)
 	}
-	if !a.portable || a.contextWindow != 1_000_000 {
+	if a.contextWindow != 1_000_000 {
 		t.Fatal("wrong compaction configuration")
 	}
 	if done, err := a.runTurn(context.Background(), sess, "test"); err != nil || done {
@@ -186,10 +184,8 @@ func TestDeepSeekRejectsIncompleteResponsesAndOpaqueHistory(t *testing.T) {
 
 func TestDeepSeekCLIResumeChangesEffortWithoutCodexItems(t *testing.T) {
 	t.Chdir(t.TempDir())
-	t.Setenv("CODEX_HOME", t.TempDir())
+	t.Setenv("MAI_AGENTS_DIR", t.TempDir())
 	t.Setenv("DEEPSEEK_API_KEY", "private-test-key")
-	t.Setenv("MAI_PROVIDER", "")
-	t.Setenv("MAI_COMPACTION", "")
 	t.Setenv("MAI_CONTEXT_WINDOW", "")
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -238,8 +234,6 @@ func TestDeepSeekIdleTimeoutAndRedirectIsolation(t *testing.T) {
 			}))
 			defer server.Close()
 			t.Setenv("DEEPSEEK_API_KEY", "test")
-			t.Setenv("MAI_PROVIDER", "")
-			t.Setenv("MAI_COMPACTION", "")
 			t.Setenv("MAI_CONTEXT_WINDOW", "")
 			t.Setenv("MAI_DEEPSEEK_URL", server.URL)
 			sess := deepseekTestSession(t)
