@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -102,6 +103,100 @@ func TestPortableCheckpointFailureLeavesSessionUnchanged(t *testing.T) {
 		if !bytes.Equal(before, after) {
 			t.Fatal("failed compaction changed authoritative state")
 		}
+	}
+}
+
+func TestPortableCheckpointTriggersAtEightyPercent(t *testing.T) {
+	for _, window := range []int64{modelContextWindow, 32768} {
+		for _, atThreshold := range []bool{false, true} {
+			t.Run(fmt.Sprintf("window=%d/at_threshold=%t", window, atThreshold), func(t *testing.T) {
+				sess := portableFixture(t)
+				sess.ContextTokens = window * 80 / 100
+				if !atThreshold {
+					sess.ContextTokens--
+				}
+				before := mustJSON(t, sess)
+				backend := &checkpointStub{reply: "Checkpoint retained."}
+				a := newAgent(io.Discard, io.Discard, "", time.Second, false, nil)
+				a.backend = backend
+				if window != modelContextWindow {
+					a.contextWindow = window
+				}
+
+				if err := a.compactIfNeeded(context.Background(), sess, "instructions"); err != nil {
+					t.Fatal(err)
+				}
+
+				if atThreshold {
+					if len(backend.sources) == 0 || sess.ContextTokens >= window*80/100 {
+						t.Fatal("context was not compacted at 80 percent")
+					}
+				} else if len(backend.sources) != 0 || !bytes.Equal(before, mustJSON(t, sess)) {
+					t.Fatal("context changed below 80 percent")
+				}
+			})
+		}
+	}
+}
+
+func TestPortableCheckpointCompactsLargeTextHistory(t *testing.T) {
+	sess := contextEditFixture(t)
+	var log strings.Builder
+	padding := strings.Repeat("x", 28)
+	for i := 0; i < 90000; i++ {
+		fmt.Fprintf(&log, "%06d %s\n", i, padding)
+	}
+	log.WriteString("FINAL-LARGE-HISTORY-ANCHOR\n")
+	appendBudgetLog(t, sess, "large-history", log.String())
+	if err := appendUserPrompt(sess, "Continue the active task."); err != nil {
+		t.Fatal(err)
+	}
+	sess.ContextTokens = estimateHistoryTokens(sess.History)
+	if sess.ContextTokens < modelContextWindow*80/100 || sess.ContextTokens >= modelContextWindow*90/100 {
+		t.Fatalf("fixture is outside the 80-to-90 percent range: %d tokens", sess.ContextTokens)
+	}
+	activeTurn := append(json.RawMessage(nil), sess.History[len(sess.History)-1]...)
+	backend := &checkpointStub{reply: "Large history checkpoint retained."}
+	a := newAgent(io.Discard, io.Discard, "", time.Second, false, nil)
+	a.backend = backend
+
+	if err := a.compactIfNeeded(context.Background(), sess, "instructions"); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(backend.sources) < 2 || sess.ContextTokens >= modelContextWindow*80/100 {
+		t.Fatal("large text history was not folded and compacted")
+	}
+	if !bytes.Equal(activeTurn, sess.History[len(sess.History)-1]) {
+		t.Fatal("compaction changed the active turn")
+	}
+	var folded strings.Builder
+	for _, source := range backend.sources {
+		if len(source) > (96<<10)+(16<<10)+128 {
+			t.Fatalf("summary request exceeds the chunk and checkpoint bounds: %d bytes", len(source))
+		}
+		_, records, found := strings.Cut(source, "\nNext historical records:\n")
+		if !found {
+			t.Fatal("summary request has no historical records")
+		}
+		folded.WriteString(records)
+	}
+	lines := strings.Split(folded.String(), "\n")
+	seen := 0
+	for _, line := range lines {
+		if !strings.HasSuffix(line, " "+padding) {
+			continue
+		}
+		if want := fmt.Sprintf("%06d %s", seen, padding); line != want {
+			t.Fatalf("historical records were lost or reordered: got %q, want %q", line, want)
+		}
+		seen++
+	}
+	if seen != 90000 || !strings.Contains(backend.sources[len(backend.sources)-1], "FINAL-LARGE-HISTORY-ANCHOR") {
+		t.Fatalf("chunk folding lost historical records: retained %d of 90000", seen)
+	}
+	if !strings.Contains(backend.sources[1], backend.reply) {
+		t.Fatal("chunk folding lost the previous checkpoint")
 	}
 }
 

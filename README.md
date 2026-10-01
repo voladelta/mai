@@ -154,7 +154,7 @@ tokens, including reasoning. Credentials stay in the environment.
 Saved tasks retain their model and effort. Use `--last -m ds-pro` to switch
 models within DeepSeek; Pro rejects image-bearing history.
 
-DeepSeek uses portable compaction automatically, at 90% of a default
+DeepSeek uses portable compaction automatically, at 80% of a default
 1,000,000-token budget. Set `MAI_CONTEXT_WINDOW` to a smaller input budget
 between 32,768 and 1,000,000 if needed.
 `MAI_DEEPSEEK_URL` overrides the complete Responses URL for local testing.
@@ -409,7 +409,7 @@ Children never create their own saved tasks. A persisted parent saves the
 
 Mai tracks the active context size reported by DeepSeek. The default budget is
 1,000,000 tokens; `MAI_CONTEXT_WINDOW` can lower it.
-At 90% of the budget, Mai builds a portable checkpoint before the next model
+At 80% of the budget, Mai builds a portable checkpoint before the next model
 request. Saved tasks commit replacement history before continuing. Original
 visible text is archived separately for `mai.history` and `--last`; the archive
 grows with the task.

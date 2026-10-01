@@ -54,6 +54,21 @@ func TestParseOptionsInterspersed(t *testing.T) {
 			want: options{prompt: "-m is part of the prompt", timeout: defaultHTTPTimeout},
 		},
 		{
+			name: "literal help after end of options",
+			args: []string{"--", "--help"},
+			want: options{prompt: "--help", timeout: defaultHTTPTimeout},
+		},
+		{
+			name: "literal short help in subagent prompt",
+			args: []string{"--subagent", "repo_scout", "--", "-h"},
+			want: options{prompt: "-h", subagent: "repo_scout", noInput: true, timeout: defaultHTTPTimeout},
+		},
+		{
+			name: "help text used as a subagent name",
+			args: []string{"work", "--subagent", "--help"},
+			want: options{prompt: "work", subagent: "--help", noInput: true, timeout: defaultHTTPTimeout},
+		},
+		{
 			name: "custom subagent implies no input",
 			args: []string{"map", "the", "parser", "--subagent", "repo_scout"},
 			want: options{prompt: "map the parser", subagent: "repo_scout", noInput: true, timeout: defaultHTTPTimeout},
@@ -130,6 +145,16 @@ func TestParseOptionsHelpOverridesOtherArguments(t *testing.T) {
 	}
 	if !got.help {
 		t.Fatalf("unexpected options: %#v", got)
+	}
+}
+
+func TestParseOptionsDoesNotTreatOptionValuesAsHelp(t *testing.T) {
+	for _, flag := range []string{"--model", "--effort", "--timeout"} {
+		t.Run(flag, func(t *testing.T) {
+			if _, err := parseOptions([]string{"work", flag, "--help"}); err == nil {
+				t.Fatal("invalid option value was interpreted as a help request")
+			}
+		})
 	}
 }
 

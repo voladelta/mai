@@ -19,7 +19,7 @@ const (
 )
 
 const (
-	autoCompactPercent = 90
+	autoCompactPercent = 80
 )
 
 type agent struct {
@@ -353,7 +353,7 @@ func (a *agent) executeTool(ctx context.Context, sess *session, call functionCal
 	case "edit_context":
 		return a.executeContextEdit(sess, call.Arguments)
 	case "read_skill":
-		return a.executeReadSkill(call.Arguments)
+		return a.executeReadSkill(sess, call.Arguments)
 	case "view_image":
 		return a.executeViewImage(sess, call.Arguments)
 	case "spawn_subagent":
@@ -405,7 +405,7 @@ func (a *agent) validateChild(name, prompt string) error {
 	return nil
 }
 
-func (a *agent) executeReadSkill(arguments string) json.RawMessage {
+func (a *agent) executeReadSkill(sess *session, arguments string) json.RawMessage {
 	var args struct {
 		Path string `json:"path"`
 		File string `json:"file"`
@@ -424,6 +424,9 @@ func (a *agent) executeReadSkill(arguments string) json.RawMessage {
 	result, err := readSkill(a.skillsRoot, args.Path, args.File)
 	if err != nil {
 		return textToolOutput(toolError("read_skill failed", err))
+	}
+	if sess.Model == "ds-pro" && result.imageURL != "" {
+		return textToolOutput(toolError("read_skill failed", errors.New("DeepSeek Pro does not support images; select ds-flash to read skill images")))
 	}
 	return skillFileToolOutput(result)
 }

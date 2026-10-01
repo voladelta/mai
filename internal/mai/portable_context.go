@@ -132,8 +132,8 @@ func portableHistory(ctx context.Context, sess *session, backend modelBackend) (
 	if len(pending) != 0 {
 		return nil, nil, errors.New("pending tool call crosses portable checkpoint boundary")
 	}
-	if source.Len() == 0 || source.Len() > 2<<20 {
-		return nil, nil, errors.New("portable checkpoint source is empty or exceeds 2 MiB")
+	if source.Len() == 0 {
+		return nil, nil, errors.New("portable checkpoint source is empty")
 	}
 	// Bound input for smaller models. Fold chunks in order instead of discarding
 	// a middle slice. Each generated checkpoint remains model-authored evidence.

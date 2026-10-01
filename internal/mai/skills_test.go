@@ -192,6 +192,56 @@ func TestReadSkillRejectsEscapesAndUnscopedFiles(t *testing.T) {
 	}
 }
 
+func TestProSkillImageReturnsErrorWithoutPoisoningHistory(t *testing.T) {
+	root := testSkillRoot(t)
+	writeTestSkill(t, root, "demo", "demo", "A demonstration skill.")
+	mustWrite(t, filepath.Join(root, "demo", "assets", "icon.png"), string([]byte{0x89, 'P', 'N', 'G', 0, 1}))
+	a := &agent{stdout: io.Discard, stderr: io.Discard, skillsRoot: root}
+	sess := deepseekTestSession(t)
+	sess.Model = "ds-pro"
+	call := functionCall{
+		Type:      "function_call",
+		CallID:    "skill-image",
+		Name:      "read_skill",
+		Arguments: `{"path":"demo","file":"assets/icon.png"}`,
+	}
+	sess.appendEstimatedHistory(mustJSONValue(t, call))
+
+	if err := a.executeCalls(context.Background(), sess, []functionCall{call}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := validateDeepSeekHistory(sess.History, sess.Model); err != nil {
+		t.Fatalf("skill output made Pro history unusable: %v", err)
+	}
+	var output struct {
+		Output string `json:"output"`
+	}
+	if err := json.Unmarshal(sess.History[len(sess.History)-1], &output); err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(output.Output), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.OK || !strings.Contains(result.Error, "Pro does not support images") {
+		t.Fatalf("unsupported image was not explained: %s", output.Output)
+	}
+
+	text := a.executeTool(context.Background(), sess, functionCall{Name: "read_skill", Arguments: `{"path":"demo"}`})
+	var encoded string
+	if err := json.Unmarshal(text, &encoded); err != nil {
+		t.Fatal(err)
+	}
+	var skill skillFileResult
+	if err := json.Unmarshal([]byte(encoded), &skill); err != nil || !skill.OK || skill.Content == "" {
+		t.Fatalf("Pro text skill read failed: %s", text)
+	}
+}
+
 func TestAgentRoutesRegisteredSkillTools(t *testing.T) {
 	root := testSkillRoot(t)
 	writeTestSkill(t, root, "demo", "demo", "A demonstration skill.")

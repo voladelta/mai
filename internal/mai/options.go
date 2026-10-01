@@ -84,9 +84,18 @@ func parseOptions(args []string) (options, error) {
 }
 
 func helpRequested(args []string) bool {
-	for _, arg := range args {
-		if kind, ok := optionKinds[arg]; ok && kind == optionHelp {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			return false
+		}
+		name, _, inline := strings.Cut(arg, "=")
+		kind, known := optionKinds[name]
+		if known && kind == optionHelp && !inline {
 			return true
+		}
+		if known && kind.takesValue() && !inline {
+			i++
 		}
 	}
 	return false
