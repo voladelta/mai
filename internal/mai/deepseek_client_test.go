@@ -129,8 +129,8 @@ func TestDeepSeekCheckpointAndProTools(t *testing.T) {
 		if string(body["model"]) != `"deepseek-v4-pro"` || !bytes.Contains(body["reasoning"], []byte(`"max"`)) {
 			t.Error("Pro model/effort lost")
 		}
-		if bytes.Contains(body["tools"], []byte("view_image")) {
-			t.Error("Pro advertised vision")
+		if string(body["tool_choice"]) != `"none"` && (!bytes.Contains(body["tools"], []byte("view_image")) || !bytes.Contains(body["tools"], []byte("Flash request"))) {
+			t.Error("Pro did not advertise the Flash image fallback")
 		}
 		if string(body["tool_choice"]) == `"none"` {
 			if _, exists := body["tools"]; exists {

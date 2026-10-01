@@ -353,9 +353,9 @@ func (a *agent) executeTool(ctx context.Context, sess *session, call functionCal
 	case "edit_context":
 		return a.executeContextEdit(sess, call.Arguments)
 	case "read_skill":
-		return a.executeReadSkill(sess, call.Arguments)
+		return a.executeReadSkill(ctx, sess, call.Arguments)
 	case "view_image":
-		return a.executeViewImage(sess, call.Arguments)
+		return a.executeViewImage(ctx, sess, call.Arguments)
 	case "spawn_subagent":
 		return a.executeSpawnSubagent(ctx, sess, call.Arguments)
 	case "bash":
@@ -405,7 +405,7 @@ func (a *agent) validateChild(name, prompt string) error {
 	return nil
 }
 
-func (a *agent) executeReadSkill(sess *session, arguments string) json.RawMessage {
+func (a *agent) executeReadSkill(ctx context.Context, sess *session, arguments string) json.RawMessage {
 	var args struct {
 		Path string `json:"path"`
 		File string `json:"file"`
@@ -426,12 +426,12 @@ func (a *agent) executeReadSkill(sess *session, arguments string) json.RawMessag
 		return textToolOutput(toolError("read_skill failed", err))
 	}
 	if sess.Model == "ds-pro" && result.imageURL != "" {
-		return textToolOutput(toolError("read_skill failed", errors.New("DeepSeek Pro does not support images; select ds-flash to read skill images")))
+		return a.describeImageOutput(ctx, sess, marshalToolResult(result), result.imageURL)
 	}
 	return skillFileToolOutput(result)
 }
 
-func (a *agent) executeViewImage(sess *session, arguments string) json.RawMessage {
+func (a *agent) executeViewImage(ctx context.Context, sess *session, arguments string) json.RawMessage {
 	var args struct {
 		Path string `json:"path"`
 	}
@@ -442,6 +442,9 @@ func (a *agent) executeViewImage(sess *session, arguments string) json.RawMessag
 	result, err := viewImage(sess.RepoRoot, sess.CWD, args.Path)
 	if err != nil {
 		return textToolOutput(toolError("view_image failed", err))
+	}
+	if sess.Model == "ds-pro" {
+		return a.describeImageOutput(ctx, sess, marshalToolResult(result), result.imageURL)
 	}
 	return imageContentToolOutput(marshalToolResult(result), result.imageURL)
 }

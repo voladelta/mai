@@ -160,8 +160,13 @@ between 32,768 and 1,000,000 if needed.
 `MAI_DEEPSEEK_URL` overrides the complete Responses URL for local testing.
 HTTPS is required except for loopback.
 
-Flash accepts inline image output from `view_image`; Pro does not advertise
-that tool. Responses image parts can reference existing Files API `file_id`
+Flash accepts inline image output from `view_image` and `read_skill`. On Pro,
+both tools send images to Flash for a task-relevant description and return only
+labeled text to Pro. Each image adds one Flash request at low reasoning effort,
+using the configured endpoint and request timeout. Descriptions include source
+metadata and usage when available, and mark their interpretation as unverified.
+Description failures return text tool errors without adding images to Pro history.
+Responses image parts can reference existing Files API `file_id`
 values, but Mai does not upload or manage remote files. Portable checkpoints
 currently handle text histories: an older image-bearing message or tool output
 cannot be silently compacted and requires a new task or a text-only history.

@@ -192,7 +192,7 @@ func TestReadSkillRejectsEscapesAndUnscopedFiles(t *testing.T) {
 	}
 }
 
-func TestProSkillImageReturnsErrorWithoutPoisoningHistory(t *testing.T) {
+func TestProSkillImageFailureKeepsHistoryUsable(t *testing.T) {
 	root := testSkillRoot(t)
 	writeTestSkill(t, root, "demo", "demo", "A demonstration skill.")
 	mustWrite(t, filepath.Join(root, "demo", "assets", "icon.png"), string([]byte{0x89, 'P', 'N', 'G', 0, 1}))
@@ -227,7 +227,7 @@ func TestProSkillImageReturnsErrorWithoutPoisoningHistory(t *testing.T) {
 	if err := json.Unmarshal([]byte(output.Output), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.OK || !strings.Contains(result.Error, "Pro does not support images") {
+	if result.OK || !strings.Contains(result.Error, "Flash backend is unavailable") {
 		t.Fatalf("unsupported image was not explained: %s", output.Output)
 	}
 
