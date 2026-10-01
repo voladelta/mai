@@ -44,8 +44,8 @@ agent's TOML file. It implies `--no-input` and cannot be combined with
 receive the general skill catalog. Its developer instructions must identify any
 required skills.
 
-`mai` uses server-sent events (SSE). The Go standard library provides everything
-it needs, so the project has no third-party dependencies.
+The default Codex backend uses server-sent events (SSE). The Go standard library
+provides everything it needs, so the project has no third-party dependencies.
 
 ## Requirements
 
@@ -158,6 +158,19 @@ anchors. Consecutive identical log lines are encoded with their occurrence
 counts before summarization; unique records are folded in bounded chunks.
 Summary requests cannot execute tools. Invalid summaries leave session state
 unchanged. Native remains the default for existing Codex tasks.
+
+Use full history while it fits; portable checkpoints help a task continue when
+context pressure requires compaction. They can add generation time and reduce
+prompt-cache reuse, so smaller requests do not automatically mean lower cost.
+
+To start a portable task with your Codex subscription:
+
+```sh
+MAI_COMPACTION=portable mai "complex refactor" -m gpt-6.1-sol -e m --persist
+MAI_COMPACTION=portable mai "continue the refactor" --last
+```
+
+Set the compaction mode again on resume; it is selected from the environment.
 
 The opt-in Chat Completions adapter can run both coding and compaction without
 an OpenAI account. Supply a complete endpoint URL, model, key-variable name,
@@ -382,11 +395,12 @@ the cell returns.
 
 ## Authentication
 
-`mai` reads `$CODEX_HOME/auth.json`. It reads `~/.codex/auth.json` when
-`CODEX_HOME` is not set.
+The default Codex backend reads `$CODEX_HOME/auth.json`. It reads
+`~/.codex/auth.json` when `CODEX_HOME` is not set.
 
-`mai` does not read `OPENAI_API_KEY`. It does not copy your Codex credentials
-into its state files.
+The Codex backend does not read `OPENAI_API_KEY`. The chat backend reads the
+environment variable named by `MAI_CHAT_KEY_ENV` and needs no Codex login.
+Neither backend copies credentials into task state files.
 
 If Codex stores credentials only in the system keychain, set this option in your
 Codex configuration:
@@ -429,10 +443,11 @@ started with `mai.spawn` run concurrently. Mid-turn steering is not enabled.
 Children never create their own saved tasks. A persisted parent saves the
 `spawn_subagent` call and its returned result in the parent task history.
 
-Mai tracks the active context size reported by the Codex backend. At 90% of the
-configured context budget (272,000 tokens), it sends a Codex V2 compaction
-request before the next response request. The compacted history keeps recent
-user messages and the encrypted compaction item. Persisted tasks save this
+Mai tracks the active context size reported by the backend. Codex uses a
+272,000-token budget; chat uses `MAI_CONTEXT_WINDOW`. At 90% of that budget,
+Mai compacts before the next response request. With the default Codex native
+strategy, it sends a Codex V2 compaction request. The compacted history keeps
+recent user messages and the encrypted compaction item. Persisted tasks save this
 replacement history before they continue. Mai archives visible text separately
 so Python can search it after compaction or `--last`; the saved archive grows
 with the task's visible history.
@@ -465,7 +480,8 @@ No Node runtime or bridge is involved.
 
 Context editing can change prompt-cache reuse and add model calls. Reduced
 request size alone does not establish faster or cheaper task completion. Native
-Codex compaction remains the fallback at the existing threshold.
+compaction remains the fallback at the existing threshold for Codex tasks using
+the default native strategy. Portable tasks use readable checkpoints instead.
 
 ## Safety
 
@@ -516,7 +532,26 @@ tests cover two compactions and saved-task resume. See [eval details](evals/READ
 
 ## Backend status
 
-`mai` uses the ChatGPT Codex backend rather than the public OpenAI API. This is
-suitable for personal use with your own ChatGPT subscription.
+By default, `mai` uses the ChatGPT Codex backend. This is suitable for personal
+use with your own ChatGPT subscription. The backend is not a public API
+contract; OpenAI may change it without notice.
 
-The backend is not a public API contract. OpenAI may change it without notice.
+The experimental Chat Completions backend uses the configured provider's API.
+Its current support covers text and function tools with portable compaction.
+
+In a local coding pilot, all three configurations passed coding checks and
+original-history recovery in all four trials each. Mean runtime over two
+matched repetitions per arm was:
+
+| Model configuration | Full history | Two portable checkpoints |
+| --- | ---: | ---: |
+| DeepSeek Flash, thinking disabled | 23.6 s | 47.0 s |
+| GPT-6 Luna, medium | 67.3 s | 90.0 s |
+| GPT-6.1 Sol, medium | 121.4 s | 151.3 s |
+
+Full history fit in every trial; checkpoints were forced to measure their
+overhead. Each model also generated its own summaries. Different reasoning
+settings, cache behavior and the small sample limit comparisons. These results
+show continuity across the tested providers, not a general model ranking or
+evidence of beating native compaction. See the
+[comparison method and command](evals/README.md#cross-model-portable-comparison).
