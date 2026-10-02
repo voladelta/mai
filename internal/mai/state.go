@@ -400,6 +400,8 @@ func estimateHistoryItemTokens(item json.RawMessage) int64 {
 
 func interruptedToolInstruction(name string) string {
 	switch name {
+	case "sidekick":
+		return "The sidekick conversation has expired and its effects are unknown. Inspect files and command effects before assigning replacement work; do not automatically replay the assignment."
 	case "apply_patch":
 		return "Inspect the repository and reconcile the requested patch with the current files before you retry apply_patch."
 	case "bash":

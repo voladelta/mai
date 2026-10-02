@@ -247,6 +247,19 @@ func compactJSON(raw json.RawMessage) string {
 func toolDefinitions() []map[string]any {
 	return []map[string]any{
 		{
+			"type": "function", "name": "sidekick",
+			"description": "Delegate a bounded task to a synchronous Flash/high worker with repository tools. Supply task, relevant context, scope and success criteria. Omit worker_id to start the run's single worker; use the returned worker_id for follow-ups. The worker shares files but has separate conversation history, retained only during this run. It has 32 model turns total and a 10-minute deadline per call. You retain planning, integration and verification. Failure may leave changes; inspect effects before retrying. No further delegation is permitted by worker policy.",
+			"parameters": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"task":      map[string]any{"type": "string", "minLength": 1, "maxLength": 32768},
+					"context":   map[string]any{"type": "string", "maxLength": 65536},
+					"worker_id": map[string]any{"type": "string", "description": "Worker ID returned earlier in this run. Omit on the first call."},
+				},
+				"required": []string{"task"},
+			},
+		},
+		{
 			"type": "function", "name": "edit_context",
 			"description": "Shorten completed successful Bash stdout in future model requests, preserving originals for history search. Shrink directly with current call IDs and digests supplied in context hints, or inspect to obtain them. Keep exact facts, corrections and decisions still needed for the task. Summaries are model-authored context, not fresh evidence. Other output fields and request items stay intact. This changes context only, never command effects. Each summary must reduce estimated size. Prefer large obsolete outputs when savings justify another request. Continue the task after editing.",
 			"parameters": map[string]any{

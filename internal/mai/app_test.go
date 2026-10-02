@@ -31,7 +31,7 @@ func TestMainWithoutPromptShowsBuiltInDefault(t *testing.T) {
 	if code := Main(nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "Built-in default: ds-flash/high.") {
+	if !strings.Contains(stdout.String(), "Built-in default: ds-pro/high.") {
 		t.Fatalf("stdout does not show the built-in default:\n%s", stdout.String())
 	}
 }
@@ -369,7 +369,7 @@ func TestPersistCreatesProjectSessionAndCurrentPointer(t *testing.T) {
 	t.Chdir(root)
 	writeTestDeepSeekFailureServer(t)
 	var stdout, stderr bytes.Buffer
-	if code := Main([]string{"hello", "--persist", "-e", "h"}, &stdout, &stderr); code != 1 {
+	if code := Main([]string{"hello", "--persist"}, &stdout, &stderr); code != 1 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
 	paths := projectSessionPaths(root)
@@ -381,7 +381,7 @@ func TestPersistCreatesProjectSessionAndCurrentPointer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sess.ID != id || sess.Model != "ds-flash" || sess.Effort != "h" || len(sess.History) != 1 {
+	if sess.ID != id || sess.Model != "ds-pro" || sess.Effort != "h" || len(sess.History) != 1 {
 		t.Fatalf("saved session = %#v", sess)
 	}
 }
@@ -476,12 +476,12 @@ func TestMainHelpDocumentsPersistenceOptions(t *testing.T) {
 	if code := Main([]string{"--unknown", "--help"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
-	for _, text := range []string{"--effort", "--model", "--persist", "--last", "--max-turns", "--timeout", "--cell-timeout", "--no-input", "Documentation and support"} {
+	for _, text := range []string{"--f", "--max", "--model", "--persist", "--last", "--max-turns", "--timeout", "--cell-timeout", "--no-input", "Documentation and support"} {
 		if !strings.Contains(stdout.String(), text) {
 			t.Fatalf("help is missing %q:\n%s", text, stdout.String())
 		}
 	}
-	if strings.Contains(stdout.String(), "--save-defaults") {
+	if strings.Contains(stdout.String(), "--save-defaults") || strings.Contains(stdout.String(), "--effort") {
 		t.Fatalf("help still contains removed global settings option:\n%s", stdout.String())
 	}
 }
@@ -501,15 +501,23 @@ func TestResumePreservesHistoryAndUsesCurrentEffort(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("MAI_DEEPSEEK_URL", server.URL)
-	for _, args := range [][]string{{"first", "--persist"}, {"second", "--last", "-e", "l"}, {"third", "--last"}} {
+	for _, args := range [][]string{
+		{"first", "--persist"},
+		{"second", "--last", "--max"},
+		{"third", "--last"},
+		{"fourth", "--last", "--f"},
+		{"fifth", "--last"},
+		{"sixth", "--last", "-m", "ds-pro"},
+	} {
 		var stdout, stderr bytes.Buffer
 		if code := Main(args, &stdout, &stderr); code != 0 {
 			t.Fatalf("%v: %s", args, stderr.String())
 		}
 	}
 	for i, request := range requests {
-		wantEffort := []string{"high", "low", "low"}[i]
-		if request["model"] != "deepseek-flash" || request["reasoning"].(map[string]any)["effort"] != wantEffort {
+		wantEffort := []string{"high", "max", "max", "high", "high", "high"}[i]
+		wantModel := []string{"deepseek-v4-pro", "deepseek-v4-pro", "deepseek-v4-pro", "deepseek-flash", "deepseek-flash", "deepseek-v4-pro"}[i]
+		if request["model"] != wantModel || request["reasoning"].(map[string]any)["effort"] != wantEffort {
 			t.Fatalf("model/effort %v", request)
 		}
 		if _, exists := request["prompt_cache_key"]; exists {
@@ -543,5 +551,31 @@ func TestLastRejectsRemovedSubscriptionModel(t *testing.T) {
 	active.close()
 	if _, err := startSession(configForTask(options{}), options{last: true}); err == nil {
 		t.Fatal("removed model silently migrated")
+	}
+}
+
+func TestLastPreservesLegacyLowEffort(t *testing.T) {
+	t.Chdir(t.TempDir())
+	active, err := startSession(taskConfig{Model: "ds-flash", Effort: "l"}, options{persist: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := active.saveInitial(); err != nil {
+		active.close()
+		t.Fatal(err)
+	}
+	active.close()
+
+	opts, err := parseOptions([]string{"continue", "--last"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := startSession(configForTask(opts), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resumed.close()
+	if resumed.session.Model != "ds-flash" || resumed.session.Effort != "l" {
+		t.Fatalf("legacy settings overwritten: %#v", resumed.session)
 	}
 }

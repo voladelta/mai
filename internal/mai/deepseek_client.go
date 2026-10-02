@@ -234,6 +234,9 @@ func (c *deepseekClient) request(ctx context.Context, sess *session, instruction
 	if toolsAllowed {
 		var tools []map[string]any
 		for _, definition := range toolDefinitions() {
+			if definition["name"] == "sidekick" && sess.Model != "ds-pro" {
+				continue
+			}
 			if sess.Model == "ds-pro" && (definition["name"] == "view_image" || definition["name"] == "read_skill") {
 				definition["description"] = definition["description"].(string) + " For image output on Pro, Mai makes one Flash request and returns a labeled text description instead of image content."
 			}

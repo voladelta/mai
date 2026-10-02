@@ -27,15 +27,16 @@ Examples:
   mai "add tests for the parser"
   mai "start a saved task" --persist
   mai "now fix the failing test" --last
-  mai "refactor this" -e h
-  mai "quick review" -m ds-flash
+  mai "refactor this" --max
+  mai "quick review" --f
 
 Options:
   -h, --help             Show this help text.
   --version              Show the mai version.
   --persist              Save this new task in the current project.
   --last                 Resume the current saved task in the current project.
-  -e, --effort EFFORT    Use l, h, or max (low, high, max).
+  --f                    Use Flash/high without the sidekick tool.
+  --max                  Use Pro/max (sidekick remains Flash/high).
   -m, --model MODEL      Use ds-flash or ds-pro for this task.
   --max-turns COUNT      Set the model-turn limit (default: 64; -1: unlimited).
   --timeout DURATION     Set the per-request first-byte/idle timeout (default: 10m).
@@ -45,7 +46,7 @@ Options:
   --jsonl                 Write task, model, and tool events as JSON Lines.
 
 Tasks are stateless unless you use --persist or --last.
-The built-in default is ds-flash/high.
+The built-in default is ds-pro/high with a Flash/high sidekick available.
 
 Documentation and support: https://github.com/voladelta/mai
 `
@@ -76,7 +77,7 @@ Usage:
 Example:
   mai "add tests for the parser"
 
-Built-in default: ds-flash/high.
+Built-in default: ds-pro/high.
 Run 'mai --help' for more information.
 `)
 		return 0

@@ -16,6 +16,8 @@ type options struct {
 	effortExplicit bool
 	model          string
 	modelExplicit  bool
+	fast           bool
+	maxEffort      bool
 	help           bool
 	version        bool
 	noInput        bool
@@ -36,7 +38,8 @@ const (
 	optionNoInput
 	optionSkipSkills
 	optionJSONL
-	optionEffort
+	optionFast
+	optionMaxEffort
 	optionModel
 	optionTimeout
 	optionCellTimeout
@@ -51,8 +54,9 @@ var optionKinds = map[string]optionKind{
 	"--no-input": optionNoInput,
 	"-s":         optionSkipSkills, "--skip-skills": optionSkipSkills,
 	"--jsonl": optionJSONL,
-	"-e":      optionEffort, "--effort": optionEffort,
-	"-m": optionModel, "--model": optionModel,
+	"--f":     optionFast,
+	"--max":   optionMaxEffort,
+	"-m":      optionModel, "--model": optionModel,
 	"--timeout":      optionTimeout,
 	"--cell-timeout": optionCellTimeout,
 	"--max-turns":    optionMaxTurns,
@@ -137,7 +141,7 @@ func parseOptionTokens(args []string, out *options) ([]string, error) {
 }
 
 func (kind optionKind) takesValue() bool {
-	return kind == optionEffort || kind == optionModel || kind == optionTimeout || kind == optionCellTimeout || kind == optionMaxTurns
+	return kind == optionModel || kind == optionTimeout || kind == optionCellTimeout || kind == optionMaxTurns
 }
 
 func (out *options) setOption(kind optionKind, value string) error {
@@ -154,8 +158,10 @@ func (out *options) setOption(kind optionKind, value string) error {
 		out.skipSkills = true
 	case optionJSONL:
 		out.jsonl = true
-	case optionEffort:
-		out.effort, out.effortExplicit = value, true
+	case optionFast:
+		out.fast = true
+	case optionMaxEffort:
+		out.maxEffort = true
 	case optionModel:
 		out.model, out.modelExplicit = value, true
 	case optionMaxTurns:
@@ -181,17 +187,29 @@ func (out *options) setOption(kind optionKind, value string) error {
 }
 
 func (out *options) normalizeSelections() error {
-	if out.effortExplicit {
-		out.effort = normalizeEffort(out.effort)
-		if _, ok := effortIDs[out.effort]; !ok {
-			return fmt.Errorf("invalid effort %q (use l, h or max)", out.effort)
-		}
-	}
 	if out.modelExplicit {
 		out.model = normalizeModel(out.model)
 		if !supportedModel(out.model) {
 			return fmt.Errorf("invalid model %q (use ds-flash or ds-pro)", out.model)
 		}
+	}
+	if out.fast && out.maxEffort {
+		return errors.New("--f and --max cannot be used together")
+	}
+	if out.fast && out.modelExplicit && out.model != "ds-flash" {
+		return errors.New("--f conflicts with --model ds-pro")
+	}
+	if out.maxEffort && out.modelExplicit && out.model != "ds-pro" {
+		return errors.New("--max requires ds-pro")
+	}
+	if out.fast {
+		out.model, out.modelExplicit = "ds-flash", true
+	}
+	if out.maxEffort {
+		out.model, out.modelExplicit = "ds-pro", true
+		out.effort, out.effortExplicit = "max", true
+	} else if out.modelExplicit {
+		out.effort, out.effortExplicit = "h", true
 	}
 	return nil
 }
@@ -214,19 +232,7 @@ func parseTimeout(value string) (time.Duration, error) {
 	return timeout, nil
 }
 
-func normalizeEffort(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	switch value {
-	case "low":
-		return "l"
-	case "high":
-		return "h"
-	default:
-		return value
-	}
-}
-
-const defaultModel = "ds-flash"
+const defaultModel = "ds-pro"
 
 func normalizeModel(model string) string {
 	return strings.ToLower(strings.TrimSpace(model))

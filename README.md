@@ -6,7 +6,7 @@ Mai is a small coding agent for macOS and Linux, built in Go. It uses the
 DeepSeek Responses API for streaming, reasoning and function tools. Portable
 checkpoints keep long tasks moving while original history remains searchable.
 
-The agent has 6 tools:
+The agent has 6 general tools, plus a sidekick tool on Pro:
 
 - `bash` reads files, searches code and runs commands
 - `python` explores data and task history in a persistent Python namespace
@@ -14,6 +14,7 @@ The agent has 6 tools:
 - `read_skill` loads a skill's complete `SKILL.md`, or a required supporting file when `file` is provided
 - `view_image` shows a local image to the model
 - `edit_context` shortens successful Bash stdout in future model requests while keeping the original searchable
+- `sidekick` lets Pro direct a synchronous Flash/high worker and follow up in its separate conversation
 
 Skills are read from `agents/skills` in the current repository, then from
 `~/.agents/skills`. Repository skills take priority when a directory id or skill
@@ -113,8 +114,11 @@ The default output remains human-readable.
 
 ## Choose a model
 
-New tasks use `ds-flash` with high effort. Select `ds-pro` with `-m ds-pro`.
-Use `--last -m ds-pro` to change the model for a saved task.
+New tasks use `ds-pro` with high effort and a Flash/high sidekick available.
+Use `--f` for Flash/high without the sidekick tool, or `--max` for Pro/max.
+The sidekick always uses Flash/high, including when the director uses max.
+`-m ds-flash` and `-m ds-pro` explicitly select a model with high effort;
+`-m ds-pro --max` selects Pro/max. Conflicting selections are rejected.
 
 ### DeepSeek Responses
 
@@ -123,22 +127,24 @@ Selecting `ds-flash` or `ds-pro` automatically uses
 Set `DEEPSEEK_API_KEY` in your environment before running:
 
 ```sh
-mai "add useful tests for the parser" -m ds-flash -e l --persist
-mai "continue the task" --last -e h
-mai "review this implementation" -m ds-pro -e max
+mai "add useful tests for the parser" --f --persist
+mai "continue the task" --last --max
+mai "review this implementation" --max
 ```
 
-| CLI model | API model | Reasoning efforts | Default effort |
-| --- | --- | --- | --- |
-| `ds-flash` | `deepseek-flash` | `l` / `low`, `h` / `high`, `max` | `high` |
-| `ds-pro` | `deepseek-v4-pro` | `l` / `low`, `h` / `high`, `max` | `high` |
+| CLI mode | API model | Effort |
+| --- | --- | --- |
+| Default | `deepseek-v4-pro` | `high` |
+| `--max` | `deepseek-v4-pro` | `max` |
+| `--f` | `deepseek-flash` | `high` |
 
 Responses stream through the existing text and function-tool flow. Mai replays
 the full local history, including DeepSeek's plain reasoning between tool calls;
 the API does not retain conversations. Each request allows up to 32,768 output
 tokens, including reasoning. Credentials stay in the environment.
-Saved tasks retain their model and effort. Use `--last -m ds-pro` to switch
-models within DeepSeek; Pro rejects image-bearing history.
+Saved tasks retain their model and effort, including older low-effort tasks.
+Use `--last --f` to switch to Flash/high, `--last --max` to switch to Pro/max,
+or `--last -m ds-pro` to switch to Pro/high. Pro rejects image-bearing history.
 
 DeepSeek uses portable compaction automatically, at 80% of a default
 1,000,000-token budget. Set `MAI_CONTEXT_WINDOW` to a smaller input budget
@@ -175,15 +181,17 @@ summaries leave session state unchanged.
 Keep full history while it fits. Checkpoints can add generation time and reduce
 prompt-cache reuse, so smaller requests do not automatically mean lower cost.
 
-## Choose reasoning effort
+## Choose execution mode
 
-Use `-e l` / `low`, `-e h` / `high`, or `-e max`. New tasks default to
-high effort. A saved task keeps its current effort on `--last` unless you
-override it:
+New tasks default to Pro/high. Use `--max` for deeper Pro reasoning or `--f`
+for Flash/high. There is no separate effort selector: `-e` and `--effort`
+are no longer supported. A saved task keeps its model and effort on `--last`
+unless you explicitly select a mode:
 
 ```sh
-mai "refactor this package" -e h
-mai "continue the refactor" --last -e max
+mai "refactor this package"
+mai "continue the refactor" --last --max
+mai "quick local fix" --f
 ```
 
 ## Timeouts and interactive input
@@ -337,6 +345,36 @@ subprocess work before returning; output from work left running cannot be
 attributed reliably. Native libraries must flush their own buffered output before
 the cell returns.
 
+### Pro sidekick
+
+Pro can call `sidekick` with a bounded `task` and optional `context`. The
+harness runs a Flash/high agent through the same model/tool loop and returns
+its final answer. Pro keeps responsibility for planning, integration and final
+verification. Delegation is optional; no worker starts until Pro calls the tool.
+
+Each run supports one worker. The result includes `worker_id`; supply it with
+the next `task` to follow up in the same worker conversation. The worker shares
+the parent's working directory, repository boundary and approval rules, but
+has separate history and a separate Python namespace. Only explicit task
+context is sent; the parent's full conversation is not copied. Execution is
+synchronous, so the director and worker do not execute tools concurrently.
+
+The worker has 32 model turns total across assignments and a 10-minute
+wall-clock deadline per call. Parent interruption cancels worker execution.
+Results include cumulative turn and available usage counts, the number of usage
+reports, call duration and answer truncation when needed. Usage includes model
+turns and checkpoint reports; unavailable usage is not counted. JSONL worker
+model/tool events carry `worker_id`, including streamed text. Progress logs
+are labeled on stderr. A failed worker cannot be continued; its file and
+command effects may remain, so inspect them before assigning replacement work.
+
+Worker history and its Python namespace last only for the current parent run.
+The worker does not persist a task or change `.mai/current`; a persisted parent
+saves the returned tool result. Worker IDs expire after restart, and interrupted
+assignments are never replayed automatically. The worker has no sidekick tool
+and is instructed not to delegate. Bash remains unsandboxed, so this policy
+does not prevent arbitrary subprocess launches.
+
 ### Delegation through the CLI
 
 When delegation is authorized, the model can launch another ordinary Mai run
@@ -344,13 +382,14 @@ through `bash` or Python's `subprocess`. Install `mai` on `PATH`, or use the
 binary's absolute path. For example:
 
 ```bash
-mai --no-input --max-turns 32 -- "Act as a reviewer. Inspect the current diff, report actionable findings, and do not change files or delegate further."
+mai --f --no-input --max-turns 32 -- "Act as a reviewer. Inspect the current diff, report actionable findings, and do not change files or delegate further."
 ```
 
 Supply a complete task, role, and file scope in the prompt. Each run starts
 with fresh conversation history and discovers skills normally. It inherits
 the working directory and environment, including API credentials. Model,
-effort, and turn limits use CLI defaults unless passed explicitly.
+effort, and turn limits use CLI defaults unless passed explicitly. Choose
+`--f`, `--max` or `-m` explicitly to avoid relying on the default model.
 
 Use stateless runs for delegation so they do not change `.mai/current` or
 contend for the parent's saved task. Wait for completion, capture stdout and
@@ -458,15 +497,18 @@ go test -race ./...
 go vet ./...
 ```
 
-With `DEEPSEEK_API_KEY` populated, run the paid Responses conformance probe:
+With `DEEPSEEK_API_KEY` populated, run the paid Responses and sidekick conformance probes:
 
 ```sh
 MAI_LIVE_DEEPSEEK_RESPONSES=1 \
-go test -v ./internal/mai -run '^TestLiveDeepSeekResponses$' -count=1 -timeout=10m
+go test -v ./internal/mai -run '^TestLiveDeepSeek(Responses|Sidekick)$' -count=1 -timeout=20m
 ```
 
 All six Flash/Pro combinations at low, high and max passed the local live
 probe: tool execution, saved-task resume and exact checkpoint fact retention.
-This is protocol conformance, not a coding-performance benchmark.
+The sidekick probe checks Pro/high and Pro/max directing a Flash/high worker
+through two assignments, including Bash execution and recall from the worker's
+own conversation. It uses an empty temporary workspace and harmless printf
+commands. These are conformance checks, not coding-performance benchmarks.
 See [eval instructions](evals/README.md) for graded repository tasks and
 context-continuity tests.

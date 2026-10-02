@@ -21,21 +21,27 @@ const (
 )
 
 type agent struct {
-	backend        modelBackend
-	contextWindow  int64
-	maxTurns       int
-	modelOutput    io.Writer
-	stdout         io.Writer
-	stderr         io.Writer
-	sessionPath    string
-	approve        approvalFunc
-	skillsRoots    []string
-	skillsError    error
-	skipSkills     bool
-	requestTimeout time.Duration
-	cellTimeout    time.Duration
-	python         pythonKernel
-	events         io.Writer
+	backend          modelBackend
+	contextWindow    int64
+	maxTurns         int
+	modelOutput      io.Writer
+	stdout           io.Writer
+	stderr           io.Writer
+	sessionPath      string
+	approve          approvalFunc
+	skillsRoots      []string
+	skillsError      error
+	skipSkills       bool
+	requestTimeout   time.Duration
+	cellTimeout      time.Duration
+	python           pythonKernel
+	events           io.Writer
+	workerID         string
+	sidekick         *sidekickWorker
+	modelTurns       int
+	usage            tokenUsage
+	usageReports     int
+	roleInstructions string
 }
 
 type functionCall struct {
@@ -70,16 +76,30 @@ func newAgent(stdout, stderr io.Writer, sessionPath string, requestTimeout time.
 }
 
 func (a *agent) run(ctx context.Context, sess *session, userPrompt string) error {
-	defer a.python.close()
+	defer a.close()
+	return a.runLoop(ctx, sess, userPrompt)
+}
+
+func (a *agent) close() {
+	a.python.close()
+	if a.sidekick != nil {
+		a.sidekick.agent.close()
+	}
+}
+
+func (a *agent) runLoop(ctx context.Context, sess *session, userPrompt string) error {
 	interactive := isTerminalWriter(a.stderr)
 	if interactive {
 		fmt.Fprintln(a.stderr, "→ thinking")
 	}
-	instructions := systemInstructions(sess, a.loadSkillInstructions(userPrompt))
+	instructions := systemInstructions(sess, a.loadSkillInstructions(userPrompt), a.roleInstructions)
 	if sess.ContextTokens == 0 {
 		sess.ContextTokens = estimateHistoryTokens(sess.History) + estimateInstructionTokens(instructions)
 	}
 	for turn := 0; a.maxTurns == -1 || turn < a.maxTurns; turn++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if interactive && turn > 0 {
 			fmt.Fprintln(a.stderr, "→ thinking")
 		}
@@ -134,7 +154,9 @@ func (a *agent) runTurn(ctx context.Context, sess *session, instructions string)
 	if backend == nil {
 		return false, errors.New("model backend is not configured")
 	}
+	a.modelTurns++
 	result, err := backend.stream(ctx, sess, instructions)
+	a.recordUsage(result.usage)
 	modelDuration := time.Since(modelStarted).Milliseconds()
 	if result.wrote && a.events == nil {
 		fmt.Fprintln(a.stdout)
@@ -200,6 +222,7 @@ func (a *agent) compactIfNeeded(ctx context.Context, sess *session, instructions
 	}
 	started := time.Now()
 	history, usage, err := portableHistory(ctx, sess, a.backend)
+	a.recordUsage(usage)
 	if err != nil {
 		return fmt.Errorf("compact conversation: %w", err)
 	}
@@ -229,6 +252,10 @@ func estimateInstructionTokens(instructions string) int64 {
 
 func (a *agent) executeCalls(ctx context.Context, sess *session, calls []functionCall) error {
 	for _, call := range calls {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
 		if err := a.emit(map[string]any{"type": "tool.started", "name": call.Name, "call_id": call.CallID}); err != nil {
 			return err
 		}
@@ -309,6 +336,8 @@ func extractFunctionCalls(items []json.RawMessage) ([]functionCall, error) {
 
 func (a *agent) executeTool(ctx context.Context, sess *session, call functionCall) json.RawMessage {
 	switch call.Name {
+	case "sidekick":
+		return a.executeSidekick(ctx, sess, call.Arguments)
 	case "edit_context":
 		return a.executeContextEdit(sess, call.Arguments)
 	case "read_skill":

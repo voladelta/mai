@@ -36,20 +36,9 @@ func deepseekTestResponse(w http.ResponseWriter, items string) {
 
 func TestDeepSeekOptionsAndDefaults(t *testing.T) {
 	for _, model := range []string{"ds-flash", "ds-pro"} {
-		for _, effort := range []string{"l", "low", "h", "high", "max"} {
-			opts, err := parseOptions([]string{"task", "-m", model, "-e", effort})
-			if err != nil || !deepseekModel(opts.model) || !deepseekEffort(opts.effort) {
-				t.Fatalf("%s %s: %v", model, effort, err)
-			}
-		}
 		opts, err := parseOptions([]string{"task", "-m", model})
 		if err != nil || configForTask(opts).Effort != "h" {
 			t.Fatalf("default: %v", err)
-		}
-	}
-	for _, effort := range []string{"m", "medium", "x", "xhigh"} {
-		if _, err := parseOptions([]string{"task", "-m", "ds-flash", "-e", effort}); err == nil {
-			t.Fatalf("accepted effort %s", effort)
 		}
 	}
 }
@@ -195,7 +184,7 @@ func TestDeepSeekCLIResumeChangesEffortWithoutCodexItems(t *testing.T) {
 		}
 		effort := "high"
 		if requests == 2 {
-			effort = "low"
+			effort = "max"
 		}
 		if !bytes.Contains(body["reasoning"], []byte(effort)) || bytes.Contains(body["input"], []byte("configuration_update")) {
 			t.Error("wrong effort or Codex item on resume")
@@ -205,7 +194,7 @@ func TestDeepSeekCLIResumeChangesEffortWithoutCodexItems(t *testing.T) {
 	defer server.Close()
 	t.Setenv("MAI_DEEPSEEK_URL", server.URL+"/responses")
 	var stdout, stderr bytes.Buffer
-	for _, args := range [][]string{{"task", "-m", "ds-flash", "--persist", "--no-input", "-s"}, {"continue", "--last", "-e", "l", "--no-input", "-s"}} {
+	for _, args := range [][]string{{"task", "--f", "--persist", "--no-input", "-s"}, {"continue", "--last", "--max", "--no-input", "-s"}} {
 		if code := Main(args, &stdout, &stderr); code != 0 {
 			t.Fatalf("CLI code=%d: %s", code, stderr.String())
 		}

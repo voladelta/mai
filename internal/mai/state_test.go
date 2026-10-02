@@ -284,6 +284,24 @@ func TestRepairInterruptedToolCalls(t *testing.T) {
 	}
 }
 
+func TestRepairInterruptedSidekickRequiresReconciliation(t *testing.T) {
+	sess := &session{History: []json.RawMessage{
+		json.RawMessage(`{"type":"function_call","call_id":"pending","name":"sidekick","arguments":"{\"task\":\"apply fix\"}"}`),
+	}}
+	if err := repairInterruptedToolCalls(sess); err != nil {
+		t.Fatal(err)
+	}
+	var output struct {
+		Output string `json:"output"`
+	}
+	if err := json.Unmarshal(sess.History[1], &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.Output, `"outcome":"unknown"`) || !strings.Contains(output.Output, "expired") || !strings.Contains(output.Output, "do not automatically replay") {
+		t.Fatalf("unsafe worker recovery: %s", output.Output)
+	}
+}
+
 func TestRepairInterruptedBashRequiresConfirmationBeforeUnsafeRetry(t *testing.T) {
 	sess := &session{History: []json.RawMessage{
 		json.RawMessage(`{"type":"function_call","call_id":"pending","name":"bash","arguments":"{\"command\":\"deploy\"}"}`),

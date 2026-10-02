@@ -66,23 +66,23 @@ func TestParseOptionsInterspersed(t *testing.T) {
 	}{
 		{
 			name: "short forms after prompt",
-			args: []string{"fix", "the", "test", "--last", "-e=h"},
-			want: options{prompt: "fix the test", last: true, effort: "h", effortExplicit: true, timeout: defaultHTTPTimeout},
+			args: []string{"fix", "the", "test", "--last", "--f"},
+			want: options{prompt: "fix the test", last: true, fast: true, model: "ds-flash", modelExplicit: true, effort: "h", effortExplicit: true, timeout: defaultHTTPTimeout},
 		},
 		{
 			name: "long forms around prompt",
-			args: []string{"hello", "--effort", "max", "--persist"},
-			want: options{prompt: "hello", persist: true, effort: "max", effortExplicit: true, timeout: defaultHTTPTimeout},
+			args: []string{"hello", "--max", "--persist"},
+			want: options{prompt: "hello", persist: true, maxEffort: true, model: "ds-pro", modelExplicit: true, effort: "max", effortExplicit: true, timeout: defaultHTTPTimeout},
 		},
 		{
 			name: "model selection",
 			args: []string{"hello", "-m", "DS-FLASH"},
-			want: options{prompt: "hello", model: "ds-flash", modelExplicit: true, timeout: defaultHTTPTimeout},
+			want: options{prompt: "hello", model: "ds-flash", modelExplicit: true, effort: "h", effortExplicit: true, timeout: defaultHTTPTimeout},
 		},
 		{
 			name: "Pro model alias",
 			args: []string{"hello", "--model=ds-pro"},
-			want: options{prompt: "hello", model: "ds-pro", modelExplicit: true, timeout: defaultHTTPTimeout},
+			want: options{prompt: "hello", model: "ds-pro", modelExplicit: true, effort: "h", effortExplicit: true, timeout: defaultHTTPTimeout},
 		},
 		{
 			name: "end of options",
@@ -163,12 +163,51 @@ func TestParseOptionsHelpOverridesOtherArguments(t *testing.T) {
 }
 
 func TestParseOptionsDoesNotTreatOptionValuesAsHelp(t *testing.T) {
-	for _, flag := range []string{"--model", "--effort", "--timeout", "--max-turns"} {
+	for _, flag := range []string{"--model", "--timeout", "--max-turns"} {
 		t.Run(flag, func(t *testing.T) {
 			if _, err := parseOptions([]string{"work", flag, "--help"}); err == nil {
 				t.Fatal("invalid option value was interpreted as a help request")
 			}
 		})
+	}
+}
+
+func TestExecutionModeSelection(t *testing.T) {
+	for _, test := range []struct {
+		args   []string
+		model  string
+		effort string
+	}{
+		{[]string{"work"}, "ds-pro", "h"},
+		{[]string{"work", "--max"}, "ds-pro", "max"},
+		{[]string{"work", "--f"}, "ds-flash", "h"},
+		{[]string{"work", "--max", "-m", "ds-pro"}, "ds-pro", "max"},
+		{[]string{"work", "-m", "ds-pro", "--max"}, "ds-pro", "max"},
+		{[]string{"work", "--f", "-m", "ds-flash"}, "ds-flash", "h"},
+	} {
+		opts, err := parseOptions(test.args)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		cfg := configForTask(opts)
+		if cfg.Model != test.model || cfg.Effort != test.effort {
+			t.Fatalf("%v: config = %#v", test.args, cfg)
+		}
+	}
+
+	for _, args := range [][]string{
+		{"work", "--f", "--max"},
+		{"work", "--max", "--f"},
+		{"work", "--f", "-m", "ds-pro"},
+		{"work", "--max", "-m", "ds-flash"},
+		{"work", "-m", "ds-flash", "--max"},
+		{"work", "-e", "h"},
+		{"work", "--effort=max"},
+	} {
+		if _, err := parseOptions(args); err == nil {
+			t.Fatalf("accepted conflicting or removed options: %v", args)
+		}
 	}
 }
 
