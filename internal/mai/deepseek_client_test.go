@@ -87,8 +87,8 @@ func TestDeepSeekResponsesToolReasoningAndResume(t *testing.T) {
 	if a.contextWindow != 1_000_000 {
 		t.Fatal("wrong compaction configuration")
 	}
-	if done, err := a.runTurn(context.Background(), sess, "test"); err != nil || done {
-		t.Fatalf("tool turn: done=%v %v", done, err)
+	if terminalItems, err := a.runTurn(context.Background(), sess, "test"); err != nil || len(terminalItems) != 0 {
+		t.Fatalf("tool turn: terminal=%v %v", terminalItems, err)
 	}
 	encoded, err := os.ReadFile(path)
 	if err != nil || bytes.Contains(encoded, []byte("private-test-key")) {
@@ -101,8 +101,8 @@ func TestDeepSeekResponsesToolReasoningAndResume(t *testing.T) {
 	if err := a.configureBackend(sess); err != nil {
 		t.Fatal(err)
 	}
-	if done, err := a.runTurn(context.Background(), sess, "test"); err != nil || !done {
-		t.Fatalf("final turn: %v %v", done, err)
+	if terminalItems, err := a.runTurn(context.Background(), sess, "test"); err != nil || len(terminalItems) == 0 {
+		t.Fatalf("final turn: %v %v", terminalItems, err)
 	}
 	if requests != 2 {
 		t.Fatalf("requests=%d", requests)
@@ -322,11 +322,11 @@ func TestDeepSeekChecksToolCallIDAgainstHistoryBeforeEffects(t *testing.T) {
 				stdout:  io.Discard, stderr: io.Discard, sessionPath: path,
 			}
 
-			done, err := a.runTurn(context.Background(), sess, "test")
+			terminalItems, err := a.runTurn(context.Background(), sess, "test")
 			marker := filepath.Join(sess.CWD, "marker")
 			if callID == "fresh" {
-				if err != nil || done {
-					t.Fatalf("fresh call: done=%v error=%v", done, err)
+				if err != nil || len(terminalItems) != 0 {
+					t.Fatalf("fresh call: terminal=%v error=%v", terminalItems, err)
 				}
 				if content, err := os.ReadFile(marker); err != nil || string(content) != "executed" {
 					t.Fatalf("fresh call did not execute: %q, %v", content, err)

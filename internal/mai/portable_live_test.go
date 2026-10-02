@@ -125,12 +125,12 @@ func runPortableProviderCoding(t *testing.T, model, mode, seed string) (trial po
 			sess.ContextTokens = a.contextWindow
 		}
 		for turn := 0; turn < 20; turn++ {
-			done, err := a.runTurn(ctx, sess, instructions)
+			terminalItems, err := a.runTurn(ctx, sess, instructions)
 			if err != nil {
 				trial.Error = err.Error()
 				return
 			}
-			if done {
+			if len(terminalItems) > 0 {
 				break
 			}
 			if turn == 19 {

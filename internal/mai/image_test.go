@@ -142,8 +142,8 @@ func TestProImageToolsUseFlashAndContinueWithText(t *testing.T) {
 					backend:     &deepseekClient{httpClient: server.Client(), endpoint: server.URL, apiKey: "test", stdout: &output, requestTimeout: time.Second},
 				}
 
-				if done, err := a.runTurn(context.Background(), sess, "instructions"); err != nil || done {
-					t.Fatalf("image tool turn: done=%t err=%v", done, err)
+				if terminalItems, err := a.runTurn(context.Background(), sess, "instructions"); err != nil || len(terminalItems) != 0 {
+					t.Fatalf("image tool turn: terminal=%v err=%v", terminalItems, err)
 				}
 				saved, err := loadSession(a.sessionPath)
 				if err != nil {
@@ -153,8 +153,8 @@ func TestProImageToolsUseFlashAndContinueWithText(t *testing.T) {
 				if err := validateDeepSeekHistory(sess.History, sess.Model); err != nil {
 					t.Fatal(err)
 				}
-				if done, err := a.runTurn(context.Background(), sess, "instructions"); err != nil || !done {
-					t.Fatalf("continuation: done=%t err=%v", done, err)
+				if terminalItems, err := a.runTurn(context.Background(), sess, "instructions"); err != nil || len(terminalItems) == 0 {
+					t.Fatalf("continuation: terminal=%v err=%v", terminalItems, err)
 				}
 
 				if requests != 3 || output.String() != "Continued.\n" {

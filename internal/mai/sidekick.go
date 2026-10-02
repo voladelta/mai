@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -101,29 +100,23 @@ func (a *agent) executeSidekick(ctx context.Context, parent *session, arguments 
 	started := time.Now()
 	childCtx, cancel := context.WithTimeout(ctx, sidekickTimeout)
 	defer cancel()
-	err := worker.agent.runLoop(childCtx, worker.session, prompt)
+	terminalItems, err := worker.agent.runLoop(childCtx, worker.session, prompt)
 	if childCtx.Err() != nil {
 		err = childCtx.Err()
 	}
 	var answer string
 	if err == nil {
-		// Only read the final response, never an answer from an earlier
-		// assignment when the model ends with reasoning alone.
 		var parts []string
-		for i := len(worker.session.History) - 1; i >= 0; i-- {
-			entry, visible, parseErr := visibleTranscriptEntry(worker.session.History[i])
+		for _, item := range terminalItems {
+			entry, visible, parseErr := visibleTranscriptEntry(item)
 			if parseErr != nil {
 				err = parseErr
 				break
 			}
-			if visible && entry.Kind != "assistant" {
-				break
-			}
-			if visible {
+			if visible && entry.Kind == "assistant" {
 				parts = append(parts, entry.Text)
 			}
 		}
-		slices.Reverse(parts)
 		answer = strings.Join(parts, "\n")
 		if err == nil && strings.TrimSpace(answer) == "" {
 			err = errors.New("sidekick completed without an assistant answer")

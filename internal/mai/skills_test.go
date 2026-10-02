@@ -65,6 +65,58 @@ func TestAgentLoadsRepositorySkillsBeforeGlobalSkills(t *testing.T) {
 	}
 }
 
+func TestAgentReadsDiscoveredGlobalSkillPastInvalidLocalCopy(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		manifest     string
+		explicitOnly bool
+	}{
+		{name: "missing manifest"},
+		{name: "malformed manifest", manifest: "invalid front matter"},
+		{name: "explicit-only skill", manifest: "invalid front matter", explicitOnly: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			local, global := testSkillRoot(t), testSkillRoot(t)
+			mustWrite(t, filepath.Join(local, "demo", "guide.md"), "Local guide.")
+			if test.manifest != "" {
+				mustWrite(t, filepath.Join(local, "demo", "SKILL.md"), test.manifest)
+			}
+
+			writeTestSkill(t, global, "demo", "global-demo", "Global skill.")
+			mustWrite(t, filepath.Join(global, "demo", "guide.md"), "Global guide.")
+			if test.explicitOnly {
+				mustWrite(t, filepath.Join(global, "demo", "agents", "openai.yaml"), "policy:\n  allow_implicit_invocation: false\n")
+			}
+
+			a := &agent{stderr: io.Discard, skillsRoots: []string{local, global}}
+			instructions := a.loadSkillInstructions("Inspect files.")
+			if strings.Contains(instructions, "Global skill.") == test.explicitOnly {
+				t.Fatalf("unexpected catalog visibility:\n%s", instructions)
+			}
+
+			for _, prompt := range []string{"Inspect files.", "Use $global-demo."} {
+				instructions = a.loadSkillInstructions(prompt)
+				if strings.Contains(prompt, "$global-demo") && !strings.Contains(instructions, "# global-demo instructions") {
+					t.Fatalf("global explicit instructions missing:\n%s", instructions)
+				}
+
+				for _, read := range []struct {
+					arguments string
+					want      string
+				}{
+					{arguments: `{"path":"demo"}`, want: "# global-demo instructions"},
+					{arguments: `{"path":"demo","file":"guide.md"}`, want: "Global guide."},
+				} {
+					output := a.executeTool(context.Background(), &session{}, functionCall{Name: "read_skill", Arguments: read.arguments})
+					if !strings.Contains(string(output), read.want) {
+						t.Fatalf("read_skill(%s) after %q = %s, want %q", read.arguments, prompt, output, read.want)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestSkillDiscoveryWithMissingRootsAndBrokenRoot(t *testing.T) {
 	root := testSkillRoot(t)
 	writeTestSkill(t, root, "demo", "demo", "Available skill.")
@@ -169,6 +221,11 @@ func TestSkipSkillsBypassesDiscoveryAndExplicitLoading(t *testing.T) {
 	}
 	if warnings.Len() != 0 {
 		t.Fatalf("skill discovery produced warnings: %s", warnings.String())
+	}
+
+	output := a.executeTool(context.Background(), &session{}, functionCall{Name: "read_skill", Arguments: `{"path":"demo"}`})
+	if !strings.Contains(string(output), "# demo instructions") {
+		t.Fatalf("skip-skills prevented a known-ID read: %s", output)
 	}
 }
 

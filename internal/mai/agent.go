@@ -30,6 +30,7 @@ type agent struct {
 	sessionPath      string
 	approve          approvalFunc
 	skillsRoots      []string
+	skillRootsByID   map[string]string
 	skillsError      error
 	skipSkills       bool
 	requestTimeout   time.Duration
@@ -77,7 +78,8 @@ func newAgent(stdout, stderr io.Writer, sessionPath string, requestTimeout time.
 
 func (a *agent) run(ctx context.Context, sess *session, userPrompt string) error {
 	defer a.close()
-	return a.runLoop(ctx, sess, userPrompt)
+	_, err := a.runLoop(ctx, sess, userPrompt)
+	return err
 }
 
 func (a *agent) close() {
@@ -87,7 +89,7 @@ func (a *agent) close() {
 	}
 }
 
-func (a *agent) runLoop(ctx context.Context, sess *session, userPrompt string) error {
+func (a *agent) runLoop(ctx context.Context, sess *session, userPrompt string) ([]json.RawMessage, error) {
 	interactive := isTerminalWriter(a.stderr)
 	if interactive {
 		fmt.Fprintln(a.stderr, "→ thinking")
@@ -98,23 +100,24 @@ func (a *agent) runLoop(ctx context.Context, sess *session, userPrompt string) e
 	}
 	for turn := 0; a.maxTurns == -1 || turn < a.maxTurns; turn++ {
 		if err := ctx.Err(); err != nil {
-			return err
+			return nil, err
 		}
 		if interactive && turn > 0 {
 			fmt.Fprintln(a.stderr, "→ thinking")
 		}
-		done, err := a.runTurn(ctx, sess, instructions)
+		terminalItems, err := a.runTurn(ctx, sess, instructions)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		if done {
-			return nil
+		if len(terminalItems) > 0 {
+			return terminalItems, nil
 		}
 	}
-	return fmt.Errorf("agent stopped after %d model turns", a.maxTurns)
+	return nil, fmt.Errorf("agent stopped after %d model turns", a.maxTurns)
 }
 
 func (a *agent) loadSkillInstructions(userPrompt string) string {
+	a.skillRootsByID = nil
 	if a.skipSkills {
 		return ""
 	}
@@ -129,6 +132,7 @@ func (a *agent) loadSkillInstructions(userPrompt string) string {
 		}
 		return ""
 	}
+	a.skillRootsByID = skillContext.rootsByID
 	for _, warning := range skillContext.Warnings {
 		fmt.Fprintf(a.stderr, "mai: skill warning: %s\n", warning)
 	}
@@ -142,17 +146,18 @@ func (a *agent) emit(event map[string]any) error {
 	return writeJSONLEvent(a.events, event)
 }
 
-func (a *agent) runTurn(ctx context.Context, sess *session, instructions string) (bool, error) {
+// runTurn returns the exact terminal response, or nil after executing tool calls.
+func (a *agent) runTurn(ctx context.Context, sess *session, instructions string) ([]json.RawMessage, error) {
 	if err := a.compactIfNeeded(ctx, sess, instructions); err != nil {
-		return false, err
+		return nil, err
 	}
 	if err := a.emit(map[string]any{"type": "model.started"}); err != nil {
-		return false, err
+		return nil, err
 	}
 	modelStarted := time.Now()
 	backend := a.backend
 	if backend == nil {
-		return false, errors.New("model backend is not configured")
+		return nil, errors.New("model backend is not configured")
 	}
 	a.modelTurns++
 	result, err := backend.stream(ctx, sess, instructions)
@@ -166,9 +171,9 @@ func (a *agent) runTurn(ctx context.Context, sess *session, instructions string)
 	}
 	if err != nil {
 		if eventErr := a.emit(map[string]any{"type": "model.failed", "duration_ms": modelDuration}); eventErr != nil {
-			return false, eventErr
+			return nil, eventErr
 		}
-		return false, err
+		return nil, err
 	}
 	completed := map[string]any{"type": "model.completed", "total_tokens": result.totalTokens, "duration_ms": modelDuration}
 	if result.usage != nil {
@@ -183,7 +188,7 @@ func (a *agent) runTurn(ctx context.Context, sess *session, instructions string)
 		}
 	}
 	if err := a.emit(completed); err != nil {
-		return false, err
+		return nil, err
 	}
 	sess.History = append(sess.History, result.items...)
 	if result.totalTokens > 0 {
@@ -193,20 +198,20 @@ func (a *agent) runTurn(ctx context.Context, sess *session, instructions string)
 	}
 	if a.sessionPath != "" {
 		if err := saveJSON(a.sessionPath, sess); err != nil {
-			return false, fmt.Errorf("save assistant response: %w", err)
+			return nil, fmt.Errorf("save assistant response: %w", err)
 		}
 	}
 	calls, err := extractFunctionCalls(result.items)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	if len(calls) == 0 {
-		return true, nil
+		return result.items, nil
 	}
 	if err := a.executeCalls(ctx, sess, calls); err != nil {
-		return false, err
+		return nil, err
 	}
-	return false, nil
+	return nil, nil
 }
 
 func (a *agent) compactIfNeeded(ctx context.Context, sess *session, instructions string) error {
@@ -371,7 +376,12 @@ func (a *agent) executeReadSkill(ctx context.Context, sess *session, arguments s
 		file = "SKILL.md"
 	}
 	fmt.Fprintf(a.stderr, "→ read_skill: %s/%s\n", args.Path, file)
-	result, err := readSkill(a.skillsRoots, args.Path, args.File)
+	roots := a.skillsRoots
+	if selected, ok := a.skillRootsByID[args.Path]; ok {
+		roots = []string{selected}
+	}
+
+	result, err := readSkill(roots, args.Path, args.File)
 	if err != nil {
 		return textToolOutput(toolError("read_skill failed", err))
 	}

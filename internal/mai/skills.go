@@ -34,6 +34,7 @@ type skillSummary struct {
 type skillContext struct {
 	Instructions string
 	Warnings     []string
+	rootsByID    map[string]string
 }
 
 type skillFileResult struct {
@@ -65,8 +66,10 @@ func buildSkillContext(roots []string, userPrompt string) (skillContext, error) 
 	if err != nil {
 		return skillContext{}, err
 	}
+	rootsByID := make(map[string]string, len(skills))
 	visible := make([]skillSummary, 0, len(skills))
 	for _, skill := range skills {
+		rootsByID[skill.ID] = skill.root
 		if skill.AllowImplicit {
 			visible = append(visible, skill)
 		}
@@ -107,7 +110,11 @@ func buildSkillContext(roots []string, userPrompt string) (skillContext, error) 
 		instructions.WriteByte('\n')
 	}
 	instructions.WriteString(explicit.String())
-	return skillContext{Instructions: instructions.String(), Warnings: warnings}, nil
+	return skillContext{
+		Instructions: instructions.String(),
+		Warnings:     warnings,
+		rootsByID:    rootsByID,
+	}, nil
 }
 
 func loadSkills(roots []string) ([]skillSummary, []string, error) {

@@ -351,6 +351,80 @@ func TestSidekickPythonNamespaceSurvivesFollowupAndCloses(t *testing.T) {
 	}
 }
 
+func TestSidekickReturnsTerminalMessagesAfterFollowup(t *testing.T) {
+	for _, compact := range []bool{false, true} {
+		t.Run(fmt.Sprintf("compaction=%v", compact), func(t *testing.T) {
+			parent := deepseekTestSession(t)
+			parent.Model = "ds-pro"
+			turns, checkpoints := 0, 0
+			previousAnswer := strings.Repeat("previous assignment ", 1024)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body struct {
+					ToolChoice string `json:"tool_choice"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+					return
+				}
+
+				if body.ToolChoice == "none" {
+					checkpoints++
+					deepseekTestResponse(w, `[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Previous assignment completed."}]}]`)
+					return
+				}
+
+				turns++
+				switch turns {
+				case 1:
+					message := map[string]any{
+						"type": "message", "role": "assistant",
+						"content": []map[string]string{{"type": "output_text", "text": previousAnswer}},
+					}
+					deepseekTestResponse(w, string(mustJSON(t, []any{message})))
+				case 2:
+					deepseekTestResponse(w, `[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"intermediate answer"}]},{"type":"function_call","call_id":"inspect","name":"edit_context","arguments":"{\"action\":\"inspect\"}"}]`)
+				case 3:
+					deepseekTestResponse(w, `[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"First final message."}]},{"type":"reasoning","content":[{"type":"reasoning_text","text":"hidden reasoning"}]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Second final message."}]}]`)
+				default:
+					t.Errorf("unexpected model turn %d", turns)
+				}
+			}))
+			defer server.Close()
+
+			a := newAgent(io.Discard, io.Discard, "", time.Second, false)
+			a.skipSkills = true
+			a.backend = &deepseekClient{httpClient: server.Client(), endpoint: server.URL, stdout: io.Discard}
+			defer a.close()
+
+			output := a.executeTool(context.Background(), parent, functionCall{Name: "sidekick", Arguments: `{"task":"First assignment"}`})
+			if !strings.Contains(string(output), "previous assignment") {
+				t.Fatalf("first assignment failed: %s", output)
+			}
+
+			if compact {
+				a.sidekick.session.ContextTokens = modelContextWindow
+			}
+			args := string(mustJSON(t, map[string]string{"task": "Follow-up assignment", "worker_id": a.sidekick.session.ID}))
+			output = a.executeTool(context.Background(), parent, functionCall{Name: "sidekick", Arguments: args})
+			var encoded string
+			if err := json.Unmarshal(output, &encoded); err != nil {
+				t.Fatal(err)
+			}
+			var result sidekickResult
+			if err := json.Unmarshal([]byte(encoded), &result); err != nil {
+				t.Fatal(err)
+			}
+
+			if !result.OK || result.Answer != "First final message.\nSecond final message." {
+				t.Fatalf("follow-up returned other response content: %+v", result)
+			}
+			if turns != 3 || (checkpoints > 0) != compact {
+				t.Fatalf("turns=%d checkpoints=%d, compaction=%v", turns, checkpoints, compact)
+			}
+		})
+	}
+}
+
 func TestSidekickCannotReuseStaleAnswer(t *testing.T) {
 	parent := deepseekTestSession(t)
 	parent.Model = "ds-pro"

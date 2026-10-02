@@ -452,11 +452,11 @@ func TestAgentExecutesContextEditWithoutReplayingBash(t *testing.T) {
 	a := newAgent(io.Discard, io.Discard, filepath.Join(sess.CWD, "session.json"), time.Second, false)
 	a.backend = &deepseekClient{httpClient: server.Client(), stdout: io.Discard, endpoint: server.URL}
 	for turn := 0; turn < 3; turn++ {
-		done, err := a.runTurn(context.Background(), sess, "instructions")
+		terminalItems, err := a.runTurn(context.Background(), sess, "instructions")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if done != (turn == 2) {
+		if (len(terminalItems) > 0) != (turn == 2) {
 			t.Fatalf("unexpected completion at turn %d", turn)
 		}
 	}

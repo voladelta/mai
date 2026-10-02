@@ -37,11 +37,11 @@ func TestLiveDeepSeekResponses(t *testing.T) {
 				}
 				done := false
 				for turn := 0; turn < 4 && !done; turn++ {
-					var err error
-					done, err = a.runTurn(ctx, sess, "Follow the requested harmless tool probe exactly.")
+					terminalItems, err := a.runTurn(ctx, sess, "Follow the requested harmless tool probe exactly.")
 					if err != nil {
 						t.Fatal(err)
 					}
+					done = len(terminalItems) > 0
 					sess, err = loadSession(path)
 					if err != nil {
 						t.Fatal(err)
