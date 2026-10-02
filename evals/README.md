@@ -71,6 +71,8 @@ MAI_EVAL_MODEL=ds-flash ./evals/patch-rate.sh
 The patch probe defaults to Pro/high and checks twelve repeated-context edits.
 It reports grades and tool failures; the grader catches edits to the wrong
 similar line. The timing helper uses `jq`, separates model/tool/other duration
-and reports available cache usage. Tool execution within a Python cell counts
-toward that outer Python tool duration. Small samples and service/cache
+and reports available cache usage. Worker model and tool events count
+individually; the enclosing sidekick duration is excluded to avoid counting
+that work twice. Tool execution within a Python cell counts toward that outer
+Python tool duration. Small samples and service/cache
 variation do not establish general speed, price or quality advantages.

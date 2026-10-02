@@ -17,7 +17,8 @@ for events_path do
             [.[] | select(.type == $kind) | (.duration_ms // 0)] | add // 0;
 
         (duration("model.completed") + duration("model.failed")) as $model
-        | duration("tool.completed") as $tool
+        # Sidekick durations enclose worker events already counted here.
+        | ([.[] | select(.name != "sidekick")] | duration("tool.completed")) as $tool
         | ([.[] | select(.type == "task.completed") | .duration_ms] | last // null) as $task
         | [$path, $task, $model, $tool, (if $task == null then null else $task - $model - $tool end)]
         | @tsv
