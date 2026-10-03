@@ -12,23 +12,29 @@ run against the resulting code.
 
 ## Graded coding tasks
 
-With `DEEPSEEK_API_KEY` populated, run from the repository root:
+With `DEEPSEEK_API_KEY` populated and `jq` installed, run from the repository root:
 
 ```sh
 ./evals/run.sh
 ./evals/run.sh startup-timeout
-MAI_EVAL_MODEL=ds-pro ./evals/run.sh
+MAI_EVAL_MODEL=ds-flash ./evals/run.sh
 ```
 
 The runner builds Mai once, creates fresh Git projects and uses
-`--jsonl --no-input`. It defaults to Flash/high. `MAI_EVAL_BIN` selects an
+`--jsonl --no-input --skip-skills`. It defaults to Pro/high, matching Mai's
+default, with its Flash/high sidekick available. Skills are disabled so local
+and global skill catalogs do not change the tasks. `MAI_EVAL_BIN` selects an
 existing binary; `MAI_EVAL_MODEL` selects a supported model. These runs make
 paid API requests. The printed result directory contains events, stderr, final
 workspace, diff and grader output, including failures.
 
-Model/tool request counts and wall time accompany each grade. Nonzero tool
-results include intentional regression failures. Three cases are a functional
-smoke suite, not a statistical performance benchmark. Review the diffs too.
+Model request counts include completed and failed requests, including sidekick
+worker requests. Tool counts and wall time accompany each grade. Nonzero tool
+results are decoded from each JSONL tool output's top-level `ok` field and
+include intentional regression failures. Sidekick worker events count too;
+Python host calls are represented by the outer Python tool event. Three cases
+are a functional smoke suite, not a statistical performance benchmark. Review
+the diffs too.
 Do not treat `model.completed.total_tokens` as billable usage; sum available
 input/output/cache fields and checkpoint usage when measuring API work.
 
@@ -73,10 +79,11 @@ MAI_EVAL_MODEL=ds-flash ./evals/patch-rate.sh
 ```
 
 The patch probe defaults to Pro/high and checks twelve repeated-context edits.
-It reports grades and tool failures; the grader catches edits to the wrong
-similar line. The timing helper requires `jq` and reports task, model, tool and
-remaining duration in milliseconds. Cache usage is available in the JSONL
-events, rather than in the timing table. Worker model and tool events count
+Both coding runners require `jq` and exit nonzero when any case fails.
+The patch probe reports grades and tool failures; the grader catches edits to
+the wrong similar line. The timing helper requires `jq` and reports task,
+model, tool and remaining duration in milliseconds. Cache usage is available
+in the JSONL events, rather than in the timing table. Worker model and tool events count
 individually; the enclosing sidekick duration is excluded to avoid counting
 that work twice. Tool execution within a Python cell counts toward that outer
 Python tool duration. Small samples and service/cache

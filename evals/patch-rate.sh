@@ -14,6 +14,7 @@ if [ -z "${MAI_EVAL_BIN:-}" ]; then
 fi
 
 printf 'target\tgrade\tseconds\trequests\ttools\tnonzero_tools\n'
+overall=0
 
 for target in \
     HandshakeTimeout StartupTimeout ShutdownTimeout RetryTimeout \
@@ -26,5 +27,11 @@ do
         grade=wrong-edit
     fi
 
+    if [ "$grade" != pass ]; then
+        overall=1
+    fi
+
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$target" "$grade" "$seconds" "$requests" "$tools" "$nonzero_tools"
 done
+
+exit "$overall"
