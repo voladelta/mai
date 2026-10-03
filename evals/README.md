@@ -35,7 +35,7 @@ input/output/cache fields and checkpoint usage when measuring API work.
 ## Responses conformance
 
 ```sh
-MAI_LIVE_DEEPSEEK_RESPONSES=1 go test -v ./internal/mai -run '^TestLiveDeepSeekResponses$' -count=1 -timeout=10m
+MAI_LIVE_DEEPSEEK_RESPONSES=1 go test -v ./internal/mai -run '^TestLiveDeepSeek(Responses|Sidekick)$' -count=1 -timeout=20m
 ```
 
 This paid probe runs Flash and Pro at low, high and max effort. Each trial runs
@@ -45,6 +45,10 @@ Reasoning items are replayed when returned; simple requests can omit them.
 This tests protocol conformance, not coding performance. Deterministic tests
 cover incomplete streams, malformed tools, credential isolation, timeouts,
 model/effort selection, original-history recall and image preservation.
+
+The sidekick probe checks Pro/high and Pro/max directing a Flash/high worker
+through two assignments, with Bash execution and recall from its separate
+conversation.
 
 ## Coding and context continuity
 
@@ -70,8 +74,9 @@ MAI_EVAL_MODEL=ds-flash ./evals/patch-rate.sh
 
 The patch probe defaults to Pro/high and checks twelve repeated-context edits.
 It reports grades and tool failures; the grader catches edits to the wrong
-similar line. The timing helper uses `jq`, separates model/tool/other duration
-and reports available cache usage. Worker model and tool events count
+similar line. The timing helper requires `jq` and reports task, model, tool and
+remaining duration in milliseconds. Cache usage is available in the JSONL
+events, rather than in the timing table. Worker model and tool events count
 individually; the enclosing sidekick duration is excluded to avoid counting
 that work twice. Tool execution within a Python cell counts toward that outer
 Python tool duration. Small samples and service/cache

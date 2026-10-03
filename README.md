@@ -2,513 +2,308 @@
 
 ![mai project banner](assets/mai-banner.png)
 
-Mai is a small coding agent for macOS and Linux, built in Go. It uses the
-DeepSeek Responses API for streaming, reasoning and function tools. Portable
-checkpoints keep long tasks moving while original history remains searchable.
+**Give a repository task to a small Go agent, then pick it up later with
+searchable history and portable checkpoints.**
 
-The agent has 6 general tools, plus a sidekick tool on Pro:
+Mai runs on macOS and Linux and uses the DeepSeek Responses API. It can read
+code, edit files, run checks, and return a final answer from your terminal.
 
-- `bash` reads files, searches code and runs commands
-- `python` explores data and task history in a persistent Python namespace
-- `apply_patch` creates, changes, moves and deletes files
-- `read_skill` loads a skill's complete `SKILL.md`, or a required supporting file when `file` is provided
-- `view_image` shows a local image to the model
-- `edit_context` shortens successful Bash stdout in future model requests while keeping the original searchable
-- `sidekick` lets Pro direct a synchronous Flash/high worker and follow up in its separate conversation
+[![Go 1.27+](https://img.shields.io/badge/Go-1.27%2B-00ADD8)](go.mod)
+[![Version 0.1.0](https://img.shields.io/badge/version-0.1.0-blue)](internal/mai/app.go)
 
-Skills are read from `agents/skills` in the current repository, then from
-`~/.agents/skills`. Repository skills take priority when a directory id or skill
-name matches. When launched from a subdirectory, Mai uses the Git repository
-root; outside Git, it uses the current working directory. Missing skill
-directories are ignored. Each model request includes
-all eligible skill names and descriptions, then loads a complete `SKILL.md` only
-when needed. Each skill description must be 1,024 characters or fewer.
-Set `disable-model-invocation: true` in `SKILL.md` YAML front matter to hide
-a skill from automatic selection; an explicit `$skill-name` still loads it.
-Omitting the field or setting it to `false` allows automatic selection unless
-`policy.allow_implicit_invocation` is `false` in `agents/openai.yaml`.
-Use `-s` or `--skip-skills` to skip skill discovery for one run, including
-resolution of explicit `$skill-name` mentions. The flag also works with
-`--last` and must be passed again on each resumed run. The `read_skill` tool
-remains available when you know a skill's directory id.
-Images use typed image output; other binary files are rejected.
-
-The DeepSeek Responses backend uses server-sent events (SSE). The Go standard library
-provides everything it needs, so the project has no third-party dependencies.
-
-## Requirements
-
-You need Go 1.27 or later and a populated `DEEPSEEK_API_KEY` environment
-variable. Python 3.9 or later is optional for the persistent Python tool.
-No Node runtime, SDK or third-party Go dependency is required.
-
-## Build and install mai
-
-```bash
-cd ~/Codehub/mai
-go build -o mai ./cmd/mai
-```
-
-Move the `mai` binary to a directory in your `PATH` if you want to run it from
-any directory.
-
-To install it into your Go binary directory instead, run:
-
-```bash
+```sh
+git clone https://github.com/voladelta/mai.git
+cd mai
 go install ./cmd/mai
 ```
 
-## Start a task
+Requires Go 1.27+ to build and `DEEPSEEK_API_KEY` to run tasks.
+See [Installation](#installation) for binary location and `PATH` setup.
 
-Run `mai` from the repository you want it to work on:
+[Quick start](#quick-start) · [CLI](docs/cli.md) · [Tools](docs/tools.md) ·
+[Sessions](docs/sessions.md) · [JSONL events](docs/events.md) · [Evals](evals/README.md)
 
-```bash
-mai "add tests for the parser"
-```
+## Why Mai?
 
-Tasks are stateless by default. A normal run does not write mai settings or
-conversation history.
+Repository work often spans several tool calls and follow-up requests. Mai
+keeps that work in a terminal workflow: start a task, let the agent inspect and
+change the code, then save the conversation when you need to return to it.
 
-Use `--persist` to save a new task in the current project:
-
-```bash
-mai "add tests for the parser" --persist
-```
-
-Resume the current saved task in that project with `--last`:
-
-```bash
-mai "now fix the failing test" --last
-```
-
-`--last` restores the original working directory, model, effort, and conversation
-history. Two processes cannot use the same saved task at the same time. Other
-saved tasks can run at the same time.
-
-Run `mai` without a prompt to show concise usage text. Run `mai --help` for all
-options.
-
-## JSONL events
-
-Use `--jsonl` to write one JSON event per line on standard output:
-
-```bash
-mai "add tests for the parser" --jsonl > run.jsonl
-```
-
-Events include `task.started`, `model.started`, `model.delta`,
-`model.completed`, `model.failed`, `compaction.completed`, `tool.started`, `tool.completed`,
-`task.completed`, and `error`. Model text is
-reported in `model.delta` events instead of being printed directly. Progress
-messages remain on standard error. A `tool.completed` event includes its output
-up to 256 KiB; larger outputs report `output_bytes` and `output_omitted` instead.
-Completed model, tool, and task events include `duration_ms` for elapsed time.
-Completed model events also include `input_tokens`, `output_tokens`, and
-`cached_input_tokens` when the backend supplies them. Missing fields mean
-unavailable; `total_tokens` keeps its existing context-size meaning.
-`compaction.completed` includes elapsed time and a `usage` object with the
-backend's available token fields, so checkpoint generation can be counted too.
-Model duration covers the full model request.
-Tool duration covers execution of that call; task duration covers the agent run.
-The default output remains human-readable.
-
-## Choose a model
-
-New tasks use `ds-pro` with high effort and a Flash/high sidekick available.
-Use `--f` for Flash/high without the sidekick tool, or `--max` for Pro/max.
-The sidekick always uses Flash/high, including when the director uses max.
-`-m ds-flash` and `-m ds-pro` explicitly select a model with high effort;
-`-m ds-pro --max` selects Pro/max. Conflicting selections are rejected.
-
-### DeepSeek Responses
-
-Selecting `ds-flash` or `ds-pro` automatically uses
-`https://api.deepseek.com/responses`. No provider flag is needed.
-Set `DEEPSEEK_API_KEY` in your environment before running:
-
-```sh
-mai "add useful tests for the parser" --f --persist
-mai "continue the task" --last --max
-mai "review this implementation" --max
-```
-
-| CLI mode | API model | Effort |
+| Capability | What it gives you | Try it |
 | --- | --- | --- |
-| Default | `deepseek-v4-pro` | `high` |
-| `--max` | `deepseek-v4-pro` | `max` |
-| `--f` | `deepseek-flash` | `high` |
+| Repository work | Bash, structured patches, and local image inspection. | `mai "fix the empty-input crash and run tests"` |
+| Saved tasks | Resume the original directory, model, effort, and conversation. | `mai "continue the fix" --last` |
+| Model selection | Pro/high by default, Pro/max or Flash/high when selected. | `mai "review this refactor" --max` |
+| Pro sidekick | One Flash/high worker with its own conversation for bounded assignments. | [Sidekick behavior](docs/tools.md#pro-sidekick) |
+| Searchable history | Recall original visible text after context editing and compaction. | [Python history search](docs/tools.md#persistent-python) |
+| Repository skills | Load project instructions before global skills, with explicit skill selection. | `mai 'Use $my-skill to review this package'` |
+| Script output | Stream task, model, and tool events as JSON Lines. | `mai "review this package" --jsonl --no-input > run.jsonl` |
 
-Responses stream through the existing text and function-tool flow. Mai replays
-the full local history, including DeepSeek's plain reasoning between tool calls;
-the API does not retain conversations. Each request allows up to 32,768 output
-tokens, including reasoning. Credentials stay in the environment.
-Saved tasks retain their model and effort, including older low-effort tasks.
-Use `--last --f` to switch to Flash/high, `--last --max` to switch to Pro/max,
-or `--last -m ds-pro` to switch to Pro/high. Pro rejects image-bearing history.
+The Go runtime uses only the standard library. Python is optional and starts
+only when the model calls its tool.
 
-DeepSeek uses portable compaction automatically, at 80% of a default
-1,000,000-token budget. Set `MAI_CONTEXT_WINDOW` to a smaller input budget
-between 32,768 and 1,000,000 if needed.
-`MAI_DEEPSEEK_URL` overrides the complete Responses URL for local testing.
-HTTPS is required except for loopback.
+## Quick start
 
-Flash accepts inline image output from `view_image` and `read_skill`. On Pro,
-both tools send images to Flash for a task-relevant description and return only
-labeled text to Pro. Each image adds one Flash request at low reasoning effort,
-using the configured endpoint and request timeout. Descriptions include source
-metadata and usage when available, and mark their interpretation as unverified.
-Description failures return text tool errors without adding images to Pro history.
-Responses image parts can reference existing Files API `file_id`
-values, but Mai does not upload or manage remote files. Portable checkpoints
-currently handle text histories: an older image-bearing message or tool output
-cannot be silently compacted and requires a new task or a text-only history.
+After installing Mai:
 
-KV caching is automatic on DeepSeek. Mai sends no unsupported cache-key or
-server conversation fields, and reports cached input tokens when supplied.
-See the [Responses guide](https://api-docs.deepseek.com/guides/responses_api/),
-[thinking guide](https://api-docs.deepseek.com/guides/thinking_mode/), and
-[cache behavior](https://api-docs.deepseek.com/guides/kv_cache/).
+1. Set your API key in the shell that will launch it:
 
-### Portable compaction
+   ```sh
+   export DEEPSEEK_API_KEY='your-api-key'
+   ```
 
-Mai uses readable, model-authored continuity checkpoints. The Go context owner
-keeps the current user turn and exact tool results. Checkpoints preserve goals,
-corrections, unresolved outcomes and history search anchors. Consecutive
-identical log lines are encoded with occurrence counts; unique records are
-folded in bounded chunks. Summary requests cannot execute tools. Invalid
-summaries leave session state unchanged.
+2. Change into the repository you want Mai to work on:
 
-Keep full history while it fits. Checkpoints can add generation time and reduce
-prompt-cache reuse, so smaller requests do not automatically mean lower cost.
+   ```sh
+   cd /path/to/your/repository
+   ```
 
-## Choose execution mode
+3. Start a task, inspect the changes, and continue the saved conversation:
 
-New tasks default to Pro/high. Use `--max` for deeper Pro reasoning or `--f`
-for Flash/high. There is no separate effort selector: `-e` and `--effort`
-are no longer supported. A saved task keeps its model and effort on `--last`
-unless you explicitly select a mode:
+   ```sh
+   mai "fix the parser's empty-input crash and run the relevant tests" --persist
+   git diff
+   mai "review the fix for edge cases" --last
+   git diff --check
+   mai --help
+   ```
+
+Replace the key and repository path with your own values. Task commands make
+paid DeepSeek API requests.
+
+Tasks are stateless by default. Use `--persist` to save a new task and `--last`
+to resume the current saved task in the same project. Only one process can use
+a particular saved task at a time.
+
+## Installation
+
+### Requirements
+
+- **macOS or Linux**, with `/bin/bash` for the Bash tool.
+- **Go 1.27 or later** to build from source.
+- **A DeepSeek API key** in `DEEPSEEK_API_KEY` for task execution.
+- **Git** for repository-root discovery. Without it, the working directory is
+  the repository boundary.
+- **Python 3.9 or later**, optional, for persistent Python cells.
+- **jq**, optional, for the eval timing helper.
+
+No Node runtime, SDK, or third-party Go dependency is required.
+
+### Install from a checkout
 
 ```sh
-mai "refactor this package"
-mai "continue the refactor" --last --max
-mai "quick local fix" --f
+git clone https://github.com/voladelta/mai.git
+cd mai
+go install ./cmd/mai
 ```
 
-## Timeouts and interactive input
+Go installs into `GOBIN` when set, otherwise `$(go env GOPATH)/bin`. Add that
+directory to your shell's `PATH`. For the default Go binary directory:
 
-Each run allows up to 64 model turns by default. Use `--max-turns` with a
-positive integer to set a different limit, or `-1` to run without a turn cap
-until Mai finishes, encounters an error, or is interrupted:
+```sh
+export PATH="$(go env GOPATH)/bin:$PATH"
+mai --version
+```
 
-```bash
+### Build a local binary
+
+From the cloned repository:
+
+```sh
+go build -o mai ./cmd/mai
+./mai --help
+```
+
+Move the binary into a directory on `PATH` to use it from other projects.
+
+### Run from source
+
+From the cloned repository, show help without installing a binary:
+
+```sh
+go run ./cmd/mai --help
+```
+
+When running a task this way, the clone is the working repository. Use an
+installed or built binary to work in another project.
+
+## Models and commands
+
+```sh
+mai "add useful tests for the parser"              # Pro/high
+mai "review the implementation carefully" --max   # Pro/max
+mai "explain this package" --f                    # Flash/high
+mai "continue the saved task" --last --max        # Resume with Pro/max
+```
+
+| Selection | API model | Reasoning effort | Sidekick |
+| --- | --- | --- | --- |
+| Default or `-m ds-pro` | `deepseek-v4-pro` | High | Flash/high |
+| `--max` | `deepseek-v4-pro` | Max | Flash/high |
+| `--f` or `-m ds-flash` | `deepseek-flash` | High | None |
+
+A saved task keeps its model and effort unless you select another mode.
+Conflicting selections are rejected. There is no separate `--effort` flag.
+
+The default run limit is 64 model turns. Increase it or use `-1` for unlimited
+turns until completion, error, or interruption:
+
+```sh
 mai "complete the migration" --max-turns 128 --persist
-mai "continue the migration" --last --max-turns 128
-mai "finish the migration" --max-turns -1 --persist
+mai "continue the migration" --last --max-turns -1
+mai "review this package" --jsonl --no-input > run.jsonl
 ```
 
-A turn is one model request and execution of its returned tool calls. A final
-answer also consumes a turn. The limit applies to the current run and is not
-saved; `--last` defaults to 64 unless you pass `--max-turns` again. When the
-limit is reached, Mai stops with an error after saving completed work for a
-persisted task, which you can continue with `--last`.
+See the [CLI reference](docs/cli.md) for every option, examples, and timeouts.
 
-Each DeepSeek Responses request has a 10-minute time-to-first-byte and idle timeout. Each
-received stream chunk restarts the idle timer, so an active response can run
-longer than 10 minutes. Set a different positive Go-style duration when necessary:
+## Configuration
 
-```bash
-mai "investigate the failure" --timeout 20m
+Mai reads environment variables and CLI options; it has no settings file.
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `DEEPSEEK_API_KEY` | Required credential for task requests. | Unset |
+| `MAI_DEEPSEEK_URL` | Complete Responses endpoint; HTTPS required except for loopback. | `https://api.deepseek.com/responses` |
+| `MAI_CONTEXT_WINDOW` | Input context budget, from 32,768 to 1,000,000 tokens. | `1000000` |
+| `MAI_PYTHON` | Executable for the optional persistent Python tool. | `python3` |
+
+For example, lower the context budget and give each Python cell five minutes:
+
+```sh
+MAI_CONTEXT_WINDOW=65536 mai "investigate the failure" --cell-timeout 5m
 ```
 
-Failed requests return an error. Mai does not automatically replay a failed
-request or tool call.
+The API credential is read from the environment and is not copied into saved
+task state or Mai's own logs. Shell commands run by the agent inherit its OS
+access and can access that environment.
 
-Each Python cell has a separate 10-minute wall-clock limit. Change it with
-`--cell-timeout`; `--timeout` controls model requests.
+## Design and architecture
 
-Each `bash` result reports its duration and original output byte counts. Mai
-keeps at most 64 KiB from each stream. For longer output, it preserves the
-beginning and end and reports the omitted byte count. When a stream is
-truncated, the result includes a `stdout_capture_path` or
-`stderr_capture_path` to a private temporary file containing the complete
-stream up to a 32 MiB per-stream capture limit. `capture_truncated` reports
-when that limit is reached, and `capture_error` reports a disk capture failure.
+Mai follows four principles:
 
-Use `--no-input` in scripts and other non-interactive environments. If a command
-needs approval, `mai` rejects it instead of opening a terminal prompt.
+- **Keep the runtime small.** A Go binary owns the model loop, tools, and local
+  state; optional Python supports exploration.
+- **Save only when asked.** A normal run leaves no saved conversation.
+  `--persist` and `--last` use project-local state.
+- **Keep original evidence accessible.** Context editing shortens successful
+  Bash stdout for requests; history search still reads the original text.
+- **Make recovery explicit.** Failed requests and interrupted tool calls are
+  never replayed automatically.
 
-The `view_image` tool reads a PNG, JPEG, or GIF inside the repository and sends
-it as typed image content to the model. Files are limited to 8 MiB and 8,192
-pixels per side.
-
-### Persistent Python
-
-The optional `python` tool starts a Python subprocess on its first cell. Install
-Python 3.9 or newer on `PATH`, or set `MAI_PYTHON` to a Python executable. An active
-virtual environment works through `PATH`. Mai does not install Python packages.
-For example, use `MAI_PYTHON=python3.14 mai "explore sales.csv"` to select Python 3.14.
-Use `MAI_PYTHON=python3.14t` to select an installed free-threaded build. The default
-remains `python3`.
-
-Send `{"code":"..."}` to execute a cell or `{"reset":true}` to discard the
-environment. Imports, variables, functions, and SQLite connections remain between
-cells. The last expression is printed unless its value is `None`. Use standard
-library `csv` and `sqlite3`, or packages already installed in the chosen environment.
-For exploration, prefer read-only SQLite connections and selected summaries of
-large datasets. Each cell uses the `--cell-timeout` limit and the same 64 KiB per-stream
-head-and-tail output limits as Bash. Tracebacks are part of stderr.
-
-Cells support top-level `await`, `async for`, and `async with`. Sync and async
-cells execute on the same Python thread, so SQLite connections remain usable.
-One event loop persists between async cells; synchronous `asyncio.run(...)`
-snippets still work. A returned awaitable is printed as a value unless the code
-explicitly awaits it.
-
-The preloaded `mai` module calls the existing Go tools:
-
-```python
-listing = await mai.bash("rg --files", timeout_ms=10_000)
-paths = listing["stdout"].splitlines()
-len(paths)
+```text
+Prompt + CLI options
+         |
+         v
+Go agent loop <----> DeepSeek Responses API (streaming)
+         |
+         +--> Bash / patches / skills / images / context editing
+         +--> Optional persistent Python --> Go tool bridge
+         +--> Pro sidekick --> Flash/high agent (synchronous)
+         |
+         +--> Terminal text or JSONL events
+         +--> With --persist / --last: .mai/ session + history archive
 ```
 
-Search this task's visible conversation and tool history from Python:
+Mai sends local conversation history, including plain reasoning, with model
+requests. At 80% of the context budget it builds a readable checkpoint. The
+original visible history remains searchable; checkpoints are model-authored
+summaries, so useful details may still need retrieval.
 
-```python
-found = await mai.history("release date", limit=5)
-for item in found["matches"]:
-    print(item["index"], item["kind"], item["text"])
-```
+| Approach | Repository workflow | Continuity | Execution |
+| --- | --- | --- | --- |
+| Mai | Model chooses tools, edits files, and runs checks. | Optional saved tasks, checkpoints, and history search. | Go harness runs tools locally. |
+| Direct API script | You implement the tool loop and integrations. | You implement storage and context management. | Your script dispatches operations. |
+| Manual terminal work | You inspect, edit, and run every command. | You keep notes and shell history. | You run each operation yourself. |
 
-To continue when a query has more than one page of matches:
+## Limits and safety
 
-```python
-page = await mai.history("release date")
-while True:
-    for item in page["matches"]:
-        print(item["index"], item["text"])
-    if page.get("next") is None:
-        break
-    page = await mai.history("release date", start=page["next"])
-```
+Bash and Python are **not sandboxed**. The patch tool enforces repository
+boundaries, and Mai asks for approval for recognizable `rm` commands with
+external or unresolved targets. That check covers `rm` only; other commands
+can overwrite or delete data. `--no-input` rejects approval requests.
 
-Search uses a case-insensitive literal substring. Start with short distinctive
-text, then refine. The query `recovery code` can find "recovery code for ticket
-H-1"; `recovery code ticket` cannot. Search returns up to 20 matches in task
-order, a `total` match count, an optional `next` index, and each entry's index
-in the current transcript. `start` is an inclusive,
-zero-based transcript index. Each text excerpt is at most 2,048 Unicode code
-points. Prompts, assistant text, tool calls, and tool results remain searchable
-after conversation compaction and `--last`. Opaque reasoning, compaction
-payloads, and image data are excluded. A saved task created before this feature
-can search its current history; content removed by an earlier compaction cannot
-be recovered. Search results are copies, so editing one does not change Mai's
-history.
+- Pro cannot accept image-bearing history. Its image tools ask Flash for a
+  labeled description; Flash can receive inline images directly.
+- Portable compaction currently handles text histories. Older image-bearing
+  records may require a new task or text-only history.
+- Python variables and sidekick conversations last for one run.
+  `--last` restores conversation history, not those runtime environments.
+- Sidekick execution is synchronous, with one worker and 32 total model turns.
+- There is no mid-turn steering or automatic retry of failed work.
+- Saved tasks must use the supported state format; incompatible older files
+  require a new task.
+- Smaller contexts and checkpoints can add model requests and change cache
+  reuse. The included evals do not establish general speed or cost advantages.
 
-For saved tasks, compacted visible text is stored in a `.transcript.jsonl` file
-beside the session JSON. Older saved tasks migrate their inline transcript on
-the next compaction. Keep both files when moving or backing up a saved task.
+See [Tools and skills](docs/tools.md#safety) for execution boundaries and
+[Sessions and context](docs/sessions.md) for storage and recovery details.
 
-`await mai.apply_patch(patch)` applies a repository patch. Host calls use the
-same validation, approvals, and repository boundaries as direct tool calls.
-Host operations run in sequence, with at most eight pending requests and 64
-effectful calls per cell.
-Read-only history searches do not consume that budget.
-The bridge accepts calls only from the cell's Python thread. It does not expose
-recursive Python calls.
+## Troubleshooting
 
-State survives conversation compaction, but ends when Mai exits. `--last` restores
-conversation history only; it starts a new Python environment. Results report the
-kernel generation (local to this run), whether it is fresh, and whether state was
-lost. Reset is lazy: the next cell starts the next generation. Save explicit files
-for durable work; Mai does not snapshot variables or replay cells.
+| Symptom | Action |
+| --- | --- |
+| `mai: command not found` | Add `GOBIN`, or the default Go binary directory, to `PATH`; use `./mai` for a local build. |
+| `DeepSeek requires DEEPSEEK_API_KEY` | Export the key in the shell launching Mai. |
+| `no saved task in this project` | Start with `--persist`, then resume from the same project. |
+| `session ... is already running` | Wait for the process using that task to exit, or start a separate task. |
+| `agent stopped after 64 model turns` | Resume a persisted task with a larger `--max-turns` value or `-1`. |
+| `Python is unavailable` | Install Python 3.9+ on `PATH`, or set `MAI_PYTHON`. |
+| `DeepSeek Pro does not support images` | Use `--last --f` for image-bearing history, or start a new Pro task. |
+| `DeepSeek Responses request failed (network or timeout)` | Check connectivity and the endpoint; raise `--timeout` if needed. |
 
-Results include the Python version, executable, and GIL status. Tracebacks use
-cell filenames such as `<mai:g2:c7>`; a bounded source cache retains recent cell
-text. In persisted tasks, Mai journals nested host calls before dispatch and
-saves their results. The outer Python result includes bounded activity summaries;
-large arguments and results are abbreviated, with omitted activities counted.
-An interrupted pending operation has an unknown outcome on resume; it is never
-replayed automatically.
+An interrupted tool call has an unknown outcome on resume. Inspect its file
+and command effects before repeating work that may already have happened.
 
-An exception can leave partial changes in the namespace. A timeout, cancellation,
-or kernel failure discards it and stops owned processes. Owner-lifetime watchers
-also stop the Python and Bash process groups if Mai is forcibly
-killed. Descendants that deliberately leave those process groups are outside this
-cleanup. External effects can remain; failed cells are never retried automatically.
-Python is not sandboxed and has Mai's OS access. Interactive input is unsupported.
+## FAQ
 
-Await all async work before returning. Mai cancels remaining cell tasks and waits
-for active host calls to finish; the cell timeout discards a kernel that cannot
-finish cleanup. Cells must finish scheduled callbacks, background threads, and
-subprocess work before returning; output from work left running cannot be
-attributed reliably. Native libraries must flush their own buffered output before
-the cell returns.
+### Does Mai save every conversation?
 
-### Pro sidekick
+No. Use `--persist` for a new saved task; ordinary runs are stateless.
 
-Pro can call `sidekick` with a bounded `task` and optional `context`. The
-harness runs a Flash/high agent through the same model/tool loop and returns
-its final answer. Pro keeps responsibility for planning, integration and final
-verification. Delegation is optional; no worker starts until Pro calls the tool.
+### Where are saved tasks stored?
 
-Each run supports one worker. The result includes `worker_id`; supply it with
-the next `task` to follow up in the same worker conversation. The worker shares
-the parent's working directory, repository boundary and approval rules, but
-has separate history and a separate Python namespace. Only explicit task
-context is sent; the parent's full conversation is not copied. Execution is
-synchronous, so the director and worker do not execute tools concurrently.
+Under `.mai/` at the Git repository root, or in the working directory outside
+Git. Keep the session JSON and transcript archive together when backing up a task.
 
-The worker has 32 model turns total across assignments and a 10-minute
-wall-clock deadline per call. Parent interruption cancels worker execution.
-Results include cumulative turn and available usage counts, the number of usage
-reports, call duration and answer truncation when needed. Usage includes model
-turns and checkpoint reports; unavailable usage is not counted. JSONL worker
-model/tool events carry `worker_id`, including streamed text. Progress logs
-are labeled on stderr. A failed worker cannot be continued; its file and
-command effects may remain, so inspect them before assigning replacement work.
+### Can I switch models when resuming?
 
-Worker history and its Python namespace last only for the current parent run.
-The worker does not persist a task or change `.mai/current`; a persisted parent
-saves the returned tool result. Worker IDs expire after restart, and interrupted
-assignments are never replayed automatically. The worker has no sidekick tool
-and is instructed not to delegate. Bash remains unsandboxed, so this policy
-does not prevent arbitrary subprocess launches.
+Yes: use `--last --f`, `--last --max`, or `--last -m ds-pro`.
+Pro rejects image-bearing history.
 
-### Delegation through the CLI
+### Do I need Python?
 
-When delegation is authorized, the model can launch another ordinary Mai run
-through `bash` or Python's `subprocess`. Install `mai` on `PATH`, or use the
-binary's absolute path. For example:
+Only for the persistent Python tool. Bash, patches, skills, and image tools
+work through Go. Mai does not install Python packages.
 
-```bash
-mai --f --no-input --max-turns 32 -- "Act as a reviewer. Inspect the current diff, report actionable findings, and do not change files or delegate further."
-```
+### Do Python variables survive compaction or restart?
 
-Supply a complete task, role, and file scope in the prompt. Each run starts
-with fresh conversation history and discovers skills normally. It inherits
-the working directory and environment, including API credentials. Model,
-effort, and turn limits use CLI defaults unless passed explicitly. Choose
-`--f`, `--max` or `-m` explicitly to avoid relying on the default model.
+They survive compaction within a run. Exiting Mai, including before `--last`,
+ends the Python environment.
 
-Use stateless runs for delegation so they do not change `.mai/current` or
-contend for the parent's saved task. Wait for completion, capture stdout and
-stderr, and inspect effects before retrying an interrupted run. For concurrent
-work, give each run separate file ownership or a separate workspace.
+### Does the sidekick run in parallel?
 
-Nested runs share the enclosing tool's lifetime: Bash defaults to two minutes
-and allows up to ten minutes through `timeout_ms`; Python uses `--cell-timeout`.
-The nested run's `--timeout` controls its model requests and does not extend
-the enclosing tool's deadline. Python subprocesses must finish before the cell
-returns. Mai provides no dedicated role configurations, background handles,
-child journals, or enforced recursion limit for these ordinary CLI runs.
+No. Pro waits for its Flash/high worker, then integrates the result. The worker
+has a separate conversation and Python namespace.
 
-## Authentication
+### Can I use Mai in scripts?
 
-Mai reads `DEEPSEEK_API_KEY`. Credentials are not copied into saved task state
-or logs.
+Yes: use `--jsonl --no-input`. Progress goes to stderr, events to stdout.
+See [JSONL events](docs/events.md) for usage fields and timing rules.
 
-## Saved tasks
+## About contributions
 
-`mai` has no global settings or session file. When you use `--persist`, it stores
-project-local state under the repository root:
+For repository changes, describe the problem, resulting behavior, and checks
+you ran. From the repository root, the local checks are:
 
-- `.mai/current` contains the current session ID
-- `.mai/sessions/<session-id>.json` contains one task and its history
-- `.mai/locks/<session-id>.lock` prevents concurrent use of one task
-
-For a directory outside Git, `.mai` is stored in the working directory. Mai
-creates `.mai/.gitignore` so Git does not add the saved state. State directories
-use permission mode `0700`. State files use mode `0600`.
-
-Saved state uses the current format only. Older task files are unsupported;
-start a new task after this state-format change.
-
-Each persisted task has a separate session file. Starting concurrent tasks does
-not replace their history. An atomic update to `current` selects the task that a
-later `--last` command will resume.
-
-Saved history includes completed responses and plain DeepSeek reasoning.
-Reasoning is replayed across tool turns; opaque encrypted history is unsupported.
-Effort changes are sent at the request's top level, without rewriting earlier
-history. DeepSeek caching is automatic and depends on matching prefixes and
-cache lifetime. Mai does not send server-side conversation IDs or cache keys.
-
-Model tool calls run in sequence. Python cells can await host tools, whose
-operations also run in sequence. Mid-turn steering is not enabled.
-
-Mai tracks the active context size reported by DeepSeek. The default budget is
-1,000,000 tokens; `MAI_CONTEXT_WINDOW` can lower it.
-At 80% of the budget, Mai builds a portable checkpoint before the next model
-request. Saved tasks commit replacement history before continuing. Original
-visible text is archived separately for `mai.history` and `--last`; the archive
-grows with the task.
-
-### Context editing
-
-Mai provides a native Go `edit_context` tool. The model can inspect eligible
-outputs, then propose a shorter stdout summary using the returned call ID and
-digest. Each batch accepts at most eight edits. Summaries must contain 1 to
-16,384 bytes and reduce estimated request size. Digests reject stale edits, and
-Mai saves an accepted batch before using it. At 50% of the context budget, a
-request-tail reminder supplies current handles for up to eight outputs since
-the last assistant answer, with at least 16 KiB of stdout. The model can shrink
-these directly, then continue the task. The reminder leaves the system
-instructions and preceding history intact; actual cache reuse still depends on
-which output is edited.
-
-This first version edits only successful Bash stdout. It preserves stderr,
-exit status, capture paths, call IDs, item order, user instructions and
-reasoning items. Failed, timed-out, interrupted, and other tool
-outputs are not eligible. Summaries are explicitly marked as model-authored;
-they are not fresh tool evidence. Mai validates structure and size, not whether
-the model preserved every useful fact.
-
-The session stores original history plus a separate projection. `mai.history`
-continues to search original stdout, including after `--last` and
-compaction. Compaction uses the projected request, archives the original visible
-history, and clears the superseded projection. No command is undone or replayed.
-No Node runtime or bridge is involved.
-
-Context editing can change prompt-cache reuse and add model calls. Reduced
-request size alone does not establish faster or cheaper task completion.
-At the context threshold, Mai builds a portable checkpoint.
-
-## Safety
-
-`apply_patch` can only change files inside the repository. It rejects paths and
-symbolic links that lead outside the repository.
-
-`bash` can run any command available to your shell. It is not sandboxed.
-
-`mai` checks recognisable `rm` commands before it runs them. It asks for approval
-when a target is outside the repository or cannot be resolved safely.
-
-Approval is only interactive when standard input is a terminal and `--no-input`
-is not set.
-
-This check only covers `rm`. Other shell commands can still delete or overwrite
-data.
-
-## Test the project
-
-```bash
+```sh
 go test -race ./...
 go vet ./...
 ```
 
-With `DEEPSEEK_API_KEY` populated, run the paid Responses and sidekick conformance probes:
+The [eval guide](evals/README.md) covers graded coding tasks, paid Responses and
+sidekick probes, and context-continuity checks. Live probes require explicit
+environment switches and make paid API requests.
 
-```sh
-MAI_LIVE_DEEPSEEK_RESPONSES=1 \
-go test -v ./internal/mai -run '^TestLiveDeepSeek(Responses|Sidekick)$' -count=1 -timeout=20m
-```
+## License
 
-All six Flash/Pro combinations at low, high and max passed the local live
-probe: tool execution, saved-task resume and exact checkpoint fact retention.
-The sidekick probe checks Pro/high and Pro/max directing a Flash/high worker
-through two assignments, including Bash execution and recall from the worker's
-own conversation. It uses an empty temporary workspace and harmless printf
-commands. These are conformance checks, not coding-performance benchmarks.
-See [eval instructions](evals/README.md) for graded repository tasks and
-context-continuity tests.
+This repository currently contains no license file.
