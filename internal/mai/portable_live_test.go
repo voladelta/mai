@@ -74,6 +74,8 @@ func runPortableProviderCoding(t *testing.T, model, mode, seed string) (trial po
 	}
 	id, _ := newSessionID()
 	sess := &session{Version: stateVersion, ID: id, CWD: dir, RepoRoot: dir, Model: defaultModel, Effort: "h"}
+	sess.Model = model
+	provider := liveToolProvider(t, sess)
 	_ = appendUserPrompt(sess, "Use verified facts in saved build-log evidence to implement the requested configuration. The log is stored in task history, not project files.")
 	facts := "Verified release: REL-" + seed[:8] + ". Current audit: AUD-" + seed[9:13] + ". Retired audit: OLD-" + seed[14:18] + ". Initial batch: 64. Deploy interrupted before saved result; outcome UNKNOWN.\n"
 	// Non-repeating records exercise bounded chunk folding instead of letting
@@ -89,7 +91,8 @@ func runPortableProviderCoding(t *testing.T, model, mode, seed string) (trial po
 	factID := appendBudgetLog(t, sess, "source", log)
 	var events bytes.Buffer
 	a := newAgent(io.Discard, io.Discard, path, 2*time.Minute, false)
-	if err := a.configureBackend(sess, defaultProviderConfig()); err != nil {
+	a.skipSkills = true
+	if err := a.configureBackend(sess, provider); err != nil {
 		trial.Error = err.Error()
 		return
 	}

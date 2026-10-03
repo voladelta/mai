@@ -1,0 +1,219 @@
+package app
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+)
+
+type evalTask struct {
+	ID    int    `json:"id"`
+	Title string `json:"title"`
+	Done  bool   `json:"done"`
+}
+
+func evalRequest(t *testing.T, h http.Handler, method, url, body string, status int) *httptest.ResponseRecorder {
+	t.Helper()
+	r := httptest.NewRequest(method, url, strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != status {
+		t.Fatalf("%s %s: status=%d want=%d body=%s", method, url, w.Code, status, w.Body.String())
+	}
+	return w
+}
+func evalDecodeTask(t *testing.T, w *httptest.ResponseRecorder) evalTask {
+	t.Helper()
+	var v evalTask
+	if err := json.Unmarshal(w.Body.Bytes(), &v); err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+func evalList(t *testing.T, h http.Handler, filter string) []evalTask {
+	t.Helper()
+	w := evalRequest(t, h, "GET", "/tasks?filter="+filter, "", 200)
+	var v []evalTask
+	if err := json.Unmarshal(w.Body.Bytes(), &v); err != nil {
+		t.Fatal(err)
+	}
+	if v == nil {
+		t.Fatal("list must be [], not null")
+	}
+	return v
+}
+func TestEvalTodoLifecycle(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tasks.json")
+	h, err := NewHandler(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evalList(t, h, "all")) != 0 {
+		t.Fatal("nonempty initial list")
+	}
+	evalRequest(t, h, "POST", "/tasks", `{"title":"  "}`, 400)
+	evalRequest(t, h, "POST", "/tasks", `{`, 400)
+	a := evalDecodeTask(t, evalRequest(t, h, "POST", "/tasks", `{"title":" first "}`, 201))
+	b := evalDecodeTask(t, evalRequest(t, h, "POST", "/tasks", `{"title":"second"}`, 201))
+	if a.ID <= 0 || b.ID <= a.ID || a.Title != "first" || a.Done {
+		t.Fatalf("invalid created tasks: %+v %+v", a, b)
+	}
+	url := fmt.Sprintf("/tasks/%d", b.ID)
+	for i := 0; i < 2; i++ {
+		v := evalDecodeTask(t, evalRequest(t, h, "PATCH", url, `{"done":true}`, 200))
+		if !v.Done || v.Title != "second" {
+			t.Fatal("completion lost title")
+		}
+	}
+	v := evalDecodeTask(t, evalRequest(t, h, "PATCH", url, `{"title":"renamed"}`, 200))
+	if !v.Done || v.Title != "renamed" {
+		t.Fatal("rename lost completion")
+	}
+	evalRequest(t, h, "PATCH", url, `{"title":" "}`, 400)
+	if v := evalList(t, h, "active"); len(v) != 1 || v[0].ID != a.ID {
+		t.Fatalf("active filter: %+v", v)
+	}
+	if v := evalList(t, h, "completed"); len(v) != 1 || v[0].ID != b.ID || v[0].Title != "renamed" {
+		t.Fatalf("completed filter: %+v", v)
+	}
+	evalRequest(t, h, "GET", "/tasks?filter=bogus", "", 400)
+	evalRequest(t, h, "PATCH", "/tasks/999999", `{"done":true}`, 404)
+	evalRequest(t, h, "DELETE", "/tasks/999999", "", 404)
+	h, err = NewHandler(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evalList(t, h, "all")) != 2 {
+		t.Fatal("restart lost state")
+	}
+	evalRequest(t, h, "DELETE", url, "", 204)
+	h, err = NewHandler(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := evalDecodeTask(t, evalRequest(t, h, "POST", "/tasks", `{"title":"third"}`, 201))
+	if c.ID <= b.ID {
+		t.Fatal("deleted ID reused after restart")
+	}
+	html := evalRequest(t, h, "GET", "/", "", 200)
+	if !strings.Contains(strings.ToLower(html.Header().Get("Content-Type")), "text/html") {
+		t.Fatal("home is not HTML")
+	}
+	evalRequest(t, h, "PUT", "/tasks", `{}`, 405)
+}
+func TestEvalTodoConcurrencyAndCorruptStore(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "store.json")
+	h, err := NewHandler(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 12; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			r := httptest.NewRequest("POST", "/tasks", strings.NewReader(fmt.Sprintf(`{"title":"task-%d"}`, i)))
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			if w.Code != 201 {
+				t.Errorf("concurrent create: %d", w.Code)
+			}
+		}(i)
+	}
+	wg.Wait()
+	h, err = NewHandler(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tasks := evalList(t, h, "all")
+	if len(tasks) != 12 {
+		t.Fatalf("lost updates: %d", len(tasks))
+	}
+	seen := map[int]bool{}
+	for _, v := range tasks {
+		if seen[v.ID] {
+			t.Fatal("duplicate ID")
+		}
+		seen[v.ID] = true
+	}
+	if err := os.WriteFile(path, []byte("{bad"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewHandler(path); err == nil {
+		t.Fatal("corrupt store accepted")
+	}
+}
+
+func TestEvalDashboardLatestEventsAndEmptyData(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "tasks.json")
+	csvPath := filepath.Join(dir, "activity.csv")
+	data := "task_id,status,updated_at\n1,completed,2026-10-01T10:00:00Z\n2,active,2026-10-01T10:00:00Z\n1,active,2026-10-02T10:00:00Z\n3,completed,2026-10-02T10:00:00Z\n3,completed,2026-10-02T11:00:00Z\n4,active,2026-10-02T10:00:00Z\n5,completed,2026-10-02T10:00:00Z\n2,completed,2026-09-30T10:00:00Z\n"
+	if err := os.WriteFile(csvPath, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	h, err := NewHandler(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := evalRequest(t, h, "GET", "/summary", "", 200)
+	var v struct {
+		Total     int     `json:"total"`
+		Completed int     `json:"completed"`
+		Active    int     `json:"active"`
+		Rate      float64 `json:"completion_rate"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &v); err != nil {
+		t.Fatal(err)
+	}
+	if v.Total != 5 || v.Completed != 2 || v.Active != 3 || v.Rate != 40 {
+		t.Fatalf("event rows counted instead of latest task states: %+v", v)
+	}
+	html := evalRequest(t, h, "GET", "/", "", 200)
+	if !strings.Contains(html.Body.String(), "Completion summary") {
+		t.Fatal("summary missing from home")
+	}
+	if err := os.WriteFile(csvPath, []byte("task_id,status,updated_at\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	h, err = NewHandler(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w = evalRequest(t, h, "GET", "/summary", "", 200)
+	if err := json.Unmarshal(w.Body.Bytes(), &v); err != nil {
+		t.Fatal(err)
+	}
+	if v.Total != 0 || v.Completed != 0 || v.Active != 0 || v.Rate != 0 {
+		t.Fatalf("empty summary: %+v", v)
+	}
+	if err := os.WriteFile(csvPath, []byte("task_id,status,updated_at\n1,completed,2026-10-01T10:00:00Z\n1,active,2026-10-01T10:00:00Z\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	h, err = NewHandler(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w = evalRequest(t, h, "GET", "/summary", "", 200)
+	if err := json.Unmarshal(w.Body.Bytes(), &v); err != nil {
+		t.Fatal(err)
+	}
+	if v.Total != 1 || v.Active != 1 || v.Completed != 0 {
+		t.Fatal("timestamp tie did not use later row")
+	}
+	if err := os.WriteFile(csvPath, []byte("task_id,status,updated_at\n1,bogus,invalid\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	h, err = NewHandler(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evalRequest(t, h, "GET", "/summary", "", 500)
+}

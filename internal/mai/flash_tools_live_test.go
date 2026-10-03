@@ -1,0 +1,210 @@
+package mai
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"image"
+	"image/color"
+	"image/png"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestLiveDeepSeekFlashImageMessage(t *testing.T) {
+	if os.Getenv("MAI_LIVE_DEEPSEEK_FLASH_TOOLS") != "1" {
+		t.Skip("set MAI_LIVE_DEEPSEEK_FLASH_TOOLS=1")
+	}
+	sess := deepseekTestSession(t)
+	sess.History = nil
+	if err := appendUserPrompt(sess, "Identify the solid color of the supplied image. Do not guess if it is unavailable."); err != nil {
+		t.Fatal(err)
+	}
+	img := image.NewRGBA(image.Rect(0, 0, 64, 64))
+	for y := 0; y < 64; y++ {
+		for x := 0; x < 64; x++ {
+			img.SetRGBA(x, y, color.RGBA{B: 255, A: 255})
+		}
+	}
+	var pngBytes bytes.Buffer
+	if err := png.Encode(&pngBytes, img); err != nil {
+		t.Fatal(err)
+	}
+	a := newAgent(io.Discard, io.Discard, "", time.Minute, false)
+	defer a.close()
+	a.skipSkills = true
+	if err := a.configureBackend(sess, liveToolProvider(t, sess)); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	answer, _, err := a.backend.(*responsesClient).describeImage(ctx, sess, "data:image/png;base64,"+base64.StdEncoding.EncodeToString(pngBytes.Bytes()))
+	if err != nil || !strings.Contains(strings.ToLower(answer), "blue") {
+		t.Fatalf("direct user-image interpretation: answer=%q err=%v", answer, err)
+	}
+	t.Logf("DIRECT_IMAGE answer=%q", answer)
+}
+
+func liveToolProvider(t *testing.T, sess *session) providerConfig {
+	t.Helper()
+	name := os.Getenv("MAI_LIVE_PROVIDER")
+	if name == "" {
+		return defaultProviderConfig()
+	}
+	path := os.Getenv("MAI_LIVE_CONFIG")
+	if path == "" {
+		t.Fatal("MAI_LIVE_CONFIG must name a provider config when MAI_LIVE_PROVIDER is set")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := decodeProviderConfig(strings.NewReader(string(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, ok := cfg.Providers[name]
+	if !ok {
+		t.Fatalf("provider %q is not configured", name)
+	}
+	sess.Provider = name
+	return provider
+}
+
+// Paid model-driven integration. Context editing and original-history recall
+// have their own stronger probe in TestLiveDeepSeekContextEdit/flash.
+func TestLiveDeepSeekFlashTools(t *testing.T) {
+	if os.Getenv("MAI_LIVE_DEEPSEEK_FLASH_TOOLS") != "1" {
+		t.Skip("set MAI_LIVE_DEEPSEEK_FLASH_TOOLS=1")
+	}
+	sess := deepseekTestSession(t)
+	sess.History = nil
+	token := "TOKEN-" + sess.ID
+	mustWrite(t, filepath.Join(sess.CWD, "verification.txt"), token+"\n")
+	mustWrite(t, filepath.Join(sess.CWD, "numbers.txt"), "17\n25\n")
+	img := image.NewRGBA(image.Rect(0, 0, 64, 64))
+	for y := 0; y < 64; y++ {
+		for x := 0; x < 64; x++ {
+			img.SetRGBA(x, y, color.RGBA{B: 255, A: 255})
+		}
+	}
+	file, err := os.Create(filepath.Join(sess.CWD, "swatch.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encodeErr := png.Encode(file, img)
+	closeErr := file.Close()
+	if encodeErr != nil || closeErr != nil {
+		t.Fatalf("image fixture: encode=%v close=%v", encodeErr, closeErr)
+	}
+	prompt := `Complete this isolated tool integration task. Do not access credentials, network, other projects, or delegate. Never write files using Python, Ruby, or Node.
+1. Use bash to read verification.txt and retrieve the token. Skills are disabled.
+2. Use view_image on swatch.png to identify its solid color. Do not infer the color from image bytes or another tool.
+3. Use bash to read numbers.txt.
+4. Use python to assign probe_total to the sum of those numbers and print it. In a separate python tool call, print probe_total + 1 without reassigning probe_total. Also await mai.bash("printf BRIDGE_OK") and print its stdout in that second cell.
+5. Use apply_patch directly to create result.txt containing exactly three lines: the token, the lowercase color name, and the incremented total. End every line with a newline.
+6. Use bash to read result.txt and verify it against your tool observations. Finish with exactly TOOLS_OK if verified. Use no edit_context here; there is no obsolete long output.`
+	if err := appendUserPrompt(sess, prompt); err != nil {
+		t.Fatal(err)
+	}
+	a := newAgent(io.Discard, io.Discard, "", 2*time.Minute, false)
+	a.skipSkills, a.maxTurns = true, 12
+	provider := liveToolProvider(t, sess)
+	if err := a.configureBackend(sess, provider); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	started := time.Now()
+	if err := a.run(ctx, sess, prompt); err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]int{}
+	pythonResults := 0
+	pythonGeneration := 0
+	bridge := false
+	answered := false
+	answerText := ""
+	for _, raw := range sess.History {
+		var item struct {
+			Type   string          `json:"type"`
+			Name   string          `json:"name"`
+			CallID string          `json:"call_id"`
+			Output json.RawMessage `json:"output"`
+		}
+		if err := json.Unmarshal(raw, &item); err != nil {
+			t.Fatal(err)
+		}
+		if item.Type == "function_call" {
+			counts[item.Name]++
+		}
+		if item.Type == "function_call_output" {
+			var output string
+			if json.Unmarshal(item.Output, &output) != nil {
+				// Typed image content is checked by its resulting
+				// observed value in result.txt, rather than a JSON status.
+				continue
+			}
+			var result struct {
+				OK          *bool                   `json:"ok"`
+				Stdout      string                  `json:"stdout"`
+				Generation  int                     `json:"generation"`
+				Fresh       bool                    `json:"fresh"`
+				Activities  []pythonActivitySummary `json:"activities"`
+				Description string                  `json:"description"`
+			}
+			// Image results are typed content; other tools return JSON.
+			if json.Unmarshal([]byte(output), &result) == nil && result.OK != nil {
+				if result.Description != "" {
+					t.Logf("IMAGE_DESCRIPTION %s", result.Description)
+				}
+				if !*result.OK {
+					t.Errorf("tool %s failed: %s", item.CallID, output)
+				}
+				if result.Generation > 0 {
+					pythonResults++
+					if pythonResults == 1 {
+						pythonGeneration = result.Generation
+						if strings.TrimSpace(result.Stdout) != "42" {
+							t.Fatalf("initial Python sum: %q", result.Stdout)
+						}
+					}
+					if pythonResults == 2 {
+						if result.Fresh || result.Generation != pythonGeneration {
+							t.Fatal("Python state did not persist between cells")
+						}
+						for _, activity := range result.Activities {
+							bridge = bridge || (activity.Name == "bash" && activity.Status == "completed" && strings.Contains(activity.Result, "BRIDGE_OK"))
+						}
+						bridge = bridge && strings.Contains(result.Stdout, "BRIDGE_OK") && strings.Contains(result.Stdout, "43")
+					}
+				}
+			}
+		}
+		entry, visible, err := visibleTranscriptEntry(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		answered = answered || (visible && entry.Kind == "assistant" && strings.TrimSpace(entry.Text) == "TOOLS_OK")
+		if visible && entry.Kind == "assistant" {
+			answerText = entry.Text
+		}
+	}
+	for _, name := range []string{"bash", "apply_patch", "python", "view_image"} {
+		if counts[name] == 0 {
+			t.Errorf("missing real %s call", name)
+		}
+	}
+	got, err := os.ReadFile(filepath.Join(sess.CWD, "result.txt"))
+	want := token + "\nblue\n43\n"
+	t.Logf("FLASH_TOOLS provider=%s model=%s counts=%s turns=%d duration_ms=%d", sess.Provider, provider.Models.Flash, fmt.Sprint(counts), a.modelTurns, time.Since(started).Milliseconds())
+	if err != nil || string(got) != want || pythonResults != 2 || !bridge || !answered {
+		t.Fatalf("tool effects: file=%q err=%v python_results=%d bridge=%v answered=%v answer=%q", got, err, pythonResults, bridge, answered, answerText)
+	}
+}

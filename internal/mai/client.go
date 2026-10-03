@@ -332,11 +332,11 @@ func toolDefinitions() []map[string]any {
 		},
 		{
 			"type": "function", "name": "apply_patch",
-			"description": "Create, update, move, or delete repository files with a structured patch bounded by *** Begin Patch and *** End Patch. Paths are relative to the repository root.",
+			"description": "Create, update, move, or delete repository files with a structured patch bounded by *** Begin Patch and *** End Patch. Paths are relative to the repository root. Use each path only once per document: rewrite an existing file with Update File, never Delete File plus Add File for the same path. Inspect current files before retrying a failed patch.",
 			"parameters": map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
-					"patch": map[string]string{"type": "string", "description": "A complete apply_patch document."},
+					"patch": map[string]string{"type": "string", "description": "A complete patch with actual newlines and indentation. Example:\n*** Begin Patch\n*** Update File: file.go\n@@\n-old line\n+new line\n*** End Patch\nFor Add File, prefix every content line with +. For Update File, start each hunk with @@ and prefix every body line with a space for unchanged context, - for removal, or + for addition, before its indentation. Delete File has no body. Encode the patch string as JSON once; do not double-escape newline or tab characters."},
 				},
 				"required": []string{"patch"},
 			},

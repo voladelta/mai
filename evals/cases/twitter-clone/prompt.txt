@@ -1,0 +1,12 @@
+Implement a small local Twitter clone with the Go standard library. Preserve NewHandler(path string) (http.Handler, error) and cmd/server.
+
+The fixture intentionally uses X-User as a trusted local test-session header, not production authentication. Valid seeded user IDs are alice, bob, and carol. Mutation and timeline endpoints require this header; missing or unknown users return 401. Persist posts and follow relationships in the supplied JSON store. Restore on NewHandler recreation, reject corrupt stores, use unique monotonically increasing post IDs, and make concurrent requests safe.
+
+JSON API:
+- POST /posts {"text":"..."}: trim surrounding whitespace, accept 1 through 280 Unicode code points, reject invalid text with 400, return 201 and {"id":integer,"author":userID,"text":string}. Use ID as deterministic creation order.
+- DELETE /posts/{id}: author only, return 204; another user's deletion returns 403; unknown IDs return 404.
+- PUT /follows/{userID}: idempotently follow another seeded user, return 204. DELETE the same URL unfollows idempotently with 204. Unknown target returns 404; following oneself returns 400.
+- GET /timeline?before=ID&limit=N: return a JSON array of the current user's own posts and posts by followed users. Sort by descending ID. before is an exclusive cursor; omit for latest. Default limit 20, accepted limits 1..50; invalid before or limit returns 400. Empty arrays must be [] rather than null.
+- GET /: provide an HTML interface to select the seeded session, post text, follow/unfollow users, and read a timeline. Safely render user text. No external assets or services.
+
+Reject malformed JSON with 400 and unsupported methods with 405. Acknowledge successful mutations only after persistence succeeds. Add useful httptest tests for the HTTP endpoints and run go test -race ./.... Do not launch background servers for verification. Put any temporary files inside this project. Only edit with apply_patch or shell-native tools. Skills are disabled. Do not use external services, credentials, Python/Ruby/Node file writes, or delegation.

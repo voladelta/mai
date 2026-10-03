@@ -34,7 +34,7 @@ mai "investigate this failure" --timeout=20m
 | `--timeout DURATION` | Model request first-byte/idle timeout; default `10m`. | `mai "investigate the failure" --timeout 20m` |
 | `--cell-timeout DURATION` | Python cell wall-clock limit; default `10m`. | `mai "explore sales.csv" --cell-timeout 5m` |
 | `--no-input` | Reject commands requiring approval instead of prompting. | `mai "review the diff" --no-input` |
-| `-s`, `--skip-skills` | Skip skill discovery and explicit skill loading for this run. | `mai "explain this package" -s` |
+| `-s`, `--skip-skills` | Disable skill discovery and loading for this run. | `mai "explain this package" -s` |
 | `--jsonl` | Write JSON Lines events to stdout; progress goes to stderr. | `mai "review the diff" --jsonl > run.jsonl` |
 
 A task prompt is required except for help, version, or an empty invocation.

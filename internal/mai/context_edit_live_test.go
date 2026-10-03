@@ -109,6 +109,11 @@ func runContextEditTrial(t *testing.T, model, seed string) (trial contextEditTri
 		t.Fatal(err)
 	}
 	sess := &session{Version: stateVersion, ID: id, CWD: dir, RepoRoot: dir, Model: model, Effort: "h"}
+	provider := liveToolProvider(t, sess)
+	trial.APIModel = provider.Models.Pro
+	if model == "flash" {
+		trial.APIModel = provider.Models.Flash
+	}
 	release, retired := "REL-"+seed[:8], "OLD-"+seed
 	var log strings.Builder
 	for i := 0; i < 250; i++ {
@@ -128,8 +133,9 @@ func runContextEditTrial(t *testing.T, model, seed string) (trial contextEditTri
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
 	a := newAgent(io.Discard, io.Discard, path, 2*time.Minute, false)
+	a.skipSkills = true
 	defer a.close()
-	if err := a.configureBackend(sess, defaultProviderConfig()); err != nil {
+	if err := a.configureBackend(sess, provider); err != nil {
 		trial.Error = err.Error()
 		return
 	}
@@ -282,8 +288,9 @@ func runContextEditTrial(t *testing.T, model, seed string) (trial contextEditTri
 
 	resumed = true
 	continued := newAgent(io.Discard, io.Discard, path, 2*time.Minute, false)
+	continued.skipSkills = true
 	defer continued.close()
-	if err := continued.configureBackend(sess, defaultProviderConfig()); err != nil {
+	if err := continued.configureBackend(sess, provider); err != nil {
 		trial.Error = err.Error()
 		return
 	}

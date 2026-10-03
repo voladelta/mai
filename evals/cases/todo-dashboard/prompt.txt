@@ -1,0 +1,14 @@
+Implement this local todo web app using the Go standard library. Skills are disabled. Preserve NewHandler(path string) (http.Handler, error) and the runnable cmd/server entry point.
+
+Build the home page using reference.html as a read-only visual and structural reference. Keep the task controls keyboard accessible with visible labels and a responsive layout. Add a completion summary from activity.csv beside the store path (the CSV lives in filepath.Dir(path), not an unrelated working directory). GET /summary returns {"total":integer,"completed":integer,"active":integer,"completion_rate":number}, with completion_rate a percentage 0..100. Count one latest event per task using RFC3339 updated_at; later file rows win timestamp ties. The CSV may be out of chronological order and repeat events. Only statuses active and completed are valid. Missing or invalid CSV returns 500 without changing task storage. A header-only CSV returns all zeros, never NaN or null. Render the summary values on the page and preserve all todo features. Analyze the supplied CSV before implementing; Python may be used only for read-only analysis. Do not change reference.html or activity.csv to make checks pass.
+
+Provide JSON endpoints:
+- POST /tasks with {"title":"..."}: trim title, reject blank titles with 400, return 201 and {"id":integer,"title":string,"done":false}. IDs are positive, unique, and never reused after deletion or restart.
+- GET /tasks?filter=all|active|completed: return an array sorted by increasing ID; default all. Invalid filters return 400. Empty lists return [] rather than null.
+- PATCH /tasks/{id} with optional title and done fields: update only supplied fields, reject blank titles with 400, return the updated object with 200.
+- DELETE /tasks/{id}: return 204. Unknown IDs on PATCH or DELETE return 404 and preserve storage.
+- GET /: provide a usable HTML todo UI for adding, renaming, completing, deleting and filtering tasks. Render user titles safely as text.
+
+Persist successful changes to the supplied JSON store path. NewHandler must restore state when recreated and report invalid store JSON as an error rather than silently erasing it. Only acknowledge a successful mutation after saving it. Concurrent handler requests must not race or lose updates. Reject malformed JSON with 400 and unsupported methods with 405.
+
+Implement the app, add meaningful tests using httptest to verify HTTP behavior, and run go test -race ./.... Do not launch background servers for verification. Put any temporary files inside this project. Use apply_patch or shell-native tools for edits; never Python/Ruby/Node file writes. Work only in this project. Do not access external services, credentials, or delegate.

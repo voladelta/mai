@@ -26,6 +26,7 @@ type responsesClient struct {
 	stdout         io.Writer
 	requestTimeout time.Duration
 	contextWindow  int64
+	skillsDisabled bool
 }
 
 func (a *agent) configureBackend(sess *session, provider providerConfig) error {
@@ -103,6 +104,7 @@ func (a *agent) configureBackend(sess *session, provider providerConfig) error {
 		stdout:         a.modelOutput,
 		requestTimeout: a.requestTimeout,
 		contextWindow:  window,
+		skillsDisabled: a.skipSkills,
 	}
 
 	return nil
@@ -304,6 +306,9 @@ func (c *responsesClient) request(ctx context.Context, sess *session, instructio
 	if toolsAllowed {
 		var tools []map[string]any
 		for _, definition := range toolDefinitions() {
+			if definition["name"] == "read_skill" && c.skillsDisabled {
+				continue
+			}
 			if definition["name"] == "sidekick" && sess.Model != "pro" {
 				continue
 			}

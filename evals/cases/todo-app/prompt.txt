@@ -1,0 +1,12 @@
+Implement this local todo web app using the Go standard library. Skills are disabled. Preserve NewHandler(path string) (http.Handler, error) and the runnable cmd/server entry point.
+
+Provide JSON endpoints:
+- POST /tasks with {"title":"..."}: trim title, reject blank titles with 400, return 201 and {"id":integer,"title":string,"done":false}. IDs are positive, unique, and never reused after deletion or restart.
+- GET /tasks?filter=all|active|completed: return an array sorted by increasing ID; default all. Invalid filters return 400. Empty lists return [] rather than null.
+- PATCH /tasks/{id} with optional title and done fields: update only supplied fields, reject blank titles with 400, return the updated object with 200.
+- DELETE /tasks/{id}: return 204. Unknown IDs on PATCH or DELETE return 404 and preserve storage.
+- GET /: provide a usable HTML todo UI for adding, renaming, completing, deleting and filtering tasks. Render user titles safely as text.
+
+Persist successful changes to the supplied JSON store path. NewHandler must restore state when recreated and report invalid store JSON as an error rather than silently erasing it. Only acknowledge a successful mutation after saving it. Concurrent handler requests must not race or lose updates. Reject malformed JSON with 400 and unsupported methods with 405.
+
+Implement the app, add meaningful tests using httptest to verify HTTP behavior, and run go test -race ./.... Do not launch background servers for verification. Put any temporary files inside this project. Use apply_patch or shell-native tools for edits; never Python/Ruby/Node file writes. Work only in this project. Do not access external services, credentials, or delegate.

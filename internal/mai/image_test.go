@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
+	"image/color"
 	"image/png"
 	"io"
 	"net/http"
@@ -16,6 +17,45 @@ import (
 	"testing"
 	"time"
 )
+
+func TestViewImageExactSolidColorEvidence(t *testing.T) {
+	for _, kind := range []string{"solid", "mixed", "transparent"} {
+		t.Run(kind, func(t *testing.T) {
+			img := image.NewRGBA(image.Rect(0, 0, 2, 2))
+			for y := 0; y < 2; y++ {
+				for x := 0; x < 2; x++ {
+					img.SetRGBA(x, y, color.RGBA{B: 255, A: 255})
+				}
+			}
+			if kind == "mixed" {
+				img.SetRGBA(1, 1, color.RGBA{R: 255, A: 255})
+			}
+			if kind == "transparent" {
+				img.SetRGBA(1, 1, color.RGBA{})
+			}
+			root := t.TempDir()
+			path := filepath.Join(root, "color.png")
+			var data bytes.Buffer
+			if err := png.Encode(&data, img); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, data.Bytes(), 0600); err != nil {
+				t.Fatal(err)
+			}
+			got, err := viewImage(root, root, path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := ""
+			if kind == "solid" {
+				want = "#0000ff"
+			}
+			if got.SolidColor != want {
+				t.Fatalf("solid_color=%q, want=%q", got.SolidColor, want)
+			}
+		})
+	}
+}
 
 func TestViewImageReturnsTypedImageWithinRepository(t *testing.T) {
 	root := t.TempDir()

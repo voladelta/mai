@@ -47,12 +47,13 @@ func (a *agent) describeImageOutput(ctx context.Context, sess *session, metadata
 }
 
 type imageFileResult struct {
-	OK        bool   `json:"ok"`
-	Path      string `json:"path"`
-	MediaType string `json:"media_type"`
-	Width     int    `json:"width"`
-	Height    int    `json:"height"`
-	imageURL  string
+	OK         bool   `json:"ok"`
+	Path       string `json:"path"`
+	MediaType  string `json:"media_type"`
+	Width      int    `json:"width"`
+	Height     int    `json:"height"`
+	SolidColor string `json:"solid_color,omitempty"`
+	imageURL   string
 }
 
 func viewImage(root, cwd, path string) (imageFileResult, error) {
@@ -91,9 +92,40 @@ func viewImage(root, cwd, path string) (imageFileResult, error) {
 		return imageFileResult{}, fmt.Errorf("image dimensions exceed %d pixels per side", maxImageDimension)
 	}
 	mediaType := "image/" + format
+	solidColor := ""
+	// Exact pixel evidence for small uniform images. Do not infer a color from
+	// an average or a thumbnail, and bound decoding work for larger images.
+	if config.Width*config.Height <= 1_000_000 {
+		decoded, _, err := image.Decode(bytes.NewReader(data))
+		if err != nil {
+			return imageFileResult{}, fmt.Errorf("decode image pixels: %w", err)
+		}
+		solidColor = uniformImageColor(decoded)
+	}
 	return imageFileResult{
 		OK: true, Path: resolved, MediaType: mediaType,
 		Width: config.Width, Height: config.Height,
-		imageURL: "data:" + mediaType + ";base64," + base64.StdEncoding.EncodeToString(data),
+		SolidColor: solidColor,
+		imageURL:   "data:" + mediaType + ";base64," + base64.StdEncoding.EncodeToString(data),
 	}, nil
+}
+
+func uniformImageColor(img image.Image) string {
+	bounds := img.Bounds()
+	r, g, b, a := img.At(bounds.Min.X, bounds.Min.Y).RGBA()
+	if a != 0xffff {
+		return ""
+	}
+	if r%0x101 != 0 || g%0x101 != 0 || b%0x101 != 0 {
+		return "" // A six-digit hex value cannot represent this 16-bit color exactly.
+	}
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			r2, g2, b2, a2 := img.At(x, y).RGBA()
+			if r2 != r || g2 != g || b2 != b || a2 != a {
+				return ""
+			}
+		}
+	}
+	return fmt.Sprintf("#%02x%02x%02x", r>>8, g>>8, b>>8)
 }

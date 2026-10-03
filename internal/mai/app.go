@@ -133,6 +133,7 @@ func runTask(opts options, stdout, stderr io.Writer) int {
 	}
 
 	runner := newAgent(stdout, stderr, active.path, opts.timeout, !opts.noInput && isTerminal(os.Stdin))
+	runner.skipSkills = opts.skipSkills
 	if !opts.skipSkills {
 		runner.skillsRoots, runner.skillsError = discoverSkillRoots()
 	}
@@ -166,7 +167,6 @@ func runTask(opts options, stdout, stderr io.Writer) int {
 	defer stop()
 	runner.cellTimeout = opts.cellTimeout
 	runner.maxTurns = opts.maxTurns
-	runner.skipSkills = opts.skipSkills
 	if opts.jsonl {
 		runner.events = stdout
 	}

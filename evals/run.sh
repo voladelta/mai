@@ -34,7 +34,7 @@ for case_name do
     fi
 
     prompt=$(cat "$case_dir/prompt.txt")
-    run_case "$case_name" "$case_dir/workspace" "$case_dir/check_test.go.txt" "$prompt" go test ./...
+    run_case "$case_name" "$case_dir/workspace" "$case_dir/check_test.go.txt" "$prompt" go test -race ./...
     if [ "$grade" = fail ]; then
         overall=1
     fi

@@ -19,20 +19,36 @@ run_case() {
     check=$3
     prompt=$4
     shift 4
+    followup_file="$(dirname "$fixture")/followup.txt"
+    persist_flag=
+    if [ -f "$followup_file" ]; then
+        persist_flag=--persist
+    fi
 
     output_dir="$result_dir/$case_name"
     work_dir="$output_dir/workspace"
     mkdir -p "$work_dir"
     cp -R "$fixture/." "$work_dir/"
+    if [ -n "${MAI_EVAL_CONFIG:-}" ]; then
+        cp "$MAI_EVAL_CONFIG" "$work_dir/.mai.config"
+    fi
     git -C "$work_dir" init -q
     git -C "$work_dir" add -A
     git -C "$work_dir" -c user.name='Mai Eval' -c user.email='mai-eval@example.invalid' commit -qm 'Initial task state'
 
     started=$(date +%s)
-    if (cd "$work_dir" && "$mai_bin" "$prompt" --provider "$provider" ${mode_flag:+"$mode_flag"} --jsonl --no-input --skip-skills > "$output_dir/events.jsonl" 2> "$output_dir/mai.stderr"); then
+    if (cd "$work_dir" && "$mai_bin" "$prompt" --provider "$provider" ${mode_flag:+"$mode_flag"} ${persist_flag:+"$persist_flag"} --jsonl --no-input --skip-skills > "$output_dir/events.jsonl" 2> "$output_dir/mai.stderr"); then
         mai_status=0
     else
         mai_status=$?
+    fi
+    if [ "$mai_status" -eq 0 ] && [ -f "$followup_file" ]; then
+        followup_prompt=$(cat "$followup_file")
+        if (cd "$work_dir" && "$mai_bin" "$followup_prompt" --last --provider "$provider" --jsonl --no-input --skip-skills >> "$output_dir/events.jsonl" 2>> "$output_dir/mai.stderr"); then
+            mai_status=0
+        else
+            mai_status=$?
+        fi
     fi
     ended=$(date +%s)
 

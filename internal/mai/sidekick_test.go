@@ -41,6 +41,13 @@ func TestSidekickDirectorFollowupAndPersistence(t *testing.T) {
 		for _, tool := range body.Tools {
 			hasSidekick = hasSidekick || tool.Name == "sidekick"
 		}
+		hasReadSkill := false
+		for _, tool := range body.Tools {
+			hasReadSkill = hasReadSkill || tool.Name == "read_skill"
+		}
+		if hasReadSkill || !strings.Contains(body.Instructions, "Skills are disabled") {
+			t.Error("CLI director or worker did not inherit disabled skills")
+		}
 		if body.Model == "deepseek-flash" {
 			flashTurns++
 			input := string(mustJSON(t, body.Input))

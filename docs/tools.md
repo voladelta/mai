@@ -13,7 +13,7 @@ Tools are selected by the model; Python examples below are cells sent to Mai's
 | `bash` | `command`, optional `timeout_ms` | Run Bash in the task working directory. |
 | `apply_patch` | `patch` | Create, update, move, or delete files inside the repository. Paths are relative to the repository root. |
 | `python` | `code` or `reset: true` | Execute a cell in the persistent namespace, or discard that namespace. |
-| `read_skill` | `path`, optional `file` | Read a skill by directory id; `file` defaults to `SKILL.md`. |
+| `read_skill` | `path`, optional `file` | Read a discovered skill by directory id; `file` defaults to `SKILL.md`. Disabled by `-s` or `--skip-skills`. |
 | `view_image` | `path` | Read a repository image using an absolute path or a path relative to the working directory. |
 | `edit_context` | `action: "inspect"` or `action: "shrink"`, with `edits` for shrinking | Inspect eligible Bash outputs and shorten their future request representation. |
 | `sidekick` | `task`, optional `context` and `worker_id` | Pro assigns bounded work to one Flash/high worker, or follows up with it. |
@@ -30,7 +30,8 @@ are described below.
 
 ## Skills
 
-Skills are read from `agents/skills` in the current repository, then from
+Skills are enabled by default and read from `agents/skills` in the current
+repository, then from
 `~/.agents/skills`. Valid repository skills take priority when a directory id or
 skill name matches. Invalid skills produce warnings and are skipped, allowing a
 valid global copy to be selected. Later `read_skill` calls for a discovered id
@@ -45,8 +46,9 @@ Omitting the field or setting it to `false` allows automatic selection unless
 `policy.allow_implicit_invocation` is `false` in `agents/openai.yaml`.
 Use `-s` or `--skip-skills` to skip skill discovery for one run, including
 resolution of explicit `$skill-name` mentions. The flag also works with
-`--last` and must be passed again on each resumed run. The `read_skill` tool
-remains available when you know a skill's directory id.
+`--last` and must be passed again on each resumed run. Sidekicks inherit the
+parent run's skill setting. When disabled, the
+`read_skill` tool is omitted from requests and rejects unexpected calls.
 Images use typed image output; other binary files are rejected.
 
 Quote explicit skill mentions with single quotes so the shell does not expand
@@ -95,6 +97,11 @@ needs approval, `mai` rejects it instead of opening a terminal prompt.
 The `view_image` tool reads a PNG, JPEG, or GIF inside the repository and sends
 it as typed image content to the model. Files are limited to 8 MiB and 8,192
 pixels per side.
+
+For images up to one million pixels, `solid_color` reports an exact hex color
+only when every pixel is the same fully opaque color. Mixed-color and
+transparent images omit it. This is decoded pixel evidence, independent of
+the model's visual interpretation.
 
 ## Persistent Python
 

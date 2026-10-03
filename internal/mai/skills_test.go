@@ -221,8 +221,8 @@ func TestSkipSkillsBypassesDiscoveryAndExplicitLoading(t *testing.T) {
 	}
 
 	output := a.executeTool(context.Background(), &session{}, functionCall{Name: "read_skill", Arguments: `{"path":"demo"}`})
-	if !strings.Contains(string(output), "# demo instructions") {
-		t.Fatalf("skip-skills prevented a known-ID read: %s", output)
+	if !strings.Contains(string(output), "skills disabled") || strings.Contains(string(output), "# demo instructions") {
+		t.Fatalf("skip-skills allowed a known-ID read: %s", output)
 	}
 }
 

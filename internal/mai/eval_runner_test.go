@@ -133,3 +133,59 @@ func TestEvalRunnersReportFailures(t *testing.T) {
 		})
 	}
 }
+
+func TestEvalRunnerResumesCorrectionAndReportsItsFailure(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq unavailable")
+	}
+	for _, failFollowup := range []bool{false, true} {
+		t.Run(map[bool]string{false: "pass", true: "followup failure"}[failFollowup], func(t *testing.T) {
+			dir := t.TempDir()
+			mai := filepath.Join(dir, "mai")
+			body := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$MAI_TEST_ARGS\"\ncase \" $* \" in *' --last '*) exit \"$MAI_TEST_FOLLOWUP_EXIT\" ;; esac\nexit 0\n"
+			if err := os.WriteFile(mai, []byte(body), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "go"), []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("TMPDIR", dir)
+			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			t.Setenv("MAI_EVAL_BIN", mai)
+			t.Setenv("MAI_EVAL_MODE", "flash")
+			t.Setenv("MAI_EVAL_PROVIDER", "enclave")
+			t.Setenv("MAI_EVAL_CONFIG", "")
+			argsPath := filepath.Join(dir, "args.txt")
+			t.Setenv("MAI_TEST_ARGS", argsPath)
+			wantExit := 0
+			wantGrade := "pass"
+			followupExit := "0"
+			if failFollowup {
+				wantExit = 1
+				wantGrade = "fail"
+				followupExit = "7"
+			}
+			t.Setenv("MAI_TEST_FOLLOWUP_EXIT", followupExit)
+			cmd := exec.Command("sh", filepath.Join("..", "..", "evals", "run.sh"), "twitter-thread")
+			output, err := cmd.CombinedOutput()
+			if cmd.ProcessState == nil || cmd.ProcessState.ExitCode() != wantExit || !strings.Contains(string(output), "twitter-thread\t"+wantGrade+"\t") {
+				t.Fatalf("followup grade: %v %s", err, output)
+			}
+			data, err := os.ReadFile(argsPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+			// Prompts are multiline, so inspect option suffixes rather than
+			// assuming each invocation is one line in this diagnostic file.
+			first, last := false, false
+			for _, line := range lines {
+				first = first || strings.HasSuffix(line, "--provider enclave --f --persist --jsonl --no-input --skip-skills")
+				last = last || strings.HasSuffix(line, "--last --provider enclave --jsonl --no-input --skip-skills")
+			}
+			if !first || !last {
+				t.Fatalf("initial/resumed CLI flags: %s", data)
+			}
+		})
+	}
+}

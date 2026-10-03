@@ -36,6 +36,101 @@ func TestMainWithoutPromptShowsBuiltInDefault(t *testing.T) {
 	}
 }
 
+func TestMainSkipSkillsOnNewAndResumedTasks(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeTestDeepSeekConfig(t)
+	root := filepath.Join("agents", "skills")
+	writeTestSkill(t, root, "demo", "demo", "SECRET_SKILL_DESCRIPTION")
+	mustWrite(t, filepath.Join(root, "demo", "SKILL.md"), "---\nname: demo\ndescription: SECRET_SKILL_DESCRIPTION\n---\nSECRET_SKILL_BODY\n")
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var payload struct {
+			Instructions string `json:"instructions"`
+			Tools        []struct {
+				Name string `json:"name"`
+			} `json:"tools"`
+			Input json.RawMessage `json:"input"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Error(err)
+			return
+		}
+		if !strings.Contains(payload.Instructions, "Skills are disabled") || strings.Contains(payload.Instructions, "SECRET_SKILL") || bytes.Contains(payload.Input, []byte("SECRET_SKILL")) {
+			t.Error("skills were loaded or disability instructions were omitted")
+		}
+		for _, tool := range payload.Tools {
+			if tool.Name == "read_skill" {
+				t.Error("read_skill was advertised")
+			}
+		}
+		if requests%2 == 1 {
+			call := functionCall{Type: "function_call", CallID: fmt.Sprintf("blocked-skill-%d", requests), Name: "read_skill", Arguments: `{"path":"demo"}`}
+			deepseekTestResponse(w, string(mustJSON(t, []functionCall{call})))
+			return
+		}
+		if !bytes.Contains(payload.Input, []byte("skills disabled")) {
+			t.Error("unexpected read_skill call was not rejected")
+		}
+		deepseekTestResponse(w, `[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}]`)
+	}))
+	defer server.Close()
+	t.Setenv("MAI_DEEPSEEK_URL", server.URL)
+	for _, args := range [][]string{{"Use $demo", "--persist", "--f", "-s"}, {"Use $demo again", "--last", "--skip-skills"}} {
+		var stdout, stderr bytes.Buffer
+		if code := Main(args, &stdout, &stderr); code != 0 {
+			t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+		}
+	}
+	if requests != 4 {
+		t.Fatalf("requests=%d, want 4", requests)
+	}
+}
+
+func TestMainEnablesSkillsByDefaultOnNewAndResumedTasks(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeTestDeepSeekConfig(t)
+	root := filepath.Join("agents", "skills")
+	writeTestSkill(t, root, "demo", "demo", "Demo skill")
+	mustWrite(t, filepath.Join(root, "demo", "SKILL.md"), "---\nname: demo\ndescription: Demo skill\n---\nDEFAULT_SKILL_BODY\n")
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var payload struct {
+			Instructions string `json:"instructions"`
+			Tools        []struct {
+				Name string `json:"name"`
+			} `json:"tools"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Error(err)
+			return
+		}
+		if !strings.Contains(payload.Instructions, "DEFAULT_SKILL_BODY") || strings.Contains(payload.Instructions, "Skills are disabled") {
+			t.Error("default run did not load the mentioned skill")
+		}
+		hasReadSkill := false
+		for _, tool := range payload.Tools {
+			hasReadSkill = hasReadSkill || tool.Name == "read_skill"
+		}
+		if !hasReadSkill {
+			t.Error("default run omitted read_skill")
+		}
+		deepseekTestResponse(w, `[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}]`)
+	}))
+	defer server.Close()
+	t.Setenv("MAI_DEEPSEEK_URL", server.URL)
+	for _, args := range [][]string{{"Use $demo", "--persist", "--f"}, {"Use $demo", "--last"}} {
+		var stdout, stderr bytes.Buffer
+		if code := Main(args, &stdout, &stderr); code != 0 {
+			t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+		}
+	}
+	if requests != 2 {
+		t.Fatalf("requests=%d, want 2", requests)
+	}
+}
+
 func TestMainEnforcesMaxTurns(t *testing.T) {
 	for _, test := range []struct {
 		name      string

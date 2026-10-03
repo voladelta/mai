@@ -96,6 +96,9 @@ func (a *agent) runLoop(ctx context.Context, sess *session, userPrompt string) (
 		fmt.Fprintln(a.stderr, "→ thinking")
 	}
 	instructions := systemInstructions(sess, a.loadSkillInstructions(userPrompt), a.roleInstructions)
+	if a.skipSkills {
+		instructions += "\n\nSkills are disabled. Do not load skills or follow skill mentions. Read repository AGENTS.md instructions directly when relevant."
+	}
 	if sess.ContextTokens == 0 {
 		history, err := sess.requestHistory()
 		if err != nil {
@@ -358,6 +361,9 @@ func (a *agent) executeTool(ctx context.Context, sess *session, call functionCal
 }
 
 func (a *agent) executeReadSkill(ctx context.Context, sess *session, arguments string) json.RawMessage {
+	if a.skipSkills {
+		return textToolOutput(toolError("skills disabled", errors.New("read_skill is not available in this run")))
+	}
 	var args struct {
 		Path string `json:"path"`
 		File string `json:"file"`

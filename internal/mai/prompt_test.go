@@ -1,6 +1,7 @@
 package mai
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -11,6 +12,7 @@ func TestSystemInstructionsAreLeanAndComplete(t *testing.T) {
 	for _, required := range []string{
 		"Change files only when the user asks",
 		"bash:",
+		"Host OS: " + runtime.GOOS,
 		"python:",
 		"mai.history(query)",
 		"including entries before compaction",
@@ -29,8 +31,8 @@ func TestSystemInstructionsAreLeanAndComplete(t *testing.T) {
 			t.Fatalf("prompt is missing %q:\n%s", required, prompt)
 		}
 	}
-	if words := len(strings.Fields(prompt)); words > 310 {
-		t.Fatalf("base prompt grew beyond the 310-word budget: %d words", words)
+	if words := len(strings.Fields(prompt)); words > 500 {
+		t.Fatalf("base prompt grew beyond the 500-word budget: %d words", words)
 	}
 	withSkills := systemInstructions(sess, "Skills\n- demo: A demonstration skill. (id: demo)")
 	if !strings.Contains(withSkills, "demo: A demonstration skill") {

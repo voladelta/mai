@@ -32,7 +32,9 @@ func TestLiveDeepSeekResponses(t *testing.T) {
 				}
 				path := filepath.Join(t.TempDir(), "session.json")
 				a := newAgent(io.Discard, io.Discard, path, 2*time.Minute, false)
-				if err := a.configureBackend(sess, defaultProviderConfig()); err != nil {
+				a.skipSkills = true
+				provider := liveToolProvider(t, sess)
+				if err := a.configureBackend(sess, provider); err != nil {
 					t.Fatal(err)
 				}
 				done := false
@@ -46,7 +48,7 @@ func TestLiveDeepSeekResponses(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					if err := a.configureBackend(sess, defaultProviderConfig()); err != nil {
+					if err := a.configureBackend(sess, provider); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -79,9 +81,9 @@ func TestLiveDeepSeekResponses(t *testing.T) {
 				if err != nil || !strings.Contains(checkpoint, "AUD-781") || !strings.Contains(checkpoint, "UNKNOWN") || usage == nil {
 					t.Fatalf("checkpoint did not preserve facts: %v", err)
 				}
-				apiModel := defaultProviderConfig().Models.Pro
+				apiModel := provider.Models.Pro
 				if model == "flash" {
-					apiModel = defaultProviderConfig().Models.Flash
+					apiModel = provider.Models.Flash
 				}
 				t.Logf("RESPONSES_CONFORMANCE model=%s effort=%s tool_resume=true reasoning_observed=%v checkpoint=true duration_ms=%d", apiModel, effortIDs[effort], reasoning, time.Since(started).Milliseconds())
 			})
