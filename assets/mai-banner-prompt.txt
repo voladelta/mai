@@ -1,15 +1,18 @@
-Create a new raster banner concept for the coding-agent project mai. Wide 3:1 landscape, approximately 2400×800. One flat, front-facing editorial silkscreen print on a single solid Cool Gray paper background #E9E9E5, chosen for a technology subject. Pure one-ink mode: Cobalt #2148B8 alone carries the illustration and all type through solid fills, crisp outlines, and screened densities. No other ink color.
+Use case: ads-marketing.
+Asset type: GitHub README banner for the coding agent mai.
+Primary request: Regenerate the banner as a fresh, polished illustration. Use the supplied old banner only as a reference for its cobalt silkscreen style, playful scale, and brand typography. Create a new composition and new illustration; do not merely change the caption on the existing pixels.
+Input image 1: style and brand reference, not a layout to copy exactly.
 
-Use an asymmetric editorial-cover composition with relaxed energy. Exactly one focal event: an abnormal scale relationship between a giant robot/GPU chip and tiny wandering figures. Let the chip fill about 65% of the banner, cropped boldly by the bottom and one side so it reads as an entire landscape. Keep 6% outer margins for type and a visibly quiet open-paper release zone in the upper right; about 30% of the canvas should remain exposed paper. The tiny figures are scattered irregularly across the chip, not in a row. One figure may break the image edge. Add only one tiny printed registration mark as the manual gesture.
-
-The single dominant object is a recognizable hybrid robot face and GPU chip: square processor body, layered heat-sink terraces, pins and circuit paths turned into ridges, ledges, and walkways. Several very small human-like agent figures climb, walk, pause, and inspect it at different heights; one peeks around an outer edge. Their scale makes the ordinary chip feel like a surreal built world. Keep forms readable at thumbnail size. Use economical cobalt contours, solid dark ink masses, halftone recesses, and sharp exposed-paper cutouts to separate terrain and figures. No flower or cup; those are only examples of scale transformation.
-
-Typography: wide geometric grotesk display and minimal monospaced support, with a clear 8:1 hierarchy. Exact display text: "mai" in large lowercase letters, placed in an open zone and tightly locked to the chip silhouette without covering the small figures. Exact short support line: "Little agents, giant circuits". The headline may touch the chip contour but remains fully readable. Right-align three smaller monospaced lines beneath the subtitle, in this exact order:
-6 tools / skills
-Native Go / persistent Python
+Canvas: wide 3:1 landscape, ideally 2400 x 800. One flat editorial silkscreen print on solid cool gray paper #E9E9E5. One ink only: cobalt #2148B8, through solid fills, outlines, and halftone densities. Opaque background.
+Subject: a giant friendly robot-face processor chip explored by a few very tiny human-like coding-agent figures, reflecting Pro directing a Flash sidekick. Build a readable playful landscape from the chip's pins, circuit paths, and heat-sink terraces. The figures inspect different parts of the same machine, scattered irregularly and much smaller than the robot face. No separate decorative objects.
+Composition: asymmetric panoramic editorial cover. Illustration fills the left 60–65 percent and crops at the left and bottom edges. Typography occupies quiet exposed paper on the right, with about 6 percent safe margin at the right edge. Exposed paper and clean negative space occupy roughly one third of the banner. The large robot face and the word mai are immediately readable at GitHub display width. Keep the tiny figures legible and the overall composition calm.
+Typography: large lowercase geometric grotesk display, with smaller crisp monospaced supporting text. Make the word mai dominant; metadata remains secondary but readable. All lettering must be spelled exactly, with no additional words.
+Exact text, in reading order:
+mai
+Little agents, giant circuits
 DeepSeek Responses API
-No other wording.
-
-Mechanical silkscreen texture: visible regular dots, restrained ink density variation, slight ink edge grain, crisp linework and clean plate separation. Contemporary, playful, curious. No gradients, glossy photography, cinematic lighting, 3D rendering, hard shadows, lens blur, cards, UI panels, border, stickers, logos, QR codes, fake signatures, extra colors, or additional text.
-
-The banner was edited with image generation to preserve the original illustration and replace the three metadata lines. Verify all lettering at full size before using it.
+Pro + Flash sidekick
+Native Go / persistent Python
+The three metadata lines should form a tidy compact group under the tagline. No counts or version numbers.
+Print quality: fine regular halftone dots and restrained ink edge grain, sharply drawn forms, exposed-paper cutouts separating layers. More economical and clean than the reference while preserving its charming mechanical world. Include at most one small printed registration mark.
+Avoid: gradients, glossy or 3D rendering, cinematic lighting, photorealism, UI panels, borders, stickers, QR codes, watermarks, extra colors, fake code blocks, extra copy, duplicated text, malformed letters.
