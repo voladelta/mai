@@ -102,7 +102,7 @@ func archiveTranscript(sessionPath string, current, next *session) error {
 	}
 
 	archived := make([]transcriptEntry, 0, len(current.Transcript)+len(live))
-	if sessionPath == "" || current.TranscriptEnd == 0 {
+	if current.TranscriptEnd == 0 {
 		archived = append(archived, current.Transcript...)
 	}
 	archived = append(archived, live...)

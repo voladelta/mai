@@ -18,7 +18,7 @@ func ownedCommand(ctx context.Context, executable string, args ...string) (*exec
 	}
 	var cmd *exec.Cmd
 	cleanup := func() {
-		if cmd != nil && cmd.Process != nil {
+		if cmd.Process != nil {
 			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		}
 		_ = writer.Close()

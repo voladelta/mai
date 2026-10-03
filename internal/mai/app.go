@@ -133,6 +133,9 @@ func runTask(opts options, stdout, stderr io.Writer) int {
 	}
 
 	runner := newAgent(stdout, stderr, active.path, opts.timeout, !opts.noInput && isTerminal(os.Stdin))
+	if !opts.skipSkills {
+		runner.skillsRoots, runner.skillsError = discoverSkillRoots()
+	}
 	if opts.jsonl {
 		runner.modelOutput = jsonlTextWriter{output: stdout}
 	}
@@ -187,10 +190,10 @@ func runTask(opts options, stdout, stderr io.Writer) int {
 }
 
 type activeTask struct {
-	session     *session
-	path        string
-	makeCurrent *sessionPaths
-	lock        *os.File
+	session *session
+	path    string
+	paths   sessionPaths
+	lock    *os.File
 }
 
 func (task *activeTask) saveInitial() error {
@@ -200,10 +203,7 @@ func (task *activeTask) saveInitial() error {
 	if err := saveJSON(task.path, task.session); err != nil {
 		return err
 	}
-	if task.makeCurrent != nil {
-		return saveCurrentSession(*task.makeCurrent, task.session.ID)
-	}
-	return nil
+	return saveCurrentSession(task.paths, task.session.ID)
 }
 
 func (task *activeTask) close() {
@@ -243,7 +243,7 @@ func startSession(cfg taskConfig, opts options) (*activeTask, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &activeTask{session: sess, path: sessionPath(paths, sess.ID), makeCurrent: &paths, lock: lock}, nil
+		return &activeTask{session: sess, path: sessionPath(paths, sess.ID), paths: paths, lock: lock}, nil
 	}
 
 	cwd, err := currentDir()
@@ -277,7 +277,7 @@ func startSession(cfg taskConfig, opts options) (*activeTask, error) {
 		lock.Close()
 		return nil, fmt.Errorf("resume task directory %s: %w", sess.CWD, err)
 	}
-	return &activeTask{session: sess, path: path, lock: lock}, nil
+	return &activeTask{session: sess, path: path, paths: paths, lock: lock}, nil
 }
 
 func appendUserPrompt(sess *session, prompt string) error {

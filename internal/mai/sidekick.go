@@ -45,7 +45,7 @@ type sidekickResult struct {
 }
 
 func (a *agent) executeSidekick(ctx context.Context, parent *session, arguments string) json.RawMessage {
-	if parent.Model != "pro" || a.workerID != "" {
+	if parent.Model != "pro" {
 		return textToolOutput(toolError("sidekick unavailable", errors.New("only the Pro director can call sidekick")))
 	}
 	var args struct {
@@ -101,7 +101,7 @@ func (a *agent) executeSidekick(ctx context.Context, parent *session, arguments 
 	childCtx, cancel := context.WithTimeout(ctx, sidekickTimeout)
 	defer cancel()
 	terminalItems, err := worker.agent.runLoop(childCtx, worker.session, prompt)
-	if childCtx.Err() != nil {
+	if err != nil && childCtx.Err() != nil {
 		err = childCtx.Err()
 	}
 	var answer string

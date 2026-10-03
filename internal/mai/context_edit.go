@@ -132,10 +132,6 @@ type editableBashResult struct {
 }
 
 func editableBashOutput(history []json.RawMessage, relationships contextCallIndex, index int) (editableBashResult, error) {
-	if index < 0 || index >= len(history) {
-		return editableBashResult{}, errors.New("context edit index is outside history")
-	}
-
 	var item struct {
 		Type   string `json:"type"`
 		CallID string `json:"call_id"`

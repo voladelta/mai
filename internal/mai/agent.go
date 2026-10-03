@@ -53,19 +53,8 @@ type functionCall struct {
 }
 
 func newAgent(stdout, stderr io.Writer, sessionPath string, requestTimeout time.Duration, inputAllowed bool) *agent {
-	root, err := defaultSkillsRoot()
-	var roots []string
-	if err == nil {
-		var cwd string
-		cwd, err = currentDir()
-		if err == nil {
-			roots = []string{filepath.Join(findRepoRoot(cwd), "agents", "skills"), root}
-		}
-	}
-
 	a := &agent{
 		stdout: stdout, modelOutput: stdout, stderr: stderr, sessionPath: sessionPath,
-		skillsRoots: roots, skillsError: err,
 		requestTimeout: requestTimeout,
 		cellTimeout:    defaultCellTimeout,
 		maxTurns:       defaultMaxTurns,
@@ -74,6 +63,18 @@ func newAgent(stdout, stderr io.Writer, sessionPath string, requestTimeout time.
 		a.approve = a.terminalApproval
 	}
 	return a
+}
+
+func discoverSkillRoots() ([]string, error) {
+	root, err := defaultSkillsRoot()
+	if err != nil {
+		return nil, err
+	}
+	cwd, err := currentDir()
+	if err != nil {
+		return nil, err
+	}
+	return []string{filepath.Join(findRepoRoot(cwd), "agents", "skills"), root}, nil
 }
 
 func (a *agent) run(ctx context.Context, sess *session, userPrompt string) error {
@@ -146,6 +147,10 @@ func (a *agent) emit(event map[string]any) error {
 
 // runTurn returns the exact terminal response, or nil after executing tool calls.
 func (a *agent) runTurn(ctx context.Context, sess *session, instructions string) ([]json.RawMessage, error) {
+	backend := a.backend
+	if backend == nil {
+		return nil, errors.New("model backend is not configured")
+	}
 	if err := a.compactIfNeeded(ctx, sess, instructions); err != nil {
 		return nil, err
 	}
@@ -153,10 +158,6 @@ func (a *agent) runTurn(ctx context.Context, sess *session, instructions string)
 		return nil, err
 	}
 	modelStarted := time.Now()
-	backend := a.backend
-	if backend == nil {
-		return nil, errors.New("model backend is not configured")
-	}
 	a.modelTurns++
 	result, err := backend.stream(ctx, sess, instructions)
 	a.recordUsage(result.usage)
@@ -219,9 +220,6 @@ func (a *agent) compactIfNeeded(ctx context.Context, sess *session, instructions
 	}
 	if sess.ContextTokens < window*autoCompactPercent/100 {
 		return nil
-	}
-	if a.backend == nil {
-		return errors.New("model backend is not configured")
 	}
 	started := time.Now()
 	history, usage, err := portableHistory(ctx, sess, a.backend)
@@ -380,7 +378,7 @@ func (a *agent) executeReadSkill(ctx context.Context, sess *session, arguments s
 		roots = []string{selected}
 	}
 
-	result, err := readSkill(roots, args.Path, args.File)
+	result, err := readSkill(roots, args.Path, file)
 	if err != nil {
 		return textToolOutput(toolError("read_skill failed", err))
 	}

@@ -39,6 +39,7 @@ func TestAgentLoadsRepositorySkillsBeforeGlobalSkills(t *testing.T) {
 	}
 	t.Chdir(subdir)
 	a := newAgent(io.Discard, io.Discard, "", time.Second, false)
+	a.skillsRoots, a.skillsError = discoverSkillRoots()
 	instructions := a.loadSkillInstructions("Use $same-name and $shared.")
 	for _, want := range []string{"Repository version.", "Repository named skill.", "Global fallback.", "# local-name instructions", "# same-name instructions"} {
 		if !strings.Contains(instructions, want) {
@@ -154,6 +155,7 @@ func TestAgentLoadsLocalOptOutWithoutGlobalSkillsOutsideGit(t *testing.T) {
 	mustWrite(t, filepath.Join(root, "manual", "agents", "openai.yaml"), "policy:\n  allow_implicit_invocation: false\n")
 	var warnings strings.Builder
 	a := newAgent(io.Discard, &warnings, "", time.Second, false)
+	a.skillsRoots, a.skillsError = discoverSkillRoots()
 
 	if instructions := a.loadSkillInstructions("inspect files"); strings.Contains(instructions, "Explicit use only.") {
 		t.Fatalf("opt-out local skill appeared in the catalog:\n%s", instructions)

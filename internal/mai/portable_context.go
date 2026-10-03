@@ -84,15 +84,9 @@ func portableHistory(ctx context.Context, sess *session, backend modelBackend) (
 			continue
 		}
 		if item.Type == "function_call" {
-			if item.CallID == "" || pending[item.CallID] {
-				return nil, nil, errors.New("invalid tool call in compacted prefix")
-			}
 			pending[item.CallID] = true
 		}
 		if item.Type == "function_call_output" {
-			if !pending[item.CallID] {
-				return nil, nil, errors.New("unpaired tool result in compacted prefix")
-			}
 			delete(pending, item.CallID)
 		}
 		entry, visible, err := visibleTranscriptEntry(raw)

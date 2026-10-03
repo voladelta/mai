@@ -243,7 +243,7 @@ func (c *responsesClient) describeImage(ctx context.Context, parent *session, im
 	if err != nil {
 		return "", nil, err
 	}
-	imageSession := &session{Provider: parent.Provider, Model: "flash", Effort: "l", History: []json.RawMessage{input}}
+	imageSession := &session{Model: "flash", Effort: "l", History: []json.RawMessage{input}}
 	result, err := c.request(ctx, imageSession, imageDescriptionInstructions, false)
 	if err != nil {
 		return "", nil, err
@@ -381,10 +381,12 @@ func (c *responsesClient) request(ctx context.Context, sess *session, instructio
 				return streamResult{}, errors.New("invalid Responses assistant message")
 			}
 		}
-		if item.Type == "function_call" && (!toolsAllowed || item.CallID == "" || seen[item.CallID] || item.Name == "" || !json.Valid([]byte(item.Arguments))) {
-			return streamResult{}, errors.New("invalid or unexpected Responses tool call")
+		if item.Type == "function_call" {
+			if !toolsAllowed || item.CallID == "" || seen[item.CallID] || item.Name == "" || !json.Valid([]byte(item.Arguments)) {
+				return streamResult{}, errors.New("invalid or unexpected Responses tool call")
+			}
+			seen[item.CallID] = true
 		}
-		seen[item.CallID] = true
 		if item.Type != "function_call" && item.Type != "reasoning" && item.Type != "message" {
 			return streamResult{}, errors.New("unsupported Responses response item")
 		}

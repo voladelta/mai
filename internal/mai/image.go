@@ -35,9 +35,7 @@ func (a *agent) describeImageOutput(ctx context.Context, sess *session, metadata
 	}
 
 	var result map[string]any
-	if err := json.Unmarshal([]byte(metadata), &result); err != nil {
-		return textToolOutput(toolError("encode image description", err))
-	}
+	_ = json.Unmarshal([]byte(metadata), &result)
 	result["description"] = description
 	result["description_model"] = "flash"
 	result["description_note"] = "Flash-generated image description; a lossy interpretation, not verified facts. Uncertain details require verification."
@@ -93,9 +91,6 @@ func viewImage(root, cwd, path string) (imageFileResult, error) {
 		return imageFileResult{}, fmt.Errorf("image dimensions exceed %d pixels per side", maxImageDimension)
 	}
 	mediaType := "image/" + format
-	if format == "jpeg" {
-		mediaType = "image/jpeg"
-	}
 	return imageFileResult{
 		OK: true, Path: resolved, MediaType: mediaType,
 		Width: config.Width, Height: config.Height,

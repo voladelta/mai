@@ -39,7 +39,7 @@ func resolveProtocolProfile(provider string, profile protocolProfile) (protocolP
 	// Omitted profiles preserve the behavior of existing configs and snapshots.
 	if profile == "" {
 		switch provider {
-		case "", defaultProvider:
+		case defaultProvider:
 			profile = profileDeepSeek
 		case "openrouter":
 			profile = profileOpenRouter

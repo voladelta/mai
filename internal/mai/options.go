@@ -221,7 +221,8 @@ func supportedModel(model string) bool {
 }
 
 func supportedEffort(effort string) bool {
-	return effort == "l" || effort == "h" || effort == "max"
+	_, ok := effortIDs[effort]
+	return ok
 }
 
 // Default input budget for DeepSeek Responses.

@@ -243,7 +243,7 @@ func parseImplicitPolicy(content string) (bool, error) {
 			policyIndent = entry.indent
 			continue
 		}
-		if policyIndent < 0 || entry.indent <= policyIndent || entry.key != "allow_implicit_invocation" {
+		if policyIndent < 0 || entry.key != "allow_implicit_invocation" {
 			continue
 		}
 		switch strings.ToLower(entry.value) {
@@ -378,7 +378,7 @@ func secureSkillPath(dir, path string) (string, error) {
 }
 
 func secureSkillDir(root, id string) (string, error) {
-	if id == "" || id == "." || id == ".." || filepath.Base(id) != id || strings.ContainsAny(id, `/\\`) {
+	if id == "." || id == ".." || filepath.Base(id) != id || strings.ContainsAny(id, `/\\`) {
 		return "", errors.New("skill id must be one directory name")
 	}
 	root, err := canonicalPath(root)

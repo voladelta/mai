@@ -279,7 +279,7 @@ func (a *agent) executePython(ctx context.Context, sess *session, arguments stri
 	if err == nil && len(args) == 1 {
 		if raw, ok := args["code"]; ok {
 			err = json.Unmarshal(raw, &code)
-			if strings.TrimSpace(code) == "" {
+			if err == nil && strings.TrimSpace(code) == "" {
 				err = errors.New("code must be a nonempty string")
 			}
 		} else if raw, ok := args["reset"]; ok && string(raw) == "true" {

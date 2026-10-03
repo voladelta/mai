@@ -50,9 +50,6 @@ type pythonOperation struct {
 
 func decodePythonFrame(data []byte) (pythonFrame, error) {
 	var frame pythonFrame
-	if len(data)+1 > maxPythonFrame {
-		return frame, errors.New("Python control frame exceeds 1 MiB")
-	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return frame, err
@@ -135,7 +132,7 @@ func (k *pythonKernel) awaitReady(ctx context.Context) error {
 		if !open || message.err != nil {
 			return fmt.Errorf("Python startup protocol: %v", message.err)
 		}
-		if frame.Type != "ready" || frame.Generation != k.generation || frame.Version == "" || frame.Executable == "" || frame.GILEnabled == nil {
+		if frame.Type != "ready" || frame.Generation != k.generation || frame.Version == "" || frame.Executable == "" {
 			return errors.New("invalid Python ready message")
 		}
 		k.runtime = &pythonRuntime{frame.Version, frame.Executable, *frame.GILEnabled}

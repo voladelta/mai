@@ -283,8 +283,10 @@ func pathWithin(root, path string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
+const shellExpansionChars = "$`*?[{~"
+
 func hasShellExpansion(value string) bool {
-	return strings.ContainsAny(value, "$`*?[{~")
+	return strings.ContainsAny(value, shellExpansionChars)
 }
 
 func isAssignment(value string) bool {
@@ -392,7 +394,7 @@ func (lexer *shellLexer) readDoubleQuoted(index *int) bool {
 }
 
 func (lexer *shellLexer) writeUnquoted(ch byte) {
-	if strings.ContainsRune("$`*?[{~", rune(ch)) {
+	if strings.ContainsRune(shellExpansionChars, rune(ch)) {
 		lexer.dynamic = true
 	}
 	lexer.word.WriteByte(ch)
