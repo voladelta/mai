@@ -69,7 +69,13 @@ func TestContextHintsPreserveRequestPrefixAndAllowDirectShrink(t *testing.T) {
 		fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[]}}\n\n")
 	}))
 	defer server.Close()
-	client := &responsesClient{models: defaultProviderConfig().Models, httpClient: server.Client(), stdout: io.Discard, endpoint: server.URL}
+	client := &responsesClient{
+		profile:    profileDeepSeek,
+		models:     defaultProviderConfig().Models,
+		httpClient: server.Client(),
+		stdout:     io.Discard,
+		endpoint:   server.URL,
+	}
 
 	for _, pressure := range []int64{0, modelContextWindow / 2} {
 		sess.ContextTokens = pressure
@@ -450,7 +456,13 @@ func TestAgentExecutesContextEditWithoutReplayingBash(t *testing.T) {
 	}))
 	defer server.Close()
 	a := newAgent(io.Discard, io.Discard, filepath.Join(sess.CWD, "session.json"), time.Second, false)
-	a.backend = &responsesClient{models: defaultProviderConfig().Models, httpClient: server.Client(), stdout: io.Discard, endpoint: server.URL}
+	a.backend = &responsesClient{
+		profile:    profileDeepSeek,
+		models:     defaultProviderConfig().Models,
+		httpClient: server.Client(),
+		stdout:     io.Discard,
+		endpoint:   server.URL,
+	}
 	for turn := 0; turn < 3; turn++ {
 		terminalItems, err := a.runTurn(context.Background(), sess, "instructions")
 		if err != nil {

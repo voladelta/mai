@@ -23,9 +23,10 @@ type taskConfig struct {
 }
 
 type sessionBackend struct {
-	Endpoint  string        `json:"endpoint"`
-	APIKeyEnv string        `json:"api_key_env"`
-	Models    modelMappings `json:"models"`
+	Endpoint  string          `json:"endpoint"`
+	APIKeyEnv string          `json:"api_key_env"`
+	Models    modelMappings   `json:"models"`
+	Profile   protocolProfile `json:"profile,omitempty"`
 }
 
 type session struct {
@@ -224,28 +225,41 @@ func normalizeSessionSettings(out *session) error {
 	if out.Provider == "" {
 		out.Provider = defaultProvider
 	}
+
 	switch out.Model {
 	case "ds-flash":
 		out.Model = "flash"
 	case "ds-pro":
 		out.Model = "pro"
 	}
+
 	if !validProviderName(out.Provider) {
 		return fmt.Errorf("saved session has invalid provider %q", out.Provider)
 	}
+
 	if out.Backend != nil {
-		if !validEndpoint(out.Backend.Endpoint) || !validEnvName(out.Backend.APIKeyEnv) || strings.TrimSpace(out.Backend.Models.Flash) == "" || strings.TrimSpace(out.Backend.Models.Pro) == "" {
-			return errors.New("saved session has invalid provider settings")
+		if err := validateProviderSettings(out.Backend.Endpoint, out.Backend.APIKeyEnv, out.Backend.Models); err != nil {
+			return fmt.Errorf("saved session has invalid provider settings: %w", err)
 		}
+
+		profile, err := resolveProtocolProfile(out.Provider, out.Backend.Profile)
+		if err != nil {
+			return fmt.Errorf("saved session has invalid provider settings: %w", err)
+		}
+
+		out.Backend.Profile = profile
 	} else if out.Provider != defaultProvider {
 		return errors.New("saved session is missing provider settings; start a new task")
 	}
+
 	if !supportedModel(out.Model) {
 		return fmt.Errorf("saved session has invalid model %q", out.Model)
 	}
+
 	if _, ok := effortIDs[out.Effort]; !ok {
 		return fmt.Errorf("saved session has invalid effort %q", out.Effort)
 	}
+
 	return nil
 }
 

@@ -70,6 +70,14 @@ come from the named environment variable. URLs must be HTTPS, with HTTP allowed
 for loopback tests, and contain no embedded credentials, query or fragment.
 Mai appends `/responses` to the base URL.
 
+Set `profile` to `deepseek`, `openrouter`, or `responses` to select API behavior
+independently of the provider name. DeepSeek replays only plain reasoning;
+OpenRouter and Responses retain supported summary or encrypted reasoning.
+OpenRouter translates maximum effort to `xhigh`; the other profiles use `max`.
+For existing configs that omit `profile`, the names `deepseek` and `openrouter`
+select their corresponding profiles; other names select `responses`.
+Use an explicit profile for custom aliases. See the example config.
+
 `--provider NAME` overrides the configured default for a new task.
 Pro, Flash, sidekicks, image descriptions, and checkpoints all use
 the selected provider. A missing provider, model mapping, or credential is an
@@ -86,9 +94,9 @@ mai "review the result carefully" --last
 ```
 
 `--persist` and `--last` cannot be combined. Resume restores the original
-working directory, conversation, provider, endpoint, model mappings, model tier,
-and reasoning effort. Plain resume ignores current config files and rejects
-`--f` and `--max`. Use `--last --provider NAME` to load current provider config
+working directory, conversation, provider, profile, endpoint, model mappings,
+model tier, and reasoning effort. Plain resume ignores current config files
+and rejects `--f` and `--max`. Use `--last --provider NAME` to load current provider config
 and switch backends while retaining the saved model tier and effort. The switch
 is saved for subsequent resumes. Credentials are read from the saved environment
 variable name each time, so rotating a key still works. Legacy DeepSeek sessions

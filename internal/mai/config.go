@@ -21,9 +21,55 @@ type providerFile struct {
 }
 
 type providerConfig struct {
-	BaseURL   string        `json:"base_url"`
-	APIKeyEnv string        `json:"api_key_env"`
-	Models    modelMappings `json:"models"`
+	BaseURL   string          `json:"base_url"`
+	APIKeyEnv string          `json:"api_key_env"`
+	Models    modelMappings   `json:"models"`
+	Profile   protocolProfile `json:"profile,omitempty"`
+}
+
+type protocolProfile string
+
+const (
+	profileDeepSeek   protocolProfile = "deepseek"
+	profileOpenRouter protocolProfile = "openrouter"
+	profileResponses  protocolProfile = "responses"
+)
+
+func resolveProtocolProfile(provider string, profile protocolProfile) (protocolProfile, error) {
+	// Omitted profiles preserve the behavior of existing configs and snapshots.
+	if profile == "" {
+		switch provider {
+		case "", defaultProvider:
+			profile = profileDeepSeek
+		case "openrouter":
+			profile = profileOpenRouter
+		default:
+			profile = profileResponses
+		}
+	}
+
+	switch profile {
+	case profileDeepSeek, profileOpenRouter, profileResponses:
+		return profile, nil
+	default:
+		return "", fmt.Errorf("invalid profile %q (use deepseek, openrouter, or responses)", profile)
+	}
+}
+
+func validateProviderSettings(endpoint, apiKeyEnv string, models modelMappings) error {
+	if !validEndpoint(endpoint) {
+		return errors.New("URL must be HTTPS (HTTP allowed for loopback), without credentials, query or fragment")
+	}
+
+	if !validEnvName(apiKeyEnv) {
+		return errors.New("requires a valid api_key_env name")
+	}
+
+	if strings.TrimSpace(models.Flash) == "" || strings.TrimSpace(models.Pro) == "" {
+		return errors.New("requires flash and pro model mappings")
+	}
+
+	return nil
 }
 
 type modelMappings struct {
@@ -36,6 +82,7 @@ func defaultProviderConfig() providerConfig {
 		BaseURL:   "https://api.deepseek.com",
 		APIKeyEnv: "DEEPSEEK_API_KEY",
 		Models:    modelMappings{Flash: "deepseek-flash", Pro: "deepseek-v4-pro"},
+		Profile:   profileDeepSeek,
 	}
 }
 
@@ -74,6 +121,7 @@ func decodeProviderConfig(reader io.Reader) (providerFile, error) {
 	if err := decoder.Decode(&cfg); err != nil {
 		return providerFile{}, fmt.Errorf("invalid configuration JSON: %w", err)
 	}
+
 	if err := decoder.Decode(new(any)); err != io.EOF {
 		return providerFile{}, errors.New("configuration must contain one JSON object")
 	}
@@ -81,23 +129,29 @@ func decodeProviderConfig(reader io.Reader) (providerFile, error) {
 	if len(cfg.Providers) == 0 {
 		return providerFile{}, errors.New("configuration requires providers")
 	}
+
 	for name, provider := range cfg.Providers {
 		if !validProviderName(name) {
 			return providerFile{}, fmt.Errorf("invalid provider name %q", name)
 		}
-		if !validEndpoint(provider.BaseURL) {
-			return providerFile{}, fmt.Errorf("provider %q base_url must be HTTPS (HTTP allowed for loopback), without credentials, query or fragment", name)
+
+		if err := validateProviderSettings(provider.BaseURL, provider.APIKeyEnv, provider.Models); err != nil {
+			return providerFile{}, fmt.Errorf("provider %q: %w", name, err)
 		}
-		if !validEnvName(provider.APIKeyEnv) {
-			return providerFile{}, fmt.Errorf("provider %q requires a valid api_key_env name", name)
+
+		profile, err := resolveProtocolProfile(name, provider.Profile)
+		if err != nil {
+			return providerFile{}, fmt.Errorf("provider %q: %w", name, err)
 		}
-		if strings.TrimSpace(provider.Models.Flash) == "" || strings.TrimSpace(provider.Models.Pro) == "" {
-			return providerFile{}, fmt.Errorf("provider %q requires flash and pro model mappings", name)
-		}
+
+		provider.Profile = profile
+		cfg.Providers[name] = provider
 	}
+
 	if _, exists := cfg.Providers[cfg.DefaultProvider]; !exists {
 		return providerFile{}, fmt.Errorf("default_provider %q is not configured", cfg.DefaultProvider)
 	}
+
 	return cfg, nil
 }
 

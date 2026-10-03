@@ -139,7 +139,15 @@ func TestProImageToolsUseFlashAndContinueWithText(t *testing.T) {
 				a := &agent{
 					stdout: &output, stderr: io.Discard, skillsRoots: []string{root},
 					sessionPath: filepath.Join(sess.CWD, "session.json"),
-					backend:     &responsesClient{models: defaultProviderConfig().Models, httpClient: server.Client(), endpoint: server.URL, apiKey: "test", stdout: &output, requestTimeout: time.Second},
+					backend: &responsesClient{
+						profile:        profileDeepSeek,
+						models:         defaultProviderConfig().Models,
+						httpClient:     server.Client(),
+						endpoint:       server.URL,
+						apiKey:         "test",
+						stdout:         &output,
+						requestTimeout: time.Second,
+					},
 				}
 
 				if terminalItems, err := a.runTurn(context.Background(), sess, "instructions"); err != nil || len(terminalItems) != 0 {
@@ -150,7 +158,7 @@ func TestProImageToolsUseFlashAndContinueWithText(t *testing.T) {
 					t.Fatal(err)
 				}
 				sess = saved
-				if err := validateResponsesHistory(sess.History, sess.Model, defaultProvider); err != nil {
+				if err := validateResponsesHistory(sess.History, sess.Model, profileDeepSeek); err != nil {
 					t.Fatal(err)
 				}
 				if terminalItems, err := a.runTurn(context.Background(), sess, "instructions"); err != nil || len(terminalItems) == 0 {
@@ -186,7 +194,13 @@ func TestFlashImageDescriptionRejectsInvalidOutput(t *testing.T) {
 				deepseekTestResponse(w, test.items)
 			}))
 			defer server.Close()
-			client := &responsesClient{models: defaultProviderConfig().Models, httpClient: server.Client(), endpoint: server.URL, apiKey: "test"}
+			client := &responsesClient{
+				profile:    profileDeepSeek,
+				models:     defaultProviderConfig().Models,
+				httpClient: server.Client(),
+				endpoint:   server.URL,
+				apiKey:     "test",
+			}
 
 			if _, _, err := client.describeImage(context.Background(), deepseekTestSession(t), "data:image/png;base64,test"); err == nil {
 				t.Fatal("invalid Flash description accepted")

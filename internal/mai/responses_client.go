@@ -18,6 +18,7 @@ import (
 // send portable text checkpoints instead of server-side conversation state.
 type responsesClient struct {
 	provider       string
+	profile        protocolProfile
 	models         modelMappings
 	httpClient     *http.Client
 	endpoint       string
@@ -31,34 +32,56 @@ func (a *agent) configureBackend(sess *session, provider providerConfig) error {
 	if !supportedModel(sess.Model) || !supportedEffort(sess.Effort) {
 		return errors.New("Responses requires flash or pro and effort l, h or max")
 	}
+
 	if sess.Provider == "" {
 		sess.Provider = defaultProvider
 	}
-	settings := sess.Backend
-	if settings == nil {
+
+	var settings sessionBackend
+	if sess.Backend != nil {
+		settings = *sess.Backend
+	} else {
 		endpoint := strings.TrimRight(provider.BaseURL, "/") + "/responses"
 		if sess.Provider == defaultProvider && os.Getenv("MAI_DEEPSEEK_URL") != "" {
 			endpoint = os.Getenv("MAI_DEEPSEEK_URL")
 		}
-		settings = &sessionBackend{Endpoint: endpoint, APIKeyEnv: provider.APIKeyEnv, Models: provider.Models}
+
+		settings = sessionBackend{
+			Endpoint:  endpoint,
+			APIKeyEnv: provider.APIKeyEnv,
+			Models:    provider.Models,
+			Profile:   provider.Profile,
+		}
 	}
-	if !validEndpoint(settings.Endpoint) {
-		return errors.New("Responses endpoint must be HTTPS (HTTP allowed for loopback), without credentials, query or fragment")
+
+	if err := validateProviderSettings(settings.Endpoint, settings.APIKeyEnv, settings.Models); err != nil {
+		return fmt.Errorf("provider %q: %w", sess.Provider, err)
 	}
+
+	profile, err := resolveProtocolProfile(sess.Provider, settings.Profile)
+	if err != nil {
+		return fmt.Errorf("provider %q: %w", sess.Provider, err)
+	}
+
+	settings.Profile = profile
 	key := os.Getenv(settings.APIKeyEnv)
 	if key == "" {
 		return fmt.Errorf("provider %q requires %s", sess.Provider, settings.APIKeyEnv)
 	}
+
 	history, err := sess.requestHistory()
 	if err != nil {
 		return err
 	}
-	if err := validateResponsesHistory(history, sess.Model, sess.Provider); err != nil {
+
+	if err := validateResponsesHistory(history, sess.Model, profile); err != nil {
 		return err
 	}
+
 	if sess.ContextTokens == 0 {
 		sess.ContextTokens = estimateHistoryTokens(history)
 	}
+
 	window := int64(1_000_000)
 	if value := os.Getenv("MAI_CONTEXT_WINDOW"); value != "" {
 		var err error
@@ -67,10 +90,12 @@ func (a *agent) configureBackend(sess *session, provider providerConfig) error {
 			return errors.New("MAI_CONTEXT_WINDOW must be 32768..1000000")
 		}
 	}
+
 	a.contextWindow = window
-	sess.Backend = settings
+	sess.Backend = &settings
 	a.backend = &responsesClient{
 		provider:       sess.Provider,
+		profile:        profile,
 		models:         settings.Models,
 		httpClient:     &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 		endpoint:       settings.Endpoint,
@@ -79,15 +104,16 @@ func (a *agent) configureBackend(sess *session, provider providerConfig) error {
 		requestTimeout: a.requestTimeout,
 		contextWindow:  window,
 	}
+
 	return nil
 }
 
-func validateResponsesHistory(history []json.RawMessage, model, provider string) error {
-	_, err := validatedResponsesCallIDs(history, model, provider)
+func validateResponsesHistory(history []json.RawMessage, model string, profile protocolProfile) error {
+	_, err := validatedResponsesCallIDs(history, model, profile)
 	return err
 }
 
-func validatedResponsesCallIDs(history []json.RawMessage, model, provider string) (map[string]bool, error) {
+func validatedResponsesCallIDs(history []json.RawMessage, model string, profile protocolProfile) (map[string]bool, error) {
 	pending := map[string]bool{}
 	seen := map[string]bool{}
 	for _, raw := range history {
@@ -105,11 +131,11 @@ func validatedResponsesCallIDs(history []json.RawMessage, model, provider string
 		}
 		switch item.Type {
 		case "", "message", "reasoning":
-			if item.Encrypted != "" && (provider == "" || provider == defaultProvider) {
+			if item.Encrypted != "" && profile == profileDeepSeek {
 				return nil, errors.New("DeepSeek cannot replay encrypted reasoning; start a new task")
 			}
 			if item.Type == "reasoning" {
-				if provider != "" && provider != defaultProvider {
+				if profile != profileDeepSeek {
 					if len(item.Summary) > 0 && string(item.Summary) != "null" {
 						var summary []json.RawMessage
 						if err := json.Unmarshal(item.Summary, &summary); err != nil {
@@ -266,7 +292,7 @@ func (c *responsesClient) request(ctx context.Context, sess *session, instructio
 			history = append(history, hint)
 		}
 	}
-	seen, err := validatedResponsesCallIDs(history, sess.Model, c.provider)
+	seen, err := validatedResponsesCallIDs(history, sess.Model, c.profile)
 	if err != nil {
 		return streamResult{}, err
 	}
@@ -281,7 +307,7 @@ func (c *responsesClient) request(ctx context.Context, sess *session, instructio
 		return streamResult{}, fmt.Errorf("provider %q has no %s model mapping", c.provider, sess.Model)
 	}
 	effort := effortIDs[sess.Effort]
-	if c.provider == "openrouter" && sess.Effort == "max" {
+	if c.profile == profileOpenRouter && sess.Effort == "max" {
 		effort = "xhigh"
 	}
 	body := map[string]any{
@@ -381,8 +407,8 @@ func (c *responsesClient) request(ctx context.Context, sess *session, instructio
 			return streamResult{}, errors.New("unsupported Responses response item")
 		}
 		if item.Type == "reasoning" {
-			if c.provider != "" && c.provider != defaultProvider {
-				if err := validateResponsesHistory([]json.RawMessage{raw}, sess.Model, c.provider); err != nil {
+			if c.profile != profileDeepSeek {
+				if err := validateResponsesHistory([]json.RawMessage{raw}, sess.Model, c.profile); err != nil {
 					return streamResult{}, err
 				}
 				continue
@@ -399,7 +425,7 @@ func (c *responsesClient) request(ctx context.Context, sess *session, instructio
 			if err != nil {
 				return streamResult{}, err
 			}
-			if err := validateResponsesHistory([]json.RawMessage{plain}, sess.Model, c.provider); err != nil {
+			if err := validateResponsesHistory([]json.RawMessage{plain}, sess.Model, c.profile); err != nil {
 				return streamResult{}, err
 			}
 			result.items[index] = plain

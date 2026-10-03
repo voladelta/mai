@@ -136,12 +136,16 @@ func TestProviderCLISelectionToolReplayAndResume(t *testing.T) {
 		DefaultProvider: "openrouter",
 		Providers: map[string]providerConfig{
 			"openrouter": {
-				BaseURL: server.URL + "/v1/", APIKeyEnv: "MAI_TEST_ROUTER_KEY",
-				Models: modelMappings{Flash: "deepseek/Flash", Pro: "deepseek/Pro"},
+				BaseURL:   server.URL + "/v1/",
+				APIKeyEnv: "MAI_TEST_ROUTER_KEY",
+				Models:    modelMappings{Flash: "deepseek/Flash", Pro: "deepseek/Pro"},
+				Profile:   profileOpenRouter,
 			},
 			"enclave": {
-				BaseURL: server.URL + "/v1", APIKeyEnv: "MAI_TEST_ENCLAVE_KEY",
-				Models: modelMappings{Flash: "cyberouter/Flash", Pro: "cyberouter/Pro"},
+				BaseURL:   server.URL + "/v1",
+				APIKeyEnv: "MAI_TEST_ENCLAVE_KEY",
+				Models:    modelMappings{Flash: "cyberouter/Flash", Pro: "cyberouter/Pro"},
+				Profile:   profileResponses,
 			},
 		},
 	}
@@ -204,9 +208,18 @@ func TestProviderCLISelectionToolReplayAndResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	saved, err := loadSession(sessionPath(paths, id))
-	if err != nil || saved.Provider != "enclave" || saved.Model != "flash" || saved.Effort != "h" || saved.ReasoningStart == 0 {
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if saved.Provider != "enclave" || saved.Model != "flash" || saved.Effort != "h" || saved.ReasoningStart == 0 {
 		t.Fatalf("provider switch lost saved mode/settings: %+v, %v", saved, err)
 	}
+
+	if saved.Backend == nil || saved.Backend.Profile != profileResponses {
+		t.Fatalf("provider switch lost saved profile: %+v", saved.Backend)
+	}
+
 	if !bytes.Contains(mustJSON(t, saved.History), []byte("opaque-router-state")) {
 		t.Fatal("provider switch destroyed original reasoning history")
 	}
@@ -313,7 +326,7 @@ func TestProviderSwitchKeepsContextEditIndexesAndResetsBoundaryAfterCompaction(t
 	if !bytes.Equal(original, mustJSON(t, sess.History[:4])) || sess.ContextEdits[0].Index != 3 {
 		t.Fatal("provider switch mutated original history or context edit indexes")
 	}
-	if err := validateResponsesHistory(history, sess.Model, defaultProvider); err != nil {
+	if err := validateResponsesHistory(history, sess.Model, profileDeepSeek); err != nil {
 		t.Fatal(err)
 	}
 

@@ -174,7 +174,13 @@ func TestSidekickInheritsApproval(t *testing.T) {
 			defer server.Close()
 			a := newAgent(io.Discard, io.Discard, "", time.Second, false)
 			a.skipSkills = true
-			a.backend = &responsesClient{models: defaultProviderConfig().Models, httpClient: server.Client(), endpoint: server.URL, stdout: io.Discard}
+			a.backend = &responsesClient{
+				profile:    profileDeepSeek,
+				models:     defaultProviderConfig().Models,
+				httpClient: server.Client(),
+				endpoint:   server.URL,
+				stdout:     io.Discard,
+			}
 			a.approve = func(_ context.Context, command, reason string) (bool, error) {
 				approvals++
 				if !strings.Contains(command, victim) || reason == "" {
@@ -212,7 +218,13 @@ func TestSidekickFailureDoesNotReplayEffects(t *testing.T) {
 	defer server.Close()
 	a := newAgent(io.Discard, io.Discard, "", time.Second, false)
 	a.skipSkills = true
-	a.backend = &responsesClient{models: defaultProviderConfig().Models, httpClient: server.Client(), endpoint: server.URL, stdout: io.Discard}
+	a.backend = &responsesClient{
+		profile:    profileDeepSeek,
+		models:     defaultProviderConfig().Models,
+		httpClient: server.Client(),
+		endpoint:   server.URL,
+		stdout:     io.Discard,
+	}
 	defer a.close()
 
 	var encoded string
@@ -261,7 +273,13 @@ func TestSidekickBudgetAndCancellation(t *testing.T) {
 			defer server.Close()
 			a := newAgent(io.Discard, io.Discard, "", time.Second, false)
 			a.skipSkills = true
-			a.backend = &responsesClient{models: defaultProviderConfig().Models, httpClient: server.Client(), endpoint: server.URL, stdout: io.Discard}
+			a.backend = &responsesClient{
+				profile:    profileDeepSeek,
+				models:     defaultProviderConfig().Models,
+				httpClient: server.Client(),
+				endpoint:   server.URL,
+				stdout:     io.Discard,
+			}
 			defer a.close()
 
 			output := a.executeTool(ctx, parent, functionCall{Name: "sidekick", Arguments: `{"task":"Investigate"}`})
@@ -326,7 +344,13 @@ func TestSidekickPythonNamespaceSurvivesFollowupAndCloses(t *testing.T) {
 		deepseekTestResponse(w, `[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"verified"}]}]`)
 	}))
 	defer server.Close()
-	a.backend = &responsesClient{models: defaultProviderConfig().Models, httpClient: server.Client(), endpoint: server.URL, stdout: io.Discard}
+	a.backend = &responsesClient{
+		profile:    profileDeepSeek,
+		models:     defaultProviderConfig().Models,
+		httpClient: server.Client(),
+		endpoint:   server.URL,
+		stdout:     io.Discard,
+	}
 
 	for turn := 0; turn < 2; turn++ {
 		args := map[string]string{"task": "Check the worker namespace"}
@@ -393,7 +417,13 @@ func TestSidekickReturnsTerminalMessagesAfterFollowup(t *testing.T) {
 
 			a := newAgent(io.Discard, io.Discard, "", time.Second, false)
 			a.skipSkills = true
-			a.backend = &responsesClient{models: defaultProviderConfig().Models, httpClient: server.Client(), endpoint: server.URL, stdout: io.Discard}
+			a.backend = &responsesClient{
+				profile:    profileDeepSeek,
+				models:     defaultProviderConfig().Models,
+				httpClient: server.Client(),
+				endpoint:   server.URL,
+				stdout:     io.Discard,
+			}
 			defer a.close()
 
 			output := a.executeTool(context.Background(), parent, functionCall{Name: "sidekick", Arguments: `{"task":"First assignment"}`})
@@ -440,7 +470,13 @@ func TestSidekickCannotReuseStaleAnswer(t *testing.T) {
 	defer server.Close()
 	a := newAgent(io.Discard, io.Discard, "", time.Second, false)
 	a.skipSkills = true
-	a.backend = &responsesClient{models: defaultProviderConfig().Models, httpClient: server.Client(), endpoint: server.URL, stdout: io.Discard}
+	a.backend = &responsesClient{
+		profile:    profileDeepSeek,
+		models:     defaultProviderConfig().Models,
+		httpClient: server.Client(),
+		endpoint:   server.URL,
+		stdout:     io.Discard,
+	}
 	defer a.close()
 	if output := a.executeTool(context.Background(), parent, functionCall{Name: "sidekick", Arguments: `{"task":"First assignment"}`}); !strings.Contains(string(output), "earlier answer") {
 		t.Fatalf("first assignment = %s", output)

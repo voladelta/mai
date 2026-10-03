@@ -192,6 +192,14 @@ mai "quick review" --provider enclave --f
 The config contains `default_provider` (defaults to `deepseek` when omitted)
 and a `providers` object. Each provider defines `base_url`, `api_key_env`, and
 both `models.pro` and `models.flash`. Model IDs are sent exactly as written.
+
+Set `profile` to `deepseek` for native DeepSeek, `openrouter` for OpenRouter,
+or `responses` for other Responses providers. The profile controls maximum-effort
+translation and reasoning replay independently of the configuration name.
+When omitted, existing behavior is preserved: `deepseek` uses the DeepSeek
+profile, `openrouter` uses the OpenRouter profile, and other names use Responses.
+Set it explicitly when giving a provider a custom name.
+
 Mai appends `/responses` to `base_url`; all providers use the Responses API.
 Use environment-variable names for keys, never literal credentials. Unknown
 fields, missing mappings, unknown providers, and missing selected credentials

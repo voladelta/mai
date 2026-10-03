@@ -105,10 +105,16 @@ Responses stream through the existing text and function-tool flow. Mai replays
 the full local history, including provider reasoning between tool calls;
 Mai does not rely on server-side conversation state. Each request allows up to
 32,768 output tokens, including reasoning. Credentials stay in the environment.
-Saved tasks record the selected provider, endpoint, credential environment-variable
-name, both model mappings, model tier, and effort. New tasks select Pro/high
-unless `--f` or `--max` is passed. Plain resume restores these settings and ignores
-current config files. `--f` and `--max` are rejected on resume.
+Saved tasks record the selected provider, protocol profile, endpoint, credential
+environment-variable name, both model mappings, model tier, and effort.
+The profile determines effort translation and reasoning handling independently
+of the provider name.
+Older snapshots without a profile infer it from the saved provider name:
+`deepseek`, `openrouter`, or `responses` for other names.
+
+New tasks select Pro/high unless `--f` or `--max` is passed. Plain resume restores
+these settings and ignores current config files. `--f` and `--max` are rejected
+on resume.
 `--last --provider NAME` loads current config to switch providers, retaining the
 saved model tier and effort. The new provider settings are saved for later runs.
 Previous reasoning remains in original history but is excluded from requests to

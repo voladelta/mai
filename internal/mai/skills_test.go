@@ -452,7 +452,7 @@ func TestProSkillImageFailureKeepsHistoryUsable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := validateResponsesHistory(sess.History, sess.Model, defaultProvider); err != nil {
+	if err := validateResponsesHistory(sess.History, sess.Model, profileDeepSeek); err != nil {
 		t.Fatalf("skill output made Pro history unusable: %v", err)
 	}
 	var output struct {

@@ -130,7 +130,14 @@ func TestDeepSeekCheckpointAndProTools(t *testing.T) {
 	}))
 	defer server.Close()
 	var output bytes.Buffer
-	c := &responsesClient{models: defaultProviderConfig().Models, httpClient: server.Client(), endpoint: server.URL, apiKey: "test", stdout: &output}
+	c := &responsesClient{
+		profile:    profileDeepSeek,
+		models:     defaultProviderConfig().Models,
+		httpClient: server.Client(),
+		endpoint:   server.URL,
+		apiKey:     "test",
+		stdout:     &output,
+	}
 	sess := deepseekTestSession(t)
 	sess.Model, sess.Effort = "pro", "max"
 	if _, err := c.stream(context.Background(), sess, "test"); err != nil {
@@ -150,7 +157,13 @@ func TestDeepSeekRejectsIncompleteResponsesAndOpaqueHistory(t *testing.T) {
 				fmt.Fprintf(w, "data: {\"type\":\"response.%s\",\"response\":{\"status\":\"%s\",\"output\":[{\"type\":\"function_call\",\"call_id\":\"x\",\"name\":\"bash\",\"arguments\":\"{}\"}],\"error\":{\"message\":\"SECRET\"}}}\n\n", status, status)
 			}))
 			defer server.Close()
-			c := &responsesClient{models: defaultProviderConfig().Models, httpClient: server.Client(), endpoint: server.URL, stdout: io.Discard}
+			c := &responsesClient{
+				profile:    profileDeepSeek,
+				models:     defaultProviderConfig().Models,
+				httpClient: server.Client(),
+				endpoint:   server.URL,
+				stdout:     io.Discard,
+			}
 			result, err := c.stream(context.Background(), deepseekTestSession(t), "test")
 			if err == nil || len(result.items) != 0 || strings.Contains(err.Error(), "SECRET") {
 				t.Fatalf("unsafe incomplete response: %+v %v", result, err)
@@ -158,15 +171,15 @@ func TestDeepSeekRejectsIncompleteResponsesAndOpaqueHistory(t *testing.T) {
 		})
 	}
 	for _, raw := range []string{`{"type":"reasoning","encrypted_content":"opaque"}`, `{"type":"compaction","encrypted_content":"opaque"}`, `{"type":"reasoning","summary":[]}`, `{"type":"function_call_output","call_id":"missing","output":"x"}`} {
-		if err := validateResponsesHistory([]json.RawMessage{json.RawMessage(raw)}, "flash", defaultProvider); err == nil {
+		if err := validateResponsesHistory([]json.RawMessage{json.RawMessage(raw)}, "flash", profileDeepSeek); err == nil {
 			t.Fatalf("accepted %s", raw)
 		}
 	}
 	image := json.RawMessage(`{"role":"user","content":[{"type":"input_image","file_id":"file-api-example"}]}`)
-	if err := validateResponsesHistory([]json.RawMessage{image}, "pro", defaultProvider); err == nil {
+	if err := validateResponsesHistory([]json.RawMessage{image}, "pro", profileDeepSeek); err == nil {
 		t.Fatal("Pro accepted image")
 	}
-	if err := validateResponsesHistory([]json.RawMessage{image}, "flash", defaultProvider); err != nil {
+	if err := validateResponsesHistory([]json.RawMessage{image}, "flash", profileDeepSeek); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -251,7 +264,13 @@ func TestDeepSeekFlashPreservesToolImagesAndRejectsLossyCompaction(t *testing.T)
 		deepseekTestResponse(w, `[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"image seen"}]}]`)
 	}))
 	defer server.Close()
-	c := &responsesClient{models: defaultProviderConfig().Models, httpClient: server.Client(), endpoint: server.URL, stdout: io.Discard}
+	c := &responsesClient{
+		profile:    profileDeepSeek,
+		models:     defaultProviderConfig().Models,
+		httpClient: server.Client(),
+		endpoint:   server.URL,
+		stdout:     io.Discard,
+	}
 	if _, err := c.stream(context.Background(), sess, "test"); err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +299,13 @@ func TestDeepSeekRejectsMalformedCompletedToolItems(t *testing.T) {
 		`[{"type":"message","role":"user","content":[{"type":"output_text","text":"wrong role"}]}]`,
 	} {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { deepseekTestResponse(w, items) }))
-		c := &responsesClient{models: defaultProviderConfig().Models, httpClient: server.Client(), endpoint: server.URL, stdout: io.Discard}
+		c := &responsesClient{
+			profile:    profileDeepSeek,
+			models:     defaultProviderConfig().Models,
+			httpClient: server.Client(),
+			endpoint:   server.URL,
+			stdout:     io.Discard,
+		}
 		result, err := c.stream(context.Background(), deepseekTestSession(t), "test")
 		server.Close()
 		if err == nil || len(result.items) != 0 {
@@ -315,8 +340,14 @@ func TestDeepSeekChecksToolCallIDAgainstHistoryBeforeEffects(t *testing.T) {
 				t.Fatal(err)
 			}
 			a := &agent{
-				backend: &responsesClient{models: defaultProviderConfig().Models, httpClient: server.Client(), endpoint: server.URL, stdout: io.Discard},
-				stdout:  io.Discard, stderr: io.Discard, sessionPath: path,
+				backend: &responsesClient{
+					profile:    profileDeepSeek,
+					models:     defaultProviderConfig().Models,
+					httpClient: server.Client(),
+					endpoint:   server.URL,
+					stdout:     io.Discard,
+				},
+				stdout: io.Discard, stderr: io.Discard, sessionPath: path,
 			}
 
 			terminalItems, err := a.runTurn(context.Background(), sess, "test")
@@ -341,7 +372,7 @@ func TestDeepSeekChecksToolCallIDAgainstHistoryBeforeEffects(t *testing.T) {
 				}
 			}
 
-			if err := validateResponsesHistory(sess.History, sess.Model, defaultProvider); err != nil {
+			if err := validateResponsesHistory(sess.History, sess.Model, profileDeepSeek); err != nil {
 				t.Fatalf("left invalid history: %v", err)
 			}
 		})
@@ -362,7 +393,13 @@ func TestDeepSeekRejectsNamelessHistoryBeforeRequest(t *testing.T) {
 		json.RawMessage(`{"type":"function_call_output","call_id":"existing","output":"done"}`),
 	)
 	before := mustJSON(t, sess)
-	client := &responsesClient{models: defaultProviderConfig().Models, httpClient: server.Client(), endpoint: server.URL, stdout: io.Discard}
+	client := &responsesClient{
+		profile:    profileDeepSeek,
+		models:     defaultProviderConfig().Models,
+		httpClient: server.Client(),
+		endpoint:   server.URL,
+		stdout:     io.Discard,
+	}
 	result, err := client.stream(context.Background(), sess, "test")
 
 	if err == nil || !strings.Contains(err.Error(), "incomplete function call") || len(result.items) != 0 {

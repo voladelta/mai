@@ -310,7 +310,13 @@ func TestPythonHistoryCompactionAndRunCleanup(t *testing.T) {
 	}))
 	defer server.Close()
 	a.stdout = io.Discard
-	a.backend = &responsesClient{models: defaultProviderConfig().Models, httpClient: server.Client(), stdout: io.Discard, endpoint: server.URL}
+	a.backend = &responsesClient{
+		profile:    profileDeepSeek,
+		models:     defaultProviderConfig().Models,
+		httpClient: server.Client(),
+		stdout:     io.Discard,
+		endpoint:   server.URL,
+	}
 	a.sessionPath = filepath.Join(t.TempDir(), "session.json")
 	sess.Version, sess.ID = stateVersion, "01234567-89ab-cdef-0123-456789abcdef"
 	sess.Model, sess.Effort, sess.RepoRoot = "flash", "h", sess.CWD
