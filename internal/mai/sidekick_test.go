@@ -64,8 +64,8 @@ func TestSidekickDirectorFollowupAndPersistence(t *testing.T) {
 				if !strings.Contains(input, "observed-fact verified") || !strings.Contains(input, "Apply the fix") {
 					t.Error("follow-up lost the worker conversation")
 				}
-				args := string(mustJSON(t, map[string]string{"patch": "*** Begin Patch\n*** Add File: worker.txt\n+fixed\n*** End Patch"}))
-				deepseekTestResponse(w, string(mustJSON(t, []functionCall{{Type: "function_call", CallID: "worker-patch", Name: "apply_patch", Arguments: args}})))
+				args := string(mustJSON(t, map[string]string{"file_path": "worker.txt", "content": "fixed\n"}))
+				deepseekTestResponse(w, string(mustJSON(t, []functionCall{{Type: "function_call", CallID: "worker-write", Name: "write", Arguments: args}})))
 			case 4:
 				deepseekTestResponse(w, `[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"worker.txt fixed"}]}]`)
 			default:
@@ -216,8 +216,8 @@ func TestSidekickFailureDoesNotReplayEffects(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		if requests == 1 {
-			args := string(mustJSON(t, map[string]string{"patch": "*** Begin Patch\n*** Add File: partial.txt\n+partial\n*** End Patch"}))
-			deepseekTestResponse(w, string(mustJSON(t, []functionCall{{Type: "function_call", CallID: "partial", Name: "apply_patch", Arguments: args}})))
+			args := string(mustJSON(t, map[string]string{"file_path": "partial.txt", "content": "partial\n"}))
+			deepseekTestResponse(w, string(mustJSON(t, []functionCall{{Type: "function_call", CallID: "partial", Name: "write", Arguments: args}})))
 			return
 		}
 		w.WriteHeader(http.StatusServiceUnavailable)

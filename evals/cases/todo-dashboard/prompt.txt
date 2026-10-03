@@ -11,4 +11,4 @@ Provide JSON endpoints:
 
 Persist successful changes to the supplied JSON store path. NewHandler must restore state when recreated and report invalid store JSON as an error rather than silently erasing it. Only acknowledge a successful mutation after saving it. Concurrent handler requests must not race or lose updates. Reject malformed JSON with 400 and unsupported methods with 405.
 
-Implement the app, add meaningful tests using httptest to verify HTTP behavior, and run go test -race ./.... Do not launch background servers for verification. Put any temporary files inside this project. Use apply_patch or shell-native tools for edits; never Python/Ruby/Node file writes. Work only in this project. Do not access external services, credentials, or delegate.
+Implement the app, add meaningful tests using httptest to verify HTTP behavior, and run go test -race ./.... Do not launch background servers for verification. Put any temporary files inside this project. Use write/edit or shell-native tools for edits; never Python/Ruby/Node file writes. Work only in this project. Do not access external services, credentials, or delegate.

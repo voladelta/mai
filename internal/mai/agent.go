@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -43,6 +44,8 @@ type agent struct {
 	usage            tokenUsage
 	usageReports     int
 	roleInstructions string
+	filesOnce        sync.Once
+	files            *fileTools
 }
 
 type functionCall struct {
@@ -353,8 +356,8 @@ func (a *agent) executeTool(ctx context.Context, sess *session, call functionCal
 		return a.executeBash(ctx, sess, call.Arguments)
 	case "python":
 		return a.executePython(ctx, sess, call.Arguments, call.CallID)
-	case "apply_patch":
-		return a.executePatch(sess, call.Arguments)
+	case "read", "write", "edit":
+		return a.executeFileTool(ctx, sess, call.Name, call.Arguments)
 	default:
 		return textToolOutput(toolError("unknown tool", fmt.Errorf("%s is not available", call.Name)))
 	}
@@ -428,39 +431,6 @@ func (a *agent) executeBash(ctx context.Context, sess *session, arguments string
 		Command: args.Command, TimeoutMS: args.TimeoutMS, CWD: sess.CWD,
 		RepoRoot: sess.RepoRoot, Approve: a.approve,
 	}))
-}
-
-func (a *agent) executePatch(sess *session, arguments string) json.RawMessage {
-	var args struct {
-		Patch string `json:"patch"`
-	}
-	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
-		return textToolOutput(toolError("invalid apply_patch arguments", err))
-	}
-	fmt.Fprintln(a.stderr, "→ apply_patch")
-	result, err := applyPatch(sess.RepoRoot, args.Patch)
-	return patchToolOutput(result, err)
-}
-
-func patchToolOutput(result string, err error) json.RawMessage {
-	if err == nil {
-		return textToolOutput(result)
-	}
-	var commitErr *patchCommitError
-	if !errors.As(err, &commitErr) {
-		return textToolOutput(toolError("apply_patch failed", err))
-	}
-	b, _ := json.Marshal(map[string]any{
-		"ok":                      false,
-		"outcome":                 "partial",
-		"error":                   "apply_patch failed: " + commitErr.Error(),
-		"applied":                 commitErr.applied,
-		"failed":                  commitErr.failed,
-		"pending":                 commitErr.pending,
-		"reconciliation_required": true,
-		"instruction":             interruptedToolInstruction("apply_patch"),
-	})
-	return textToolOutput(string(b))
 }
 
 func textToolOutput(value string) json.RawMessage {

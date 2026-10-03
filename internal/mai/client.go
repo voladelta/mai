@@ -331,14 +331,42 @@ func toolDefinitions() []map[string]any {
 			},
 		},
 		{
-			"type": "function", "name": "apply_patch",
-			"description": "Create, update, move, or delete repository files with a structured patch bounded by *** Begin Patch and *** End Patch. Paths are relative to the repository root. Use each path only once per document: rewrite an existing file with Update File, never Delete File plus Add File for the same path. Inspect current files before retrying a failed patch.",
+			"type": "function", "name": "read",
+			"description": "Read a repository UTF-8 text file and observe its current version for write/edit. Paths are relative to the repository root. Returns numbered lines, total_lines, truncated and next_offset. At most 2000 lines and 64 KiB per call; files at most 16 MiB. A line longer than the output cap is clipped; use Bash to inspect its remainder.",
 			"parameters": map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
-					"patch": map[string]string{"type": "string", "description": "A complete patch with actual newlines and indentation. Example:\n*** Begin Patch\n*** Update File: file.go\n@@\n-old line\n+new line\n*** End Patch\nFor Add File, prefix every content line with +. For Update File, start each hunk with @@ and prefix every body line with a space for unchanged context, - for removal, or + for addition, before its indentation. Delete File has no body. Encode the patch string as JSON once; do not double-escape newline or tab characters."},
+					"file_path": map[string]string{"type": "string", "description": "File path relative to the repository root."},
+					"offset":    map[string]any{"type": "integer", "minimum": 1, "description": "First line, 1-based. Defaults to 1."},
+					"limit":     map[string]any{"type": "integer", "minimum": 1, "maximum": 2000, "description": "Maximum lines. Defaults to 2000."},
 				},
-				"required": []string{"patch"},
+				"required": []string{"file_path"},
+			},
+		},
+		{
+			"type": "function", "name": "write",
+			"description": "Create or fully replace a repository UTF-8 text file, at most 16 MiB. Paths are relative to the repository root. Read existing files first with read; Bash reads do not count. Prefer edit for targeted changes. A file changed since observation requires rereading. Each call commits one file.",
+			"parameters": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"file_path": map[string]string{"type": "string", "description": "File path relative to the repository root. Provide before content."},
+					"content":   map[string]string{"type": "string", "description": "Complete UTF-8 contents, including intended newlines. Empty string creates or truncates an empty file."},
+				},
+				"required": []string{"file_path", "content"},
+			},
+		},
+		{
+			"type": "function", "name": "edit",
+			"description": "Edit a repository UTF-8 text file by exact literal replacement. Paths are relative to the repository root. Read first unless just created/edited in this session. Whitespace must match; CRLF/LF are normalized and original line endings preserved. Reread if stale. Each call commits one file.",
+			"parameters": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"file_path":   map[string]string{"type": "string", "description": "File path relative to the repository root. Provide before old_string and new_string."},
+					"old_string":  map[string]any{"type": "string", "minLength": 1, "description": "Literal text to replace. Include enough surrounding context for exactly one match."},
+					"new_string":  map[string]string{"type": "string", "description": "Replacement text. Empty string deletes the match."},
+					"replace_all": map[string]any{"type": "boolean", "description": "Replace every match. Defaults to false, which requires exactly one match."},
+				},
+				"required": []string{"file_path", "old_string", "new_string"},
 			},
 		},
 	}

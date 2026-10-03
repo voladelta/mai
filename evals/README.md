@@ -48,10 +48,10 @@ input/output/cache fields and checkpoint usage when measuring API work.
 
 ## Router Flash conformance
 
-For all five enabled Flash tools, combine the four-tool integration probe with the
+For the enabled Flash tools, combine the tool integration probe with the
 context-edit and original-history recall probe. The first requires actual
 file and image reads, two persistent Python cells, a Python-to-Bash bridge,
-a direct patch, and verification of the resulting file. Both are paid probes:
+direct file writes/edits/reads, and verification of the resulting file. Both are paid probes:
 
 ```sh
 MAI_LIVE_DEEPSEEK_FLASH_TOOLS=1 go test -v ./internal/mai -run '^TestLiveDeepSeekFlashTools$' -count=1 -timeout=6m
@@ -133,7 +133,7 @@ Each model has one trial; these are workflow checks, not a quality ranking.
 Deterministic negative controls reject claims of editing without tool calls
 and correct answers without original-history retrieval evidence.
 
-## Patch and timing probes
+## Edit and timing probes
 
 ```sh
 ./evals/patch-rate.sh
@@ -141,9 +141,11 @@ MAI_EVAL_MODE=flash ./evals/patch-rate.sh
 ./evals/timing.sh /absolute/path/events.jsonl
 ```
 
-The patch probe defaults to Pro/high and checks twelve repeated-context edits.
+The edit probe (`patch-rate.sh`, retaining its historical name) defaults to Pro/high
+and checks twelve repeated-context edits through the file tools.
 Both coding runners require `jq` and exit nonzero when any case fails.
-The patch probe reports grades and tool failures; the grader catches edits to
+The edit probe requires actual `read`, `write`, and `edit` calls and reports
+grades and tool failures; the grader catches edits to
 the wrong similar line. The timing helper requires `jq` and reports task,
 model, tool and remaining duration in milliseconds. Cache usage is available
 in the JSONL events, rather than in the timing table. Worker model and tool events count

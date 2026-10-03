@@ -72,9 +72,11 @@ func (a *agent) pythonOperations(sess *session, outerCall string) map[string]pyt
 		return searchTranscript(sess, arguments, outerCall), nil
 	}
 	return map[string]pythonOperation{
-		"bash":        {budgeted: true, handler: tool},
-		"apply_patch": {budgeted: true, handler: tool},
-		"history":     {handler: history},
+		"bash":    {budgeted: true, handler: tool},
+		"read":    {budgeted: true, handler: tool},
+		"write":   {budgeted: true, handler: tool},
+		"edit":    {budgeted: true, handler: tool},
+		"history": {handler: history},
 	}
 }
 

@@ -21,14 +21,19 @@ assert result['stderr'] == 'error'`)
 		t.Fatalf("host error result: %#v", result)
 	}
 
-	patch := "*** Begin Patch\n*** Add File: created\n+host patch\n*** End Patch"
-	result = pythonCell(t, a, sess, fmt.Sprintf("await mai.apply_patch(%q)", patch))
+	result = pythonCell(t, a, sess, `assert not hasattr(mai, 'apply_patch')
+result = await mai.write('created', 'host write\n')
+assert result['ok']
+result = await mai.edit('created', 'write', 'edit')
+assert result['ok']
+result = await mai.read('created')
+assert result['ok'] and result['content'] == '1: host edit\n'`)
 	if !result.OK {
-		t.Fatalf("host patch: %#v", result)
+		t.Fatalf("host file tools: %#v", result)
 	}
 	content, err := os.ReadFile(filepath.Join(sess.CWD, "created"))
-	if err != nil || string(content) != "host patch\n" {
-		t.Fatalf("patch effect: %q, %v", content, err)
+	if err != nil || string(content) != "host edit\n" {
+		t.Fatalf("file effect: %q, %v", content, err)
 	}
 
 	outside := filepath.Join(t.TempDir(), "keep")

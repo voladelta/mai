@@ -450,7 +450,9 @@ func interruptedToolInstruction(name string) string {
 	case "sidekick":
 		return "The sidekick conversation has expired and its effects are unknown. Inspect files and command effects before assigning replacement work; do not automatically replay the assignment."
 	case "apply_patch":
-		return "Inspect the repository and reconcile the requested patch with the current files before you retry apply_patch."
+		return "Read the target files and reconcile the requested patch with their current contents. apply_patch is retired; use write/edit for any remaining changes. Do not automatically replay the old call."
+	case "write", "edit":
+		return "The file mutation has an unknown outcome. Read the target file and reconcile the intended change before retrying; do not automatically replay the mutation."
 	case "bash":
 		return "Inspect the command effects. Do not repeat a command that can have non-idempotent effects without user confirmation."
 	default:

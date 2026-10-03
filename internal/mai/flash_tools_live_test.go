@@ -108,8 +108,9 @@ func TestLiveDeepSeekFlashTools(t *testing.T) {
 2. Use view_image on swatch.png to identify its solid color. Do not infer the color from image bytes or another tool.
 3. Use bash to read numbers.txt.
 4. Use python to assign probe_total to the sum of those numbers and print it. In a separate python tool call, print probe_total + 1 without reassigning probe_total. Also await mai.bash("printf BRIDGE_OK") and print its stdout in that second cell.
-5. Use apply_patch directly to create result.txt containing exactly three lines: the token, the lowercase color name, and the incremented total. End every line with a newline.
-6. Use bash to read result.txt and verify it against your tool observations. Finish with exactly TOOLS_OK if verified. Use no edit_context here; there is no obsolete long output.`
+5. Use write directly to create result.txt containing exactly three lines: the token, the lowercase color name, and the total before incrementing. End every line with a newline. Then use edit directly to increment only the total line. Use read directly to verify the resulting file.
+6. Use bash to read result.txt and verify it against your tool observations. Use no edit_context here; there is no obsolete long output.
+Your entire final response must be the single token TOOLS_OK if verified. Do not include a summary, explanation, bullets, or any other text.`
 	if err := appendUserPrompt(sess, prompt); err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +197,7 @@ func TestLiveDeepSeekFlashTools(t *testing.T) {
 			answerText = entry.Text
 		}
 	}
-	for _, name := range []string{"bash", "apply_patch", "python", "view_image"} {
+	for _, name := range []string{"bash", "read", "write", "edit", "python", "view_image"} {
 		if counts[name] == 0 {
 			t.Errorf("missing real %s call", name)
 		}

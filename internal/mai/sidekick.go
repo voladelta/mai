@@ -152,6 +152,7 @@ func (a *agent) newSidekick(parent *session) (*sidekickWorker, error) {
 	child := newAgent(io.Discard, sidekickLogWriter{output: a.stderr, id: id}, "", a.requestTimeout, false)
 	child.workerID, child.roleInstructions = id, sidekickInstructions
 	child.approve = a.approve
+	child.files = a.fileTools()
 	child.skillsRoots, child.skillsError, child.skipSkills = a.skillsRoots, a.skillsError, a.skipSkills
 	child.cellTimeout, child.contextWindow = a.cellTimeout, a.contextWindow
 	if a.events != nil {

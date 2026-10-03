@@ -33,7 +33,7 @@ change the code, then save the conversation when you need to return to it.
 
 | Capability | What it gives you | Try it |
 | --- | --- | --- |
-| Repository work | Bash, structured patches, and local image inspection. | `mai "fix the empty-input crash and run tests"` |
+| Repository work | Bash, guarded file reads/writes/edits, and local image inspection. | `mai "fix the empty-input crash and run tests"` |
 | Saved tasks | Resume the original directory, provider settings, model mode, and conversation. | `mai "continue the fix" --last` |
 | Model selection | Pro/high by default, Pro/max or Flash/high when selected. | `mai "review this refactor" --max` |
 | Provider selection | Keep `pro` and `flash` names while switching endpoints and credentials. | `mai "quick review" --provider enclave --f` |
@@ -247,7 +247,7 @@ Prompt + CLI options + provider config
          v
 Go agent loop <----> Selected provider's Responses API (streaming)
          |
-         +--> Bash / patches / skills / images / context editing
+         +--> Bash / file reads and edits / skills / images / context editing
          +--> Optional persistent Python --> Go tool bridge
          +--> Pro sidekick --> Flash/high agent (synchronous)
          |
@@ -268,7 +268,7 @@ summaries, so useful details may still need retrieval.
 
 ## Limits and safety
 
-Bash and Python are **not sandboxed**. The patch tool enforces repository
+Bash and Python are **not sandboxed**. File tools enforce repository
 boundaries, and Mai asks for approval for recognizable `rm` commands with
 external or unresolved targets. That check covers `rm` only; other commands
 can overwrite or delete data. `--no-input` rejects approval requests.
@@ -325,7 +325,7 @@ if the previous one runs out of credits, while keeping the same model tier.
 
 ### Do I need Python?
 
-Only for the persistent Python tool. Bash, patches, skills, and image tools
+Only for the persistent Python tool. Bash, file tools, skills, and image tools
 work through Go. Mai does not install Python packages.
 
 ### Do Python variables survive compaction or restart?

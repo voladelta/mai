@@ -156,8 +156,15 @@ def main():
     async def bash(command, timeout_ms=0):
         return await host_call("bash", {"command": command, "timeout_ms": timeout_ms})
 
-    async def apply_patch(patch):
-        return await host_call("apply_patch", {"patch": patch})
+    async def read(file_path, offset=1, limit=2000):
+        return await host_call("read", {"file_path": file_path, "offset": offset, "limit": limit})
+
+    async def write(file_path, content):
+        return await host_call("write", {"file_path": file_path, "content": content})
+
+    async def edit(file_path, old_string, new_string, replace_all=False):
+        return await host_call("edit", {"file_path": file_path, "old_string": old_string,
+                                        "new_string": new_string, "replace_all": replace_all})
 
     async def history(query, limit=20, start=0):
         result = await host_call("history", {"query": query, "limit": limit, "start": start})
@@ -165,7 +172,7 @@ def main():
             raise ValueError(result["error"])
         return result
 
-    mai.bash, mai.apply_patch = bash, apply_patch
+    mai.bash, mai.read, mai.write, mai.edit = bash, read, write, edit
     mai.history = history
     sys.modules["mai"] = mai
     module = types.ModuleType("__main__")

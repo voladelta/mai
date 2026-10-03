@@ -7,17 +7,24 @@ import (
 	"testing"
 )
 
-func TestApplyPatchToolDescribesRepositoryRootPaths(t *testing.T) {
+func TestFileToolsDescribeRepositoryRootPaths(t *testing.T) {
+	found := make(map[string]bool)
 	for _, definition := range toolDefinitions() {
-		if definition["name"] != "apply_patch" {
+		name := definition["name"].(string)
+		if name == "apply_patch" {
+			t.Fatal("retired patch tool is advertised")
+		}
+		if name != "read" && name != "write" && name != "edit" {
 			continue
 		}
 		if !strings.Contains(definition["description"].(string), "Paths are relative to the repository root.") {
-			t.Fatalf("apply_patch path base is undocumented: %s", definition["description"])
+			t.Fatalf("%s path base is undocumented: %s", name, definition["description"])
 		}
-		return
+		found[name] = true
 	}
-	t.Fatal("apply_patch tool is missing")
+	if len(found) != 3 {
+		t.Fatalf("file tools missing: %v", found)
+	}
 }
 
 func TestReadSSEStreamsTextAndCollectsItems(t *testing.T) {

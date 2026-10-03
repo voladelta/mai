@@ -255,7 +255,7 @@ func TestRepairInterruptedToolCalls(t *testing.T) {
 	}
 	if !strings.Contains(recovery.Error, "tool outcome is unknown") ||
 		!strings.Contains(recovery.Instruction, "reconcile") ||
-		!strings.Contains(recovery.Instruction, "before you retry apply_patch") {
+		!strings.Contains(recovery.Instruction, "apply_patch is retired") {
 		t.Fatalf("unsafe apply_patch recovery guidance: %#v", recovery)
 	}
 

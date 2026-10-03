@@ -2,7 +2,7 @@
 
 [Back to README](../README.md) · [CLI reference](cli.md) · [Sessions and context](sessions.md)
 
-Mai exposes six general tools. Pro also has a synchronous Flash/high sidekick.
+Mai exposes eight general tools. Pro also has a synchronous Flash/high sidekick.
 Tools are selected by the model; Python examples below are cells sent to Mai's
 `python` tool, not commands for a standalone Python interpreter.
 
@@ -11,7 +11,9 @@ Tools are selected by the model; Python examples below are cells sent to Mai's
 | Tool | Input | Behavior |
 | --- | --- | --- |
 | `bash` | `command`, optional `timeout_ms` | Run Bash in the task working directory. |
-| `apply_patch` | `patch` | Create, update, move, or delete files inside the repository. Paths are relative to the repository root. |
+| `read` | `file_path`, optional `offset`, `limit` | Read numbered UTF-8 text lines and observe the file version. Paths are relative to the repository root. |
+| `write` | `file_path`, `content` | Create or fully replace a repository UTF-8 text file. Existing files require a fresh observation. |
+| `edit` | `file_path`, `old_string`, `new_string`, optional `replace_all` | Replace literal text in an observed repository file. |
 | `python` | `code` or `reset: true` | Execute a cell in the persistent namespace, or discard that namespace. |
 | `read_skill` | `path`, optional `file` | Read a discovered skill by directory id; `file` defaults to `SKILL.md`. Disabled by `-s` or `--skip-skills`. |
 | `view_image` | `path` | Read a repository image using an absolute path or a path relative to the working directory. |
@@ -27,6 +29,52 @@ For example, a Bash tool call uses:
 See [Context editing](sessions.md#context-editing) for edit eligibility and
 validation. Bash output, Python state, skill discovery, and worker lifetimes
 are described below.
+
+## Reading and editing files
+
+File tool paths are relative to the repository root, even when Mai starts in a
+subdirectory. Files and mutation content are limited to 16 MiB. Only regular
+UTF-8 text files without NUL bytes are supported; file symlinks and special
+files are rejected. Directory aliases inside the repository share a target
+identity; aliases leading outside it are rejected.
+
+`read` uses a 1-based `offset` (default 1) and a `limit` of 1–2,000 lines
+(default 2,000). Results include numbered `content`, `total_lines`, and
+`truncated`; `next_offset` identifies the next line when output remains.
+Output is capped at 64 KiB. A single long line can be clipped, in which case
+`next_offset` points to that same line; inspect the remainder through Bash.
+Even a partial read observes the complete file version.
+
+Before replacing or editing an existing file, use `read`. Bash reads do not
+record an observation. A successful `write` or `edit` observes its result,
+allowing another mutation without rereading. Observations are separate for
+the parent and sidekick and reset on resume; saved history does not authorize
+new mutations. A file changed since observation returns `FS_STALE_VERSION`;
+reread it and reconcile the intended change before retrying. New files need
+no prior read. Creation refuses to overwrite a file that appears concurrently.
+
+`write` accepts complete contents, including an empty string. `edit` requires
+nonempty literal `old_string` and a different `new_string`; an empty
+replacement deletes the match. Zero matches return `FS_EDIT_NOT_FOUND`.
+Multiple matches return `FS_AMBIGUOUS_EDIT` unless `replace_all` is true.
+Whitespace matches exactly. Edits normalize CRLF/LF for matching and restore
+the original line-ending style. Full writes store the supplied contents.
+
+For example, after reading `config.go`:
+
+```json
+{"file_path":"config.go","old_string":"func StartupTimeout() int { return 30 }","new_string":"func StartupTimeout() int { return 45 }"}
+```
+
+Mutations preserve existing permission bits and publish complete contents
+atomically. Parent and sidekick mutations share locks for each target.
+Freshness is rechecked immediately before publication; external programs do
+not participate in these locks and can still race a replacement after that
+check. Each call commits one file. Use Bash for moves and deletes.
+
+`apply_patch` and `mai.apply_patch` have been removed. Older saved tool history
+remains readable. Interrupted mutations have an unknown outcome: inspect the
+target with `read` before retrying rather than automatically replaying a call.
 
 ## Skills
 
@@ -171,10 +219,13 @@ For saved tasks, compacted visible text is stored in a `.transcript.jsonl` file
 beside the session JSON. Older saved tasks migrate their inline transcript on
 the next compaction. Keep both files when moving or backing up a saved task.
 
-`await mai.apply_patch(patch)` applies a repository patch. Host calls use the
+`await mai.read(file_path, offset=1, limit=2000)`,
+`await mai.write(file_path, content)`, and
+`await mai.edit(file_path, old_string, new_string, replace_all=False)` call the
+Go file tools; these do not write files through Python. Host calls use the
 same validation, approvals, and repository boundaries as direct tool calls.
 Host operations run in sequence, with at most eight pending requests and 64
-effectful calls per cell.
+budgeted calls per cell, including file reads.
 Read-only history searches do not consume that budget.
 The bridge accepts calls only from the cell's Python thread. It does not expose
 recursive Python calls.
@@ -270,8 +321,8 @@ child journals, or enforced recursion limit for these ordinary CLI runs.
 
 ## Safety
 
-`apply_patch` can only change files inside the repository. It rejects paths and
-symbolic links that lead outside the repository.
+`read`, `write`, and `edit` operate only inside the repository. They reject
+file symlinks and directory aliases that lead outside the repository.
 
 `bash` can run any command available to your shell. It is not sandboxed.
 
