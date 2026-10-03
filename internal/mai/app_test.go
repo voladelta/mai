@@ -373,10 +373,19 @@ func TestPersistCreatesProjectSessionAndCurrentPointer(t *testing.T) {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
 	paths := projectSessionPaths(root)
+	if paths.current != filepath.Join(root, ".mai", "current") {
+		t.Fatalf("current pointer path = %q", paths.current)
+	}
+
 	id, err := loadCurrentSessionID(paths)
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	if path := sessionPath(paths, id); path != filepath.Join(root, ".mai", "sessions", id+".json") {
+		t.Fatalf("session path = %q", path)
+	}
+
 	sess, err := loadSession(sessionPath(paths, id))
 	if err != nil {
 		t.Fatal(err)

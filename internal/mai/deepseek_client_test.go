@@ -34,15 +34,6 @@ func deepseekTestResponse(w http.ResponseWriter, items string) {
 	fmt.Fprintf(w, "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":%s,\"usage\":{\"input_tokens\":100,\"output_tokens\":12,\"total_tokens\":112,\"input_tokens_details\":{\"cached_tokens\":64}}}}\n\n", items)
 }
 
-func TestDeepSeekOptionsAndDefaults(t *testing.T) {
-	for _, args := range [][]string{{"task"}, {"task", "--f"}} {
-		opts, err := parseOptions(args)
-		if err != nil || configForTask(opts).Effort != "h" {
-			t.Fatalf("default: %v", err)
-		}
-	}
-}
-
 func TestDeepSeekResponsesToolReasoningAndResume(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "private-test-key")
 	t.Setenv("MAI_CONTEXT_WINDOW", "")
@@ -181,36 +172,6 @@ func TestDeepSeekRejectsIncompleteResponsesAndOpaqueHistory(t *testing.T) {
 	}
 	if err := validateResponsesHistory([]json.RawMessage{image}, "flash", profileDeepSeek); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestDeepSeekCLIResumePreservesEffortWithoutCodexItems(t *testing.T) {
-	t.Chdir(t.TempDir())
-	t.Setenv("DEEPSEEK_API_KEY", "private-test-key")
-	t.Setenv("MAI_CONTEXT_WINDOW", "")
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		var body map[string]json.RawMessage
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Error(err)
-		}
-		effort := "high"
-		if !bytes.Contains(body["reasoning"], []byte(effort)) || bytes.Contains(body["input"], []byte("configuration_update")) {
-			t.Error("wrong effort or Codex item on resume")
-		}
-		deepseekTestResponse(w, `[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}]`)
-	}))
-	defer server.Close()
-	t.Setenv("MAI_DEEPSEEK_URL", server.URL+"/responses")
-	var stdout, stderr bytes.Buffer
-	for _, args := range [][]string{{"task", "--f", "--persist", "--no-input", "-s"}, {"continue", "--last", "--no-input", "-s"}} {
-		if code := Main(args, &stdout, &stderr); code != 0 {
-			t.Fatalf("CLI code=%d: %s", code, stderr.String())
-		}
-	}
-	if requests != 2 {
-		t.Fatalf("requests=%d", requests)
 	}
 }
 

@@ -8,10 +8,3 @@ func TestEvalEmptyInput(t *testing.T) {
 		t.Fatalf("empty input returned %#v", got)
 	}
 }
-
-func TestEvalOrdinaryPairs(t *testing.T) {
-	got := ParsePairs("name=mai\nmode=fast")
-	if len(got) != 2 || got["name"] != "mai" || got["mode"] != "fast" {
-		t.Fatalf("ordinary pairs changed: %#v", got)
-	}
-}

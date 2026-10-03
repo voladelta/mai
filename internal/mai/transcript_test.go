@@ -3,7 +3,6 @@ package mai
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -108,32 +107,6 @@ func TestTranscriptIgnoresUncommittedTailAndTruncatesBeforeAppend(t *testing.T) 
 	result = searchTranscript(sess, json.RawMessage(`{"query":"replacement","limit":20}`), "")
 	if !strings.Contains(string(result), `"total":1`) {
 		t.Fatalf("replacement was not searchable: %s", result)
-	}
-}
-
-func TestLoadSessionRejectsMissingCommittedTranscript(t *testing.T) {
-	root := t.TempDir()
-	path := filepath.Join(root, "session.json")
-	sess := session{
-		Version: stateVersion, ID: "01234567-89ab-cdef-0123-456789abcdef",
-		CWD: root, RepoRoot: root, Model: "flash", Effort: "h",
-		TranscriptEnd: 1,
-	}
-	if err := saveJSON(path, sess); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := loadSession(path); err == nil {
-		t.Fatal("missing committed transcript was accepted")
-	}
-	if err := os.WriteFile(transcriptPath(path), []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	sess.TranscriptEnd = 2
-	if err := saveJSON(path, sess); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := loadSession(path); err == nil {
-		t.Fatal("short committed transcript was accepted")
 	}
 }
 

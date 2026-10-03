@@ -354,43 +354,6 @@ func TestSkillCatalogIncludesEveryValidDescription(t *testing.T) {
 	}
 }
 
-func TestReadSkillReturnsCompleteFileAndSupportingFiles(t *testing.T) {
-	root := testSkillRoot(t)
-	writeTestSkill(t, root, "demo", "demo", "A demonstration skill.")
-	mustWrite(t, filepath.Join(root, "demo", "references", "guide.md"), "# Guide\nRead all of this.\n")
-	binary := []byte{0x89, 'P', 'N', 'G', 0, 1}
-	if err := os.MkdirAll(filepath.Join(root, "demo", "assets"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "demo", "assets", "icon.png"), binary, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := readSkill([]string{root}, "demo", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Path != "SKILL.md" || !strings.Contains(result.Content, "# demo instructions") {
-		t.Fatalf("unexpected skill result: %#v", result)
-	}
-
-	result, err = readSkill([]string{root}, "demo", "references/guide.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Content != "# Guide\nRead all of this.\n" {
-		t.Fatalf("unexpected reference result: %#v", result)
-	}
-
-	result, err = readSkill([]string{root}, "demo", "assets/icon.png")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasPrefix(result.imageURL, "data:image/png;base64,") || result.Content != "" {
-		t.Fatalf("unexpected asset result: %#v", result)
-	}
-}
-
 func TestReadSkillRejectsEscapesAndUnscopedFiles(t *testing.T) {
 	root := testSkillRoot(t)
 	writeTestSkill(t, root, "demo", "demo", "A demonstration skill.")
@@ -474,11 +437,20 @@ func TestAgentRoutesRegisteredSkillTools(t *testing.T) {
 	a := &agent{stderr: io.Discard, skillsRoots: []string{root}}
 
 	calls := []struct {
-		arguments string
-		wantPath  string
+		arguments   string
+		wantPath    string
+		wantContent string
 	}{
-		{arguments: `{"path":"demo"}`, wantPath: "SKILL.md"},
-		{arguments: `{"path":"demo","file":"references/guide.md"}`, wantPath: "references/guide.md"},
+		{
+			arguments:   `{"path":"demo"}`,
+			wantPath:    "SKILL.md",
+			wantContent: "---\nname: demo\ndescription: A demonstration skill.\n---\n\n# demo instructions\n",
+		},
+		{
+			arguments:   `{"path":"demo","file":"references/guide.md"}`,
+			wantPath:    "references/guide.md",
+			wantContent: "Guide.\n",
+		},
 	}
 	for _, call := range calls {
 		raw := a.executeTool(context.Background(), &session{}, functionCall{Name: "read_skill", Arguments: call.arguments})
@@ -490,7 +462,7 @@ func TestAgentRoutesRegisteredSkillTools(t *testing.T) {
 		if err := json.Unmarshal([]byte(encoded), &result); err != nil {
 			t.Fatalf("decode skill result: %v", err)
 		}
-		if !result.OK || result.Path != call.wantPath {
+		if !result.OK || result.Path != call.wantPath || result.Content != call.wantContent {
 			t.Fatalf("read_skill(%s) = %#v", call.arguments, result)
 		}
 	}
@@ -508,6 +480,15 @@ func TestAgentRoutesRegisteredSkillTools(t *testing.T) {
 	}
 	if strings.Contains(content[0]["text"], "base64") {
 		t.Fatalf("image bytes leaked into text output: %s", content[0]["text"])
+	}
+
+	var imageMetadata skillFileResult
+	if err := json.Unmarshal([]byte(content[0]["text"]), &imageMetadata); err != nil {
+		t.Fatal(err)
+	}
+
+	if !imageMetadata.OK || imageMetadata.Path != "assets/icon.png" || imageMetadata.Content != "" {
+		t.Fatalf("unexpected image metadata: %#v", imageMetadata)
 	}
 
 	definitions := toolDefinitions()

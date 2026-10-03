@@ -8,15 +8,6 @@ import (
 	"testing"
 )
 
-func TestProjectSessionPaths(t *testing.T) {
-	paths := projectSessionPaths(t.TempDir())
-	if paths.current != filepath.Join(paths.dir, "current") ||
-		paths.sessions != filepath.Join(paths.dir, "sessions") ||
-		paths.locks != filepath.Join(paths.dir, "locks") {
-		t.Fatalf("unexpected paths: %#v", paths)
-	}
-}
-
 func TestPrepareSessionPathsUsesPrivatePermissionsAndIgnoresState(t *testing.T) {
 	paths := projectSessionPaths(t.TempDir())
 	if err := prepareSessionPaths(paths); err != nil {
@@ -68,27 +59,6 @@ func TestCurrentSessionRoundTripRejectsInvalidID(t *testing.T) {
 	}
 	if _, err := loadCurrentSessionID(paths); err == nil {
 		t.Fatal("invalid current session ID was accepted")
-	}
-}
-
-func TestSeparateSessionsUseSeparateFiles(t *testing.T) {
-	root := t.TempDir()
-	paths := projectSessionPaths(root)
-	if err := prepareSessionPaths(paths); err != nil {
-		t.Fatal(err)
-	}
-	ids := []string{"01234567-89ab-cdef-0123-456789abcdef", "fedcba98-7654-3210-fedc-ba9876543210"}
-	for _, id := range ids {
-		sess := session{Version: stateVersion, ID: id, CWD: root, RepoRoot: root, Model: "flash", Effort: "h"}
-		if err := saveJSON(sessionPath(paths, id), sess); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, id := range ids {
-		sess, err := loadSession(sessionPath(paths, id))
-		if err != nil || sess.ID != id {
-			t.Fatalf("load session %s: %#v, %v", id, sess, err)
-		}
 	}
 }
 
@@ -229,6 +199,12 @@ func TestSessionLockRejectsConcurrentOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	if _, err := os.Stat(filepath.Join(paths.dir, "locks", id+".lock")); err != nil {
+		first.Close()
+		t.Fatalf("session lock missing from locks directory: %v", err)
+	}
+
 	if _, err := acquireSessionLock(paths, id); err == nil || !strings.Contains(err.Error(), "already running") {
 		t.Fatalf("second lock error = %v", err)
 	}
@@ -281,6 +257,15 @@ func TestRepairInterruptedToolCalls(t *testing.T) {
 		!strings.Contains(recovery.Instruction, "reconcile") ||
 		!strings.Contains(recovery.Instruction, "before you retry apply_patch") {
 		t.Fatalf("unsafe apply_patch recovery guidance: %#v", recovery)
+	}
+
+	repaired := mustJSON(t, sess)
+	if err := repairInterruptedToolCalls(sess); err != nil {
+		t.Fatal(err)
+	}
+
+	if string(mustJSON(t, sess)) != string(repaired) {
+		t.Fatal("repairing completed recovery changed the session")
 	}
 }
 
@@ -349,20 +334,5 @@ func TestInterruptedToolRecoveryPersists(t *testing.T) {
 	if !strings.Contains(output.Output, `"outcome":"unknown"`) ||
 		!strings.Contains(output.Output, "reconcile the requested patch") {
 		t.Fatalf("persisted recovery output is incomplete: %s", output.Output)
-	}
-}
-
-func TestRepairInterruptedToolCallsIsIdempotent(t *testing.T) {
-	sess := &session{History: []json.RawMessage{
-		json.RawMessage(`{"type":"function_call","call_id":"call"}`),
-	}}
-	if err := repairInterruptedToolCalls(sess); err != nil {
-		t.Fatal(err)
-	}
-	if err := repairInterruptedToolCalls(sess); err != nil {
-		t.Fatal(err)
-	}
-	if len(sess.History) != 2 {
-		t.Fatalf("history length = %d, want 2", len(sess.History))
 	}
 }

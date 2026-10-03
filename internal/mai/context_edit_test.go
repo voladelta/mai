@@ -424,6 +424,13 @@ func BenchmarkContextEditInspect(b *testing.B) {
 func TestAgentExecutesContextEditWithoutReplayingBash(t *testing.T) {
 	writeTestDeepSeekConfig(t)
 	sess := contextEditFixture(t)
+	marker := filepath.Join(sess.CWD, "bash-effects")
+	mustWrite(t, marker, "original\n")
+	sess.History[2] = mustJSONValue(t, functionCall{
+		Type: "function_call", CallID: "logs", Name: "bash",
+		Arguments: `{"command":"printf replayed >> bash-effects"}`,
+	})
+
 	digest := contextDigest(sess.History[3])
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -475,6 +482,8 @@ func TestAgentExecutesContextEditWithoutReplayingBash(t *testing.T) {
 	if len(sess.ContextEdits) != 1 || !bytes.Contains(sess.History[3], []byte("ORIGINAL-RECALL-FACT")) {
 		t.Fatal("original output or accepted projection lost")
 	}
+
+	assertContent(t, marker, "original\n")
 }
 
 func TestPortableCompactionReceivesProjectionButArchivesOriginal(t *testing.T) {

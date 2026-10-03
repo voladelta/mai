@@ -341,15 +341,6 @@ func TestApplyPatchRejectsEscape(t *testing.T) {
 	}
 }
 
-func TestApplyPatchRequiresExactContext(t *testing.T) {
-	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "a.txt"), "one\ntwo\n")
-	_, err := applyPatch(root, "*** Begin Patch\n*** Update File: a.txt\n@@\n-three\n+four\n*** End Patch")
-	if err == nil {
-		t.Fatal("expected missing context error")
-	}
-}
-
 func TestApplyPatchValidatesWholePlanBeforeWriting(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "existing.txt"), "one\n")

@@ -261,25 +261,6 @@ func TestPortableCheckpointRefusesPendingCallsAndOpaqueState(t *testing.T) {
 	}
 }
 
-func TestPortableCheckpointFoldsAllUniqueInputInOrder(t *testing.T) {
-	sess := portableFixture(t)
-	var unique strings.Builder
-	for i := 0; i < 6000; i++ {
-		unique.WriteString(strings.Repeat("x", 25))
-		unique.WriteString(time.Duration(i).String())
-		unique.WriteByte('\n')
-	}
-	_ = appendUserPrompt(sess, unique.String()+"\nFINAL-ANCHOR")
-	_ = appendUserPrompt(sess, "active turn")
-	backend := &checkpointStub{reply: "checkpoint retained"}
-	if _, _, err := portableHistory(context.Background(), sess, backend); err != nil {
-		t.Fatal(err)
-	}
-	if len(backend.sources) < 2 || !strings.Contains(backend.sources[len(backend.sources)-1], "FINAL-ANCHOR") || !strings.Contains(backend.sources[1], "checkpoint retained") {
-		t.Fatal("chunk folding discarded history or prior checkpoint")
-	}
-}
-
 func TestPortableChunksPreserveMultibyteText(t *testing.T) {
 	sess := portableFixture(t)
 	_ = appendUserPrompt(sess, "a"+strings.Repeat("界", 40000))

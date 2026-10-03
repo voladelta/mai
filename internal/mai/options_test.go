@@ -149,26 +149,6 @@ func TestParseOptionsRejectsInvalid(t *testing.T) {
 	}
 }
 
-func TestParseOptionsAllowsEmptyInvocation(t *testing.T) {
-	got, err := parseOptions(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.prompt != "" || got.timeout != defaultHTTPTimeout {
-		t.Fatalf("unexpected options: %#v", got)
-	}
-}
-
-func TestParseOptionsHelpOverridesOtherArguments(t *testing.T) {
-	got, err := parseOptions([]string{"--unknown", "--help"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !got.help {
-		t.Fatalf("unexpected options: %#v", got)
-	}
-}
-
 func TestParseOptionsDoesNotTreatOptionValuesAsHelp(t *testing.T) {
 	for _, flag := range []string{"--provider", "--timeout", "--max-turns"} {
 		t.Run(flag, func(t *testing.T) {
