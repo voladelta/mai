@@ -70,6 +70,30 @@ arms use identical facts: full history and two forced checkpoints under a
 without tool output bodies or credentials. One pair is continuity evidence,
 not a performance ranking.
 
+## Explicit context editing and recall
+
+```sh
+MAI_LIVE_DEEPSEEK_CONTEXT_EDIT=1 MAI_CONTEXT_EDIT_REPORT=/absolute/existing/directory/context-edit.json go test -v ./internal/mai -run '^TestLiveDeepSeekContextEdit$' -count=1 -timeout=20m
+```
+
+This paid probe runs Flash/high and Pro/high. Each trial reads a real temporary
+Bash build log, then removes the source file and captures. The model must
+inspect and shrink that output, retaining the current release and UNKNOWN
+deployment outcome while omitting a random retired audit code. An HTTP
+observer rejects unshortened source outputs after an edit and verifies that
+the first resumed provider request excludes the retired code entirely.
+
+After saving, reloading, and starting a fresh agent, the probe checks that the
+entire projected history excludes the retired code. The model must retrieve it
+through Python's `mai.history`, return the original source call ID in its
+search result, and answer with the exact facts. The grader checks preservation
+of original history, positive estimated token savings, tool order, requests
+after resume, retrieval evidence, and the final answer. Reports contain grades,
+model IDs, durations and counts without credentials or tool output bodies.
+Each model has one trial; these are workflow checks, not a quality ranking.
+Deterministic negative controls reject claims of editing without tool calls
+and correct answers without original-history retrieval evidence.
+
 ## Patch and timing probes
 
 ```sh
