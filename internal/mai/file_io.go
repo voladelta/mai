@@ -11,8 +11,20 @@ import (
 )
 
 func secureFilePath(root, rel string) (string, error) {
-	if rel == "" || filepath.IsAbs(rel) || strings.ContainsRune(rel, 0) {
+	if rel == "" || strings.ContainsRune(rel, 0) {
 		return "", fmt.Errorf("invalid file path %q", rel)
+	}
+	if filepath.IsAbs(rel) {
+		// Models echo the absolute repository root from the prompt; accept paths
+		// under it and reject everything else.
+		if !pathWithin(root, rel) {
+			return "", fmt.Errorf("file path escapes repository: %s", rel)
+		}
+		inside, err := filepath.Rel(root, rel)
+		if err != nil {
+			return "", fmt.Errorf("invalid file path %q", rel)
+		}
+		rel = inside
 	}
 	clean := filepath.Clean(rel)
 	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {

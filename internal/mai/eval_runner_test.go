@@ -23,6 +23,9 @@ func TestEvalRunnersReportFailures(t *testing.T) {
 		{"type": "tool.completed", "name": "bash", "output": textToolOutput(`{"ok":true,"metadata":{"ok":false}}`)},
 		{"type": "tool.started", "name": "bash", "worker_id": "worker-1"},
 		{"type": "tool.completed", "name": "bash", "worker_id": "worker-1", "output": textToolOutput(`{"ok":false,"exit_code":1}`)},
+		{"type": "tool.started", "name": "read"},
+		{"type": "tool.started", "name": "write"},
+		{"type": "tool.started", "name": "edit"},
 		{"type": "tool.started", "name": "python"},
 		{"type": "tool.completed", "name": "python", "output_omitted": true},
 	} {
@@ -113,8 +116,8 @@ func TestEvalRunnersReportFailures(t *testing.T) {
 					continue
 				}
 				rows++
-				if fields[1] != test.wantGrade || strings.Join(fields[3:], "\t") != "3\t3\t1" {
-					t.Fatalf("result row = %q, want grade %s and counts 3/3/1", line, test.wantGrade)
+				if fields[1] != test.wantGrade || strings.Join(fields[3:], "\t") != "3\t6\t1" {
+					t.Fatalf("result row = %q, want grade %s and counts 3/6/1", line, test.wantGrade)
 				}
 			}
 			if rows != wantRows {
