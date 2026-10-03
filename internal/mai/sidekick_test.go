@@ -88,7 +88,7 @@ func TestSidekickDirectorFollowupAndPersistence(t *testing.T) {
 			t.Error(err)
 			return
 		}
-		if !result.OK || result.Status != "completed" || result.Model != "ds-flash" || result.Effort != "high" || strings.Contains(string(mustJSON(t, body.Input)), "worker-private-reasoning") {
+		if !result.OK || result.Status != "completed" || result.Model != "flash" || result.Effort != "high" || strings.Contains(string(mustJSON(t, body.Input)), "worker-private-reasoning") {
 			t.Errorf("invalid worker result: %+v", result)
 		}
 		if proTurns == 2 {
@@ -156,7 +156,7 @@ func TestSidekickInheritsApproval(t *testing.T) {
 	for _, allowed := range []bool{false, true} {
 		t.Run(fmt.Sprint(allowed), func(t *testing.T) {
 			parent := deepseekTestSession(t)
-			parent.Model = "ds-pro"
+			parent.Model = "pro"
 			victim := filepath.Join(t.TempDir(), "victim")
 			if err := os.WriteFile(victim, []byte("test"), 0600); err != nil {
 				t.Fatal(err)
@@ -174,7 +174,7 @@ func TestSidekickInheritsApproval(t *testing.T) {
 			defer server.Close()
 			a := newAgent(io.Discard, io.Discard, "", time.Second, false)
 			a.skipSkills = true
-			a.backend = &deepseekClient{httpClient: server.Client(), endpoint: server.URL, stdout: io.Discard}
+			a.backend = &responsesClient{models: defaultProviderConfig().Models, httpClient: server.Client(), endpoint: server.URL, stdout: io.Discard}
 			a.approve = func(_ context.Context, command, reason string) (bool, error) {
 				approvals++
 				if !strings.Contains(command, victim) || reason == "" {
@@ -198,7 +198,7 @@ func TestSidekickInheritsApproval(t *testing.T) {
 
 func TestSidekickFailureDoesNotReplayEffects(t *testing.T) {
 	parent := deepseekTestSession(t)
-	parent.Model = "ds-pro"
+	parent.Model = "pro"
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
@@ -212,7 +212,7 @@ func TestSidekickFailureDoesNotReplayEffects(t *testing.T) {
 	defer server.Close()
 	a := newAgent(io.Discard, io.Discard, "", time.Second, false)
 	a.skipSkills = true
-	a.backend = &deepseekClient{httpClient: server.Client(), endpoint: server.URL, stdout: io.Discard}
+	a.backend = &responsesClient{models: defaultProviderConfig().Models, httpClient: server.Client(), endpoint: server.URL, stdout: io.Discard}
 	defer a.close()
 
 	var encoded string
@@ -245,7 +245,7 @@ func TestSidekickBudgetAndCancellation(t *testing.T) {
 	for _, cancelRun := range []bool{false, true} {
 		t.Run(fmt.Sprint(cancelRun), func(t *testing.T) {
 			parent := deepseekTestSession(t)
-			parent.Model = "ds-pro"
+			parent.Model = "pro"
 			requests := 0
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -261,7 +261,7 @@ func TestSidekickBudgetAndCancellation(t *testing.T) {
 			defer server.Close()
 			a := newAgent(io.Discard, io.Discard, "", time.Second, false)
 			a.skipSkills = true
-			a.backend = &deepseekClient{httpClient: server.Client(), endpoint: server.URL, stdout: io.Discard}
+			a.backend = &responsesClient{models: defaultProviderConfig().Models, httpClient: server.Client(), endpoint: server.URL, stdout: io.Discard}
 			defer a.close()
 
 			output := a.executeTool(ctx, parent, functionCall{Name: "sidekick", Arguments: `{"task":"Investigate"}`})
@@ -279,7 +279,7 @@ func TestSidekickBudgetAndCancellation(t *testing.T) {
 
 func TestSidekickPythonNamespaceSurvivesFollowupAndCloses(t *testing.T) {
 	a, parent := pythonTestAgent(t)
-	parent.Model, parent.Effort, parent.RepoRoot = "ds-pro", "h", parent.CWD
+	parent.Model, parent.Effort, parent.RepoRoot = "pro", "h", parent.CWD
 	a.skipSkills = true
 	t.Cleanup(a.close)
 	if result := pythonCell(t, a, parent, "parent_only = 7"); !result.OK {
@@ -326,7 +326,7 @@ func TestSidekickPythonNamespaceSurvivesFollowupAndCloses(t *testing.T) {
 		deepseekTestResponse(w, `[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"verified"}]}]`)
 	}))
 	defer server.Close()
-	a.backend = &deepseekClient{httpClient: server.Client(), endpoint: server.URL, stdout: io.Discard}
+	a.backend = &responsesClient{models: defaultProviderConfig().Models, httpClient: server.Client(), endpoint: server.URL, stdout: io.Discard}
 
 	for turn := 0; turn < 2; turn++ {
 		args := map[string]string{"task": "Check the worker namespace"}
@@ -355,7 +355,7 @@ func TestSidekickReturnsTerminalMessagesAfterFollowup(t *testing.T) {
 	for _, compact := range []bool{false, true} {
 		t.Run(fmt.Sprintf("compaction=%v", compact), func(t *testing.T) {
 			parent := deepseekTestSession(t)
-			parent.Model = "ds-pro"
+			parent.Model = "pro"
 			turns, checkpoints := 0, 0
 			previousAnswer := strings.Repeat("previous assignment ", 1024)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -393,7 +393,7 @@ func TestSidekickReturnsTerminalMessagesAfterFollowup(t *testing.T) {
 
 			a := newAgent(io.Discard, io.Discard, "", time.Second, false)
 			a.skipSkills = true
-			a.backend = &deepseekClient{httpClient: server.Client(), endpoint: server.URL, stdout: io.Discard}
+			a.backend = &responsesClient{models: defaultProviderConfig().Models, httpClient: server.Client(), endpoint: server.URL, stdout: io.Discard}
 			defer a.close()
 
 			output := a.executeTool(context.Background(), parent, functionCall{Name: "sidekick", Arguments: `{"task":"First assignment"}`})
@@ -427,7 +427,7 @@ func TestSidekickReturnsTerminalMessagesAfterFollowup(t *testing.T) {
 
 func TestSidekickCannotReuseStaleAnswer(t *testing.T) {
 	parent := deepseekTestSession(t)
-	parent.Model = "ds-pro"
+	parent.Model = "pro"
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
@@ -440,7 +440,7 @@ func TestSidekickCannotReuseStaleAnswer(t *testing.T) {
 	defer server.Close()
 	a := newAgent(io.Discard, io.Discard, "", time.Second, false)
 	a.skipSkills = true
-	a.backend = &deepseekClient{httpClient: server.Client(), endpoint: server.URL, stdout: io.Discard}
+	a.backend = &responsesClient{models: defaultProviderConfig().Models, httpClient: server.Client(), endpoint: server.URL, stdout: io.Discard}
 	defer a.close()
 	if output := a.executeTool(context.Background(), parent, functionCall{Name: "sidekick", Arguments: `{"task":"First assignment"}`}); !strings.Contains(string(output), "earlier answer") {
 		t.Fatalf("first assignment = %s", output)

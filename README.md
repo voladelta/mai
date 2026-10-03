@@ -5,7 +5,8 @@
 **Give a repository task to a small Go agent, then pick it up later with
 searchable history and portable checkpoints.**
 
-Mai runs on macOS and Linux and uses the DeepSeek Responses API. It can read
+Mai runs on macOS and Linux and uses the Responses API through DeepSeek,
+OpenRouter, Enclave, or another configured provider. It can read
 code, edit files, run checks, and return a final answer from your terminal.
 
 [![Go 1.27+](https://img.shields.io/badge/Go-1.27%2B-00ADD8)](go.mod)
@@ -17,7 +18,8 @@ cd mai
 go install ./cmd/mai
 ```
 
-Requires Go 1.27+ to build and `DEEPSEEK_API_KEY` to run tasks.
+Requires Go 1.27+ to build and an API key for the selected provider to run tasks.
+DeepSeek is the built-in default, using `DEEPSEEK_API_KEY`.
 See [Installation](#installation) for binary location and `PATH` setup.
 
 [Quick start](#quick-start) · [CLI](docs/cli.md) · [Tools](docs/tools.md) ·
@@ -32,8 +34,9 @@ change the code, then save the conversation when you need to return to it.
 | Capability | What it gives you | Try it |
 | --- | --- | --- |
 | Repository work | Bash, structured patches, and local image inspection. | `mai "fix the empty-input crash and run tests"` |
-| Saved tasks | Resume the original directory, model, effort, and conversation. | `mai "continue the fix" --last` |
+| Saved tasks | Resume the original directory, provider settings, model mode, and conversation. | `mai "continue the fix" --last` |
 | Model selection | Pro/high by default, Pro/max or Flash/high when selected. | `mai "review this refactor" --max` |
+| Provider selection | Keep `pro` and `flash` names while switching endpoints and credentials. | `mai "quick review" --provider enclave --f` |
 | Pro sidekick | One Flash/high worker with its own conversation for bounded assignments. | [Sidekick behavior](docs/tools.md#pro-sidekick) |
 | Searchable history | Recall original visible text after context editing and compaction. | [Python history search](docs/tools.md#persistent-python) |
 | Repository skills | Load project instructions before global skills, with explicit skill selection. | `mai 'Use $my-skill to review this package'` |
@@ -69,7 +72,7 @@ After installing Mai:
    ```
 
 Replace the key and repository path with your own values. Task commands make
-paid DeepSeek API requests.
+paid requests to the selected provider.
 
 Tasks are stateless by default. Use `--persist` to save a new task and `--last`
 to resume the current saved task in the same project. Only one process can use
@@ -81,7 +84,8 @@ a particular saved task at a time.
 
 - **macOS or Linux**, with `/bin/bash` for the Bash tool.
 - **Go 1.27 or later** to build from source.
-- **A DeepSeek API key** in `DEEPSEEK_API_KEY` for task execution.
+- **A provider API key** in its configured environment variable. The built-in
+  DeepSeek provider uses `DEEPSEEK_API_KEY`.
 - **Git** for repository-root discovery. Without it, the working directory is
   the repository boundary.
 - **Python 3.9 or later**, optional, for persistent Python cells.
@@ -133,17 +137,28 @@ installed or built binary to work in another project.
 mai "add useful tests for the parser"              # Pro/high
 mai "review the implementation carefully" --max   # Pro/max
 mai "explain this package" --f                    # Flash/high
-mai "continue the saved task" --last --max        # Resume with Pro/max
+mai "continue the saved task" --last             # Resume the saved mode
+mai "quick review" --provider enclave --f         # Enclave Flash/high
 ```
 
 | Selection | API model | Reasoning effort | Sidekick |
 | --- | --- | --- | --- |
-| Default or `-m ds-pro` | `deepseek-v4-pro` | High | Flash/high |
+| Default | `deepseek-v4-pro` | High | Flash/high |
 | `--max` | `deepseek-v4-pro` | Max | Flash/high |
-| `--f` or `-m ds-flash` | `deepseek-flash` | High | None |
+| `--f` | `deepseek-flash` | High | None |
 
-A saved task keeps its model and effort unless you select another mode.
-Conflicting selections are rejected. There is no separate `--effort` flag.
+The table shows the built-in DeepSeek mappings. Each configured provider maps
+`pro` and `flash` to its own upstream model IDs. New tasks use Pro/high unless
+you pass `--f` or `--max`. The provider comes from
+`--provider`, the selected config's `default_provider`, or the built-in DeepSeek
+default. `--f` and `--max` conflict; `--model`, `-m`, and `--effort` are unsupported.
+
+`--last` keeps the saved provider, endpoint, model mappings, model tier, and
+reasoning effort. Plain `--last` ignores current `.mai.config` files; `--f` and
+`--max` are rejected. `--last --provider NAME` loads the selected config to switch
+providers while preserving the saved model tier and effort. Credentials are
+read afresh from the saved environment-variable name, so API key rotation does
+not require a new task.
 
 The default run limit is 64 model turns. Increase it or use `-1` for unlimited
 turns until completion, error, or interruption:
@@ -158,12 +173,40 @@ See the [CLI reference](docs/cli.md) for every option, examples, and timeouts.
 
 ## Configuration
 
-Mai reads environment variables and CLI options; it has no settings file.
+Mai reads JSON from `.mai.config` in the current working directory, otherwise
+from `$HOME/.mai.config`. The local file takes priority; files are not merged,
+and an invalid local file fails instead of falling back. With neither file,
+Mai uses the built-in DeepSeek provider. Help, version, and plain `--last` do not
+load config.
+
+Copy [the complete example](.mai.config.example) to either location:
+
+```sh
+cp .mai.config.example "$HOME/.mai.config"
+export OPENROUTER_API_KEY='your-openrouter-key'
+export ENCLAVE_API_KEY='your-enclave-key'
+mai "quick review" --provider openrouter --f
+mai "quick review" --provider enclave --f
+```
+
+The config contains `default_provider` (defaults to `deepseek` when omitted)
+and a `providers` object. Each provider defines `base_url`, `api_key_env`, and
+both `models.pro` and `models.flash`. Model IDs are sent exactly as written.
+Mai appends `/responses` to `base_url`; all providers use the Responses API.
+Use environment-variable names for keys, never literal credentials. Unknown
+fields, missing mappings, unknown providers, and missing selected credentials
+produce errors. Config files must be regular files no larger than 1 MiB.
+
+Change only `default_provider` to switch your usual backend. `--provider NAME`
+overrides it for one run. Sidekicks, image descriptions, and checkpoints use the
+selected provider and its mappings. `.mai.config` is ignored in this checkout.
 
 | Variable | Purpose | Default |
 | --- | --- | --- |
-| `DEEPSEEK_API_KEY` | Required credential for task requests. | Unset |
-| `MAI_DEEPSEEK_URL` | Complete Responses endpoint; HTTPS required except for loopback. | `https://api.deepseek.com/responses` |
+| `DEEPSEEK_API_KEY` | Credential for the built-in DeepSeek provider. | Unset |
+| `OPENROUTER_API_KEY` | Credential named by the example's OpenRouter provider. | Unset |
+| `ENCLAVE_API_KEY` | Credential named by the example's Enclave provider. | Unset |
+| `MAI_DEEPSEEK_URL` | Override the complete Responses endpoint for the `deepseek` provider only; HTTPS required except for loopback. | `https://api.deepseek.com/responses` |
 | `MAI_CONTEXT_WINDOW` | Input context budget, from 32,768 to 1,000,000 tokens. | `1000000` |
 | `MAI_PYTHON` | Executable for the optional persistent Python tool. | `python3` |
 
@@ -191,10 +234,10 @@ Mai follows four principles:
   never replayed automatically.
 
 ```text
-Prompt + CLI options
+Prompt + CLI options + provider config
          |
          v
-Go agent loop <----> DeepSeek Responses API (streaming)
+Go agent loop <----> Selected provider's Responses API (streaming)
          |
          +--> Bash / patches / skills / images / context editing
          +--> Optional persistent Python --> Go tool bridge
@@ -204,7 +247,7 @@ Go agent loop <----> DeepSeek Responses API (streaming)
          +--> With --persist / --last: .mai/ session + history archive
 ```
 
-Mai sends local conversation history, including plain reasoning, with model
+Mai sends local conversation history, including provider reasoning, with model
 requests. At 80% of the context budget it builds a readable checkpoint. The
 original visible history remains searchable; checkpoints are model-authored
 summaries, so useful details may still need retrieval.
@@ -243,13 +286,14 @@ See [Tools and skills](docs/tools.md#safety) for execution boundaries and
 | Symptom | Action |
 | --- | --- |
 | `mai: command not found` | Add `GOBIN`, or the default Go binary directory, to `PATH`; use `./mai` for a local build. |
-| `DeepSeek requires DEEPSEEK_API_KEY` | Export the key in the shell launching Mai. |
+| `provider "deepseek" requires DEEPSEEK_API_KEY` | Export the selected provider's key in the shell launching Mai. |
+| `provider "enclave" is not configured` | Add the provider to the selected `.mai.config`; the local file replaces the home file. |
 | `no saved task in this project` | Start with `--persist`, then resume from the same project. |
 | `session ... is already running` | Wait for the process using that task to exit, or start a separate task. |
 | `agent stopped after 64 model turns` | Resume a persisted task with a larger `--max-turns` value or `-1`. |
 | `Python is unavailable` | Install Python 3.9+ on `PATH`, or set `MAI_PYTHON`. |
-| `DeepSeek Pro does not support images` | Use `--last --f` for image-bearing history, or start a new Pro task. |
-| `DeepSeek Responses request failed (network or timeout)` | Check connectivity and the endpoint; raise `--timeout` if needed. |
+| `Pro does not support image-bearing history` | Start a new Flash task with `--f`, or use a text-only Pro history. |
+| `Responses request failed (network or timeout)` | Check connectivity and the selected provider's endpoint; raise `--timeout` if needed. |
 
 An interrupted tool call has an unknown outcome on resume. Inspect its file
 and command effects before repeating work that may already have happened.
@@ -267,8 +311,9 @@ Git. Keep the session JSON and transcript archive together when backing up a tas
 
 ### Can I switch models when resuming?
 
-Yes: use `--last --f`, `--last --max`, or `--last -m ds-pro`.
-Pro rejects image-bearing history.
+`--last` keeps the saved model and reasoning effort. Start a new task with `--f`
+or `--max` to select another mode. `--last --provider NAME` can switch providers
+if the previous one runs out of credits, while keeping the same model tier.
 
 ### Do I need Python?
 

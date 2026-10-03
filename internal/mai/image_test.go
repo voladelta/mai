@@ -69,7 +69,7 @@ func TestProImageToolsUseFlashAndContinueWithText(t *testing.T) {
 		for _, fail := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/failure=%t", tool, fail), func(t *testing.T) {
 				sess := deepseekTestSession(t)
-				sess.Model, sess.Effort = "ds-pro", "max"
+				sess.Model, sess.Effort = "pro", "max"
 				sess.appendEstimatedHistory(json.RawMessage(`{"role":"assistant","content":[{"type":"output_text","text":"PAST-HISTORY-SECRET"}]}`))
 				if err := appendUserPrompt(sess, "Inspect the error label in the screenshot."); err != nil {
 					t.Fatal(err)
@@ -139,7 +139,7 @@ func TestProImageToolsUseFlashAndContinueWithText(t *testing.T) {
 				a := &agent{
 					stdout: &output, stderr: io.Discard, skillsRoots: []string{root},
 					sessionPath: filepath.Join(sess.CWD, "session.json"),
-					backend:     &deepseekClient{httpClient: server.Client(), endpoint: server.URL, apiKey: "test", stdout: &output, requestTimeout: time.Second},
+					backend:     &responsesClient{models: defaultProviderConfig().Models, httpClient: server.Client(), endpoint: server.URL, apiKey: "test", stdout: &output, requestTimeout: time.Second},
 				}
 
 				if terminalItems, err := a.runTurn(context.Background(), sess, "instructions"); err != nil || len(terminalItems) != 0 {
@@ -150,7 +150,7 @@ func TestProImageToolsUseFlashAndContinueWithText(t *testing.T) {
 					t.Fatal(err)
 				}
 				sess = saved
-				if err := validateDeepSeekHistory(sess.History, sess.Model); err != nil {
+				if err := validateResponsesHistory(sess.History, sess.Model, defaultProvider); err != nil {
 					t.Fatal(err)
 				}
 				if terminalItems, err := a.runTurn(context.Background(), sess, "instructions"); err != nil || len(terminalItems) == 0 {
@@ -186,7 +186,7 @@ func TestFlashImageDescriptionRejectsInvalidOutput(t *testing.T) {
 				deepseekTestResponse(w, test.items)
 			}))
 			defer server.Close()
-			client := &deepseekClient{httpClient: server.Client(), endpoint: server.URL, apiKey: "test"}
+			client := &responsesClient{models: defaultProviderConfig().Models, httpClient: server.Client(), endpoint: server.URL, apiKey: "test"}
 
 			if _, _, err := client.describeImage(context.Background(), deepseekTestSession(t), "data:image/png;base64,test"); err == nil {
 				t.Fatal("invalid Flash description accepted")

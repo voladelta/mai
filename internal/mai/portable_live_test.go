@@ -40,7 +40,7 @@ func TestLiveDeepSeekCoding(t *testing.T) {
 	}
 	var trials []portableProviderTrial
 	for _, mode := range []string{"full", "portable"} {
-		trial := runPortableProviderCoding(t, "ds-flash", mode, seed)
+		trial := runPortableProviderCoding(t, "flash", mode, seed)
 		trials = append(trials, trial)
 		if path := os.Getenv("MAI_CONTEXT_RESEARCH_REPORT"); path != "" {
 			data, err := json.MarshalIndent(trials, "", "  ")
@@ -89,7 +89,7 @@ func runPortableProviderCoding(t *testing.T, model, mode, seed string) (trial po
 	factID := appendBudgetLog(t, sess, "source", log)
 	var events bytes.Buffer
 	a := newAgent(io.Discard, io.Discard, path, 2*time.Minute, false)
-	if err := a.configureBackend(sess); err != nil {
+	if err := a.configureBackend(sess, defaultProviderConfig()); err != nil {
 		trial.Error = err.Error()
 		return
 	}

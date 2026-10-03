@@ -116,7 +116,7 @@ func TestLoadSessionRejectsMissingCommittedTranscript(t *testing.T) {
 	path := filepath.Join(root, "session.json")
 	sess := session{
 		Version: stateVersion, ID: "01234567-89ab-cdef-0123-456789abcdef",
-		CWD: root, RepoRoot: root, Model: "ds-flash", Effort: "h",
+		CWD: root, RepoRoot: root, Model: "flash", Effort: "h",
 		TranscriptEnd: 1,
 	}
 	if err := saveJSON(path, sess); err != nil {

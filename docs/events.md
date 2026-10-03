@@ -24,6 +24,10 @@ Model duration covers the full model request.
 Tool duration covers execution of that call; task duration covers the agent run.
 The default output remains human-readable.
 
+`task.started` includes `provider`, `model` (`pro` or `flash`), and `effort`.
+The provider is the selected configuration name, and the model is the stable
+tier alias rather than its upstream ID.
+
 Sidekick model and tool events carry `worker_id`. When summing elapsed time,
 count those worker events and exclude the enclosing `sidekick` tool duration,
 which includes the same work. Nested Python host calls count toward the outer

@@ -45,7 +45,7 @@ type sidekickResult struct {
 }
 
 func (a *agent) executeSidekick(ctx context.Context, parent *session, arguments string) json.RawMessage {
-	if parent.Model != "ds-pro" || a.workerID != "" {
+	if parent.Model != "pro" || a.workerID != "" {
 		return textToolOutput(toolError("sidekick unavailable", errors.New("only the Pro director can call sidekick")))
 	}
 	var args struct {
@@ -125,7 +125,7 @@ func (a *agent) executeSidekick(ctx context.Context, parent *session, arguments 
 
 	result := sidekickResult{
 		OK: err == nil, WorkerID: worker.session.ID, Status: "completed",
-		Model: "ds-flash", Effort: "high", Turns: worker.agent.modelTurns,
+		Model: "flash", Effort: "high", Turns: worker.agent.modelTurns,
 		DurationMS: time.Since(started).Milliseconds(),
 		Usage:      worker.agent.usage, UsageReports: worker.agent.usageReports,
 	}
@@ -148,7 +148,7 @@ func (a *agent) executeSidekick(ctx context.Context, parent *session, arguments 
 }
 
 func (a *agent) newSidekick(parent *session) (*sidekickWorker, error) {
-	client, ok := a.backend.(*deepseekClient)
+	client, ok := a.backend.(*responsesClient)
 	if !ok {
 		return nil, errors.New("Flash backend is unavailable")
 	}
@@ -158,7 +158,7 @@ func (a *agent) newSidekick(parent *session) (*sidekickWorker, error) {
 	}
 	sess := &session{
 		Version: stateVersion, ID: id, CWD: parent.CWD, RepoRoot: parent.RepoRoot,
-		Model: "ds-flash", Effort: "h",
+		Provider: parent.Provider, Backend: parent.Backend, Model: "flash", Effort: "h",
 	}
 	child := newAgent(io.Discard, sidekickLogWriter{output: a.stderr, id: id}, "", a.requestTimeout, false)
 	child.workerID, child.roleInstructions = id, sidekickInstructions

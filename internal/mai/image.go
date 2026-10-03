@@ -23,7 +23,7 @@ const (
 )
 
 func (a *agent) describeImageOutput(ctx context.Context, sess *session, metadata, imageURL string) json.RawMessage {
-	client, ok := a.backend.(*deepseekClient)
+	client, ok := a.backend.(*responsesClient)
 	if !ok {
 		return textToolOutput(toolError("image description failed", errors.New("Flash backend is unavailable")))
 	}
@@ -39,7 +39,7 @@ func (a *agent) describeImageOutput(ctx context.Context, sess *session, metadata
 		return textToolOutput(toolError("encode image description", err))
 	}
 	result["description"] = description
-	result["description_model"] = "ds-flash"
+	result["description_model"] = "flash"
 	result["description_note"] = "Flash-generated image description; a lossy interpretation, not verified facts. Uncertain details require verification."
 	result["description_duration_ms"] = time.Since(started).Milliseconds()
 	if usage != nil {

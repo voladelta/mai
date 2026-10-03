@@ -203,10 +203,36 @@ func renderStdoutEdit(history []json.RawMessage, relationships contextCallIndex,
 }
 
 func (sess *session) requestHistory() ([]json.RawMessage, error) {
-	if len(sess.ContextEdits) == 0 {
-		return append([]json.RawMessage(nil), sess.History...), nil
+	history := append([]json.RawMessage(nil), sess.History...)
+	if len(sess.ContextEdits) > 0 {
+		var err error
+		history, err = sess.projectHistory(indexContextCalls(sess.History))
+		if err != nil {
+			return nil, err
+		}
 	}
-	return sess.projectHistory(indexContextCalls(sess.History))
+	if sess.ReasoningStart == 0 {
+		return history, nil
+	}
+
+	// Reasoning can be tied to its provider. Preserve original history and edit
+	// indexes, but exclude old reasoning when replaying to an overridden backend.
+	filtered := make([]json.RawMessage, 0, len(history))
+	for index, raw := range history {
+		if index < sess.ReasoningStart {
+			var item struct {
+				Type string `json:"type"`
+			}
+			if err := json.Unmarshal(raw, &item); err != nil {
+				return nil, err
+			}
+			if item.Type == "reasoning" {
+				continue
+			}
+		}
+		filtered = append(filtered, raw)
+	}
+	return filtered, nil
 }
 
 func (sess *session) projectHistory(relationships contextCallIndex) ([]json.RawMessage, error) {

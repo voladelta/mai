@@ -38,7 +38,7 @@ Finish when the requested outcome is complete or genuinely blocked. Lead the fin
 			base += "\n\n" + strings.TrimSpace(addition)
 		}
 	}
-	if sess.Model == "ds-pro" {
+	if sess.Model == "pro" {
 		base += "\n\nPro director\n- Use sidekick for bounded legwork when useful. Give explicit context, scope and success criteria; use worker_id for follow-ups. Keep planning, integration and final verification. Sidekick is always Flash/high, even when you use max. Worker history expires when this run ends. Inspect effects after failure before reassigning work."
 	}
 	return base

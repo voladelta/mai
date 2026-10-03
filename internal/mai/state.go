@@ -17,8 +17,15 @@ import (
 const stateVersion = 2
 
 type taskConfig struct {
-	Model  string
-	Effort string
+	Provider string
+	Model    string
+	Effort   string
+}
+
+type sessionBackend struct {
+	Endpoint  string        `json:"endpoint"`
+	APIKeyEnv string        `json:"api_key_env"`
+	Models    modelMappings `json:"models"`
 }
 
 type session struct {
@@ -26,8 +33,11 @@ type session struct {
 	ID               string            `json:"id"`
 	CWD              string            `json:"cwd"`
 	RepoRoot         string            `json:"repo_root"`
+	Provider         string            `json:"provider,omitempty"`
+	Backend          *sessionBackend   `json:"backend,omitempty"`
 	Model            string            `json:"model"`
 	Effort           string            `json:"effort"`
+	ReasoningStart   int               `json:"reasoning_start,omitempty"`
 	ContextTokens    int64             `json:"context_tokens,omitempty"`
 	History          []json.RawMessage `json:"history"`
 	ContextEdits     []contextEdit     `json:"context_edits,omitempty"`
@@ -187,6 +197,9 @@ func validateSessionHeader(out *session) error {
 	if out.TranscriptSkip < 0 || out.TranscriptSkip > len(out.History) || out.TranscriptEnd < 0 {
 		return errors.New("saved session has invalid transcript position")
 	}
+	if out.ReasoningStart < 0 || out.ReasoningStart > len(out.History) {
+		return errors.New("saved session has invalid provider reasoning boundary")
+	}
 	return nil
 }
 
@@ -207,6 +220,26 @@ func checkSavedTranscript(path string, end int64) error {
 }
 
 func normalizeSessionSettings(out *session) error {
+	// Existing version-2 tasks used DeepSeek-specific aliases and no provider.
+	if out.Provider == "" {
+		out.Provider = defaultProvider
+	}
+	switch out.Model {
+	case "ds-flash":
+		out.Model = "flash"
+	case "ds-pro":
+		out.Model = "pro"
+	}
+	if !validProviderName(out.Provider) {
+		return fmt.Errorf("saved session has invalid provider %q", out.Provider)
+	}
+	if out.Backend != nil {
+		if !validEndpoint(out.Backend.Endpoint) || !validEnvName(out.Backend.APIKeyEnv) || strings.TrimSpace(out.Backend.Models.Flash) == "" || strings.TrimSpace(out.Backend.Models.Pro) == "" {
+			return errors.New("saved session has invalid provider settings")
+		}
+	} else if out.Provider != defaultProvider {
+		return errors.New("saved session is missing provider settings; start a new task")
+	}
 	if !supportedModel(out.Model) {
 		return fmt.Errorf("saved session has invalid model %q", out.Model)
 	}

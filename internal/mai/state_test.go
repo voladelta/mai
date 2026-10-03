@@ -79,7 +79,7 @@ func TestSeparateSessionsUseSeparateFiles(t *testing.T) {
 	}
 	ids := []string{"01234567-89ab-cdef-0123-456789abcdef", "fedcba98-7654-3210-fedc-ba9876543210"}
 	for _, id := range ids {
-		sess := session{Version: stateVersion, ID: id, CWD: root, RepoRoot: root, Model: "ds-flash", Effort: "h"}
+		sess := session{Version: stateVersion, ID: id, CWD: root, RepoRoot: root, Model: "flash", Effort: "h"}
 		if err := saveJSON(sessionPath(paths, id), sess); err != nil {
 			t.Fatal(err)
 		}
@@ -97,7 +97,7 @@ func TestLoadSessionEstimatesTokensForOlderState(t *testing.T) {
 	path := filepath.Join(root, "session.json")
 	sess := session{
 		Version: stateVersion, ID: "01234567-89ab-cdef-0123-456789abcdef",
-		CWD: root, RepoRoot: root, Model: "ds-flash", Effort: "h",
+		CWD: root, RepoRoot: root, Model: "flash", Effort: "h",
 		History: []json.RawMessage{json.RawMessage(`{"role":"user","content":"existing history"}`)},
 	}
 	if err := saveJSON(path, sess); err != nil {
@@ -133,7 +133,7 @@ func TestLoadSessionRejectsInvalidState(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "session.json")
 			sess := session{
 				Version: stateVersion, ID: "01234567-89ab-cdef-0123-456789abcdef",
-				CWD: root, RepoRoot: root, Model: "ds-flash", Effort: "h",
+				CWD: root, RepoRoot: root, Model: "flash", Effort: "h",
 			}
 			test.mutate(&sess)
 			if err := saveJSON(path, sess); err != nil {
@@ -151,7 +151,7 @@ func TestLoadSessionChecksSavedTranscriptPosition(t *testing.T) {
 	path := filepath.Join(root, "session.json")
 	sess := session{
 		Version: stateVersion, ID: "01234567-89ab-cdef-0123-456789abcdef",
-		CWD: root, RepoRoot: root, Model: "ds-flash", Effort: "h", TranscriptEnd: 100,
+		CWD: root, RepoRoot: root, Model: "flash", Effort: "h", TranscriptEnd: 100,
 	}
 	if err := saveJSON(path, sess); err != nil {
 		t.Fatal(err)
@@ -325,7 +325,7 @@ func TestInterruptedToolRecoveryPersists(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.json")
 	sess := &session{
 		Version: stateVersion, ID: "01234567-89ab-cdef-0123-456789abcdef", CWD: t.TempDir(), RepoRoot: t.TempDir(),
-		Model: "ds-flash", Effort: "max",
+		Model: "flash", Effort: "max",
 		History: []json.RawMessage{
 			json.RawMessage(`{"type":"function_call","call_id":"pending","name":"apply_patch","arguments":"{}"}`),
 		},

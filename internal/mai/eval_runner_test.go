@@ -85,7 +85,8 @@ func TestEvalRunnersReportFailures(t *testing.T) {
 			t.Setenv("TMPDIR", dir)
 			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 			t.Setenv("MAI_EVAL_BIN", filepath.Join(dir, "mai"))
-			t.Setenv("MAI_EVAL_MODEL", "")
+			t.Setenv("MAI_EVAL_MODE", "")
+			t.Setenv("MAI_EVAL_PROVIDER", "")
 			t.Setenv("MAI_TEST_EVENTS", filepath.Join(dir, "events.jsonl"))
 			t.Setenv("MAI_TEST_ARGS", filepath.Join(dir, "args.txt"))
 			t.Setenv("MAI_TEST_AGENT_EXIT", test.agentExit)
@@ -125,7 +126,7 @@ func TestEvalRunnersReportFailures(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, line := range strings.Split(strings.TrimSpace(string(invocations)), "\n") {
-				if !strings.HasSuffix(line, "--jsonl --no-input --skip-skills -m "+defaultModel) {
+				if !strings.HasSuffix(line, "--provider deepseek --jsonl --no-input --skip-skills") {
 					t.Fatalf("runner does not use the current default model and isolated CLI flags: %q", line)
 				}
 			}

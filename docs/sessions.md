@@ -9,7 +9,8 @@ mai "continue the migration" --last
 
 ## Saved tasks
 
-`mai` has no global settings or session file. When you use `--persist`, it stores
+Provider settings live in `.mai.config` in the working directory or home;
+there is no global session file. When you use `--persist`, Mai stores
 project-local state under the repository root:
 
 - `.mai/current` contains the current session ID
@@ -28,16 +29,18 @@ Each persisted task has a separate session file. Starting concurrent tasks does
 not replace their history. An atomic update to `current` selects the task that a
 later `--last` command will resume.
 
-Saved history includes completed responses and plain DeepSeek reasoning.
-Reasoning is replayed across tool turns; opaque encrypted history is unsupported.
-Effort changes are sent at the request's top level, without rewriting earlier
-history. DeepSeek caching is automatic and depends on matching prefixes and
-cache lifetime. Mai does not send server-side conversation IDs or cache keys.
+Saved history includes completed responses and provider reasoning. Native
+DeepSeek reasoning is stored as plain text. Other Responses providers can replay
+their summary or encrypted reasoning. Provider overrides exclude previous
+reasoning from requests while keeping original history intact.
+Reasoning effort is sent at the request's top level; `--last` keeps its saved
+value. DeepSeek caching is automatic and depends on matching prefixes and cache
+lifetime. Mai does not send server-side conversation IDs or cache keys.
 
 Model tool calls run in sequence. Python cells can await host tools, whose
 operations also run in sequence. Mid-turn steering is not enabled.
 
-Mai tracks the active context size reported by DeepSeek. The default budget is
+Mai tracks the active context size reported by the provider. The default budget is
 1,000,000 tokens; `MAI_CONTEXT_WINDOW` can lower it.
 At 80% of the budget, Mai builds a portable checkpoint before the next model
 request. Saved tasks commit replacement history before continuing. Original
@@ -74,16 +77,19 @@ Context editing can change prompt-cache reuse and add model calls. Reduced
 request size alone does not establish faster or cheaper task completion.
 At the context threshold, Mai builds a portable checkpoint.
 
-## DeepSeek backend
+## Providers and model modes
 
-Selecting `ds-flash` or `ds-pro` automatically uses
-`https://api.deepseek.com/responses`. No provider flag is needed.
-Set `DEEPSEEK_API_KEY` in your environment before running:
+DeepSeek is the built-in default at `https://api.deepseek.com/responses`.
+Set `DEEPSEEK_API_KEY` in your environment before running, or configure another
+provider in [`.mai.config`](../.mai.config.example). Local configuration takes
+priority over `$HOME/.mai.config`, without merging. `--provider` overrides the
+configured default for a new task; resume uses its saved settings.
 
 ```sh
 mai "add useful tests for the parser" --f --persist
-mai "continue the task" --last --max
+mai "continue the task" --last
 mai "review this implementation" --max
+mai "quick review" --provider enclave --f
 ```
 
 | CLI mode | API model | Effort |
@@ -92,13 +98,27 @@ mai "review this implementation" --max
 | `--max` | `deepseek-v4-pro` | `max` |
 | `--f` | `deepseek-flash` | `high` |
 
+The table shows the built-in DeepSeek model mappings; configured providers map
+the stable `pro` and `flash` names to their own upstream IDs.
+
 Responses stream through the existing text and function-tool flow. Mai replays
-the full local history, including DeepSeek's plain reasoning between tool calls;
+the full local history, including provider reasoning between tool calls;
 Mai does not rely on server-side conversation state. Each request allows up to
 32,768 output tokens, including reasoning. Credentials stay in the environment.
-Saved tasks retain their model and effort, including older low-effort tasks.
-Use `--last --f` to switch to Flash/high, `--last --max` to switch to Pro/max,
-or `--last -m ds-pro` to switch to Pro/high. Pro rejects image-bearing history.
+Saved tasks record the selected provider, endpoint, credential environment-variable
+name, both model mappings, model tier, and effort. New tasks select Pro/high
+unless `--f` or `--max` is passed. Plain resume restores these settings and ignores
+current config files. `--f` and `--max` are rejected on resume.
+`--last --provider NAME` loads current config to switch providers, retaining the
+saved model tier and effort. The new provider settings are saved for later runs.
+Previous reasoning remains in original history but is excluded from requests to
+the new backend; visible messages, tool relationships, and context edits survive.
+API keys are read
+afresh from the saved environment-variable name. Older saved
+DeepSeek tasks with `ds-flash` / `ds-pro` aliases still load as `flash` / `pro`.
+Start a new task to switch model tier or reasoning effort. Legacy
+DeepSeek sessions without a settings snapshot use the built-in endpoint and
+mappings. Pro rejects image-bearing history.
 
 Mai builds portable checkpoints automatically, at 80% of a default
 1,000,000-token budget. Set `MAI_CONTEXT_WINDOW` to a smaller input budget
@@ -109,7 +129,7 @@ HTTPS is required except for loopback.
 Flash accepts inline image output from `view_image` and `read_skill`. On Pro,
 both tools send images to Flash for a task-relevant description and return only
 labeled text to Pro. Each image adds one Flash request at low reasoning effort,
-using the configured endpoint and request timeout. Descriptions include source
+using the selected provider's Flash mapping, endpoint, and request timeout. Descriptions include source
 metadata and usage when available, and mark their interpretation as unverified.
 Description failures return text tool errors without adding images to Pro history.
 Responses image parts can reference existing Files API `file_id`

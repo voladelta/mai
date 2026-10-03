@@ -34,10 +34,10 @@ Options:
   -h, --help             Show this help text.
   --version              Show the mai version.
   --persist              Save this new task in the current project.
-  --last                 Resume the current saved task in the current project.
+  --last                 Resume the saved task and its provider/model settings.
   --f                    Use Flash/high without the sidekick tool.
   --max                  Use Pro/max (sidekick remains Flash/high).
-  -m, --model MODEL      Use ds-flash or ds-pro for this task.
+  --provider NAME        Select a provider, including when resuming with --last.
   --max-turns COUNT      Set the model-turn limit (default: 64; -1: unlimited).
   --timeout DURATION     Set the per-request first-byte/idle timeout (default: 10m).
   --cell-timeout DURATION      Set the wall-clock limit for each Python cell (default: 10m).
@@ -46,7 +46,9 @@ Options:
   --jsonl                 Write task, model, and tool events as JSON Lines.
 
 Tasks are stateless unless you use --persist or --last.
-The built-in default is ds-pro/high with a Flash/high sidekick available.
+The built-in default is DeepSeek Pro/high with a Flash/high sidekick available.
+Provider settings: .mai.config in the current directory, then $HOME/.mai.config.
+--last keeps the saved model and effort; --provider can switch its backend.
 
 Documentation and support: https://github.com/voladelta/mai
 `
@@ -77,7 +79,7 @@ Usage:
 Example:
   mai "add tests for the parser"
 
-Built-in default: ds-pro/high.
+Built-in default: DeepSeek Pro/high.
 Run 'mai --help' for more information.
 `)
 		return 0
@@ -94,11 +96,42 @@ func runTask(opts options, stdout, stderr io.Writer) int {
 		return 1
 	}
 	taskCfg := configForTask(opts)
+	provider := defaultProviderConfig()
+	if !opts.last || opts.provider != "" {
+		cwd, err := currentDir()
+		if err != nil {
+			return reportError(err)
+		}
+		userHome, err := os.UserHomeDir()
+		if err != nil {
+			return reportError(fmt.Errorf("find home configuration: %w", err))
+		}
+		providers, err := loadProviderConfig(cwd, userHome)
+		if err != nil {
+			return reportError(err)
+		}
+		if opts.provider == "" {
+			taskCfg.Provider = providers.DefaultProvider
+		}
+		var exists bool
+		provider, exists = providers.Providers[taskCfg.Provider]
+		if !exists {
+			return reportError(fmt.Errorf("provider %q is not configured", taskCfg.Provider))
+		}
+	}
+
 	active, err := startSession(taskCfg, opts)
 	if err != nil {
 		return reportError(err)
 	}
 	defer active.close()
+	if opts.last && opts.provider != "" {
+		active.session.Provider = opts.provider
+		active.session.Backend = nil
+		active.session.ReasoningStart = len(active.session.History)
+		active.session.ContextTokens = 0
+	}
+
 	runner := newAgent(stdout, stderr, active.path, opts.timeout, !opts.noInput && isTerminal(os.Stdin))
 	if opts.jsonl {
 		runner.modelOutput = jsonlTextWriter{output: stdout}
@@ -106,7 +139,7 @@ func runTask(opts options, stdout, stderr io.Writer) int {
 	if err := repairInterruptedToolCalls(active.session); err != nil {
 		return reportError(fmt.Errorf("repair interrupted task: %w", err))
 	}
-	if err := runner.configureBackend(active.session); err != nil {
+	if err := runner.configureBackend(active.session, provider); err != nil {
 		return reportError(err)
 	}
 
@@ -119,7 +152,8 @@ func runTask(opts options, stdout, stderr io.Writer) int {
 	if opts.jsonl {
 		if err := writeJSONLEvent(stdout, map[string]any{
 			"type": "task.started", "session_id": active.session.ID,
-			"model": active.session.Model, "effort": active.session.Effort,
+			"provider": active.session.Provider,
+			"model":    active.session.Model, "effort": active.session.Effort,
 		}); err != nil {
 			return reportError(err)
 		}
@@ -179,12 +213,15 @@ func (task *activeTask) close() {
 }
 
 func configForTask(opts options) taskConfig {
-	cfg := taskConfig{Model: defaultModel, Effort: "h"}
-	if opts.modelExplicit {
-		cfg.Model = opts.model
+	cfg := taskConfig{Provider: defaultProvider, Model: defaultModel, Effort: "h"}
+	if opts.provider != "" {
+		cfg.Provider = opts.provider
 	}
-	if opts.effortExplicit {
-		cfg.Effort = opts.effort
+	if opts.fast {
+		cfg.Model = "flash"
+	}
+	if opts.maxEffort {
+		cfg.Effort = "max"
 	}
 	return cfg
 }
@@ -236,12 +273,6 @@ func startSession(cfg taskConfig, opts options) (*activeTask, error) {
 		lock.Close()
 		return nil, errors.New("saved task does not belong to this project")
 	}
-	if opts.modelExplicit {
-		sess.Model = opts.model
-	}
-	if opts.effortExplicit {
-		sess.Effort = opts.effort
-	}
 	if err := os.Chdir(sess.CWD); err != nil {
 		lock.Close()
 		return nil, fmt.Errorf("resume task directory %s: %w", sess.CWD, err)
@@ -273,7 +304,7 @@ func createSession(cfg taskConfig) (*session, error) {
 	}
 	return &session{
 		Version: stateVersion, ID: id, CWD: cwd, RepoRoot: root,
-		Model: cfg.Model, Effort: cfg.Effort,
+		Provider: cfg.Provider, Model: cfg.Model, Effort: cfg.Effort,
 	}, nil
 }
 

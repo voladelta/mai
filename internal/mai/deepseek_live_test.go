@@ -20,7 +20,7 @@ func TestLiveDeepSeekResponses(t *testing.T) {
 	t.Setenv("MAI_CONTEXT_WINDOW", "32768")
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
-	for _, model := range []string{"ds-flash", "ds-pro"} {
+	for _, model := range []string{"flash", "pro"} {
 		for _, effort := range []string{"l", "h", "max"} {
 			t.Run(model+"/"+effort, func(t *testing.T) {
 				started := time.Now()
@@ -32,7 +32,7 @@ func TestLiveDeepSeekResponses(t *testing.T) {
 				}
 				path := filepath.Join(t.TempDir(), "session.json")
 				a := newAgent(io.Discard, io.Discard, path, 2*time.Minute, false)
-				if err := a.configureBackend(sess); err != nil {
+				if err := a.configureBackend(sess, defaultProviderConfig()); err != nil {
 					t.Fatal(err)
 				}
 				done := false
@@ -46,7 +46,7 @@ func TestLiveDeepSeekResponses(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					if err := a.configureBackend(sess); err != nil {
+					if err := a.configureBackend(sess, defaultProviderConfig()); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -79,7 +79,11 @@ func TestLiveDeepSeekResponses(t *testing.T) {
 				if err != nil || !strings.Contains(checkpoint, "AUD-781") || !strings.Contains(checkpoint, "UNKNOWN") || usage == nil {
 					t.Fatalf("checkpoint did not preserve facts: %v", err)
 				}
-				t.Logf("RESPONSES_CONFORMANCE model=%s effort=%s tool_resume=true reasoning_observed=%v checkpoint=true duration_ms=%d", modelID(model), effortIDs[effort], reasoning, time.Since(started).Milliseconds())
+				apiModel := defaultProviderConfig().Models.Pro
+				if model == "flash" {
+					apiModel = defaultProviderConfig().Models.Flash
+				}
+				t.Logf("RESPONSES_CONFORMANCE model=%s effort=%s tool_resume=true reasoning_observed=%v checkpoint=true duration_ms=%d", apiModel, effortIDs[effort], reasoning, time.Since(started).Milliseconds())
 			})
 		}
 	}
@@ -108,13 +112,13 @@ First assignment: tell the worker to call bash exactly once with command printf 
 Second assignment: reuse the returned worker_id. Tell the worker to recall its previous answer from its own conversation, call bash exactly once with command printf %s, and answer with its previous answer followed by a space and the new Bash output. Do not repeat the first token in the follow-up task or context. Do not read or write files, use other tools or network, or access credentials.
 After both assignments complete, return exactly the second worker answer.`, first, first, second)
 			sess := deepseekTestSession(t)
-			sess.Model, sess.Effort, sess.History = "ds-pro", effort, nil
+			sess.Model, sess.Effort, sess.History = "pro", effort, nil
 			if err := appendUserPrompt(sess, prompt); err != nil {
 				t.Fatal(err)
 			}
 			a := newAgent(io.Discard, io.Discard, "", 2*time.Minute, false)
 			a.skipSkills, a.maxTurns = true, 6
-			if err := a.configureBackend(sess); err != nil {
+			if err := a.configureBackend(sess, defaultProviderConfig()); err != nil {
 				t.Fatal(err)
 			}
 			if err := a.run(ctx, sess, prompt); err != nil {
@@ -149,7 +153,7 @@ After both assignments complete, return exactly the second worker answer.`, firs
 					if results == 2 {
 						want += " " + second
 					}
-					if !result.OK || result.Model != "ds-flash" || result.Effort != "high" || strings.TrimSpace(result.Answer) != want || result.UsageReports == 0 {
+					if !result.OK || result.Model != "flash" || result.Effort != "high" || strings.TrimSpace(result.Answer) != want || result.UsageReports == 0 {
 						t.Fatalf("invalid live worker result: %+v", result)
 					}
 				}
@@ -181,7 +185,7 @@ After both assignments complete, return exactly the second worker answer.`, firs
 			if workerCalls != 2 {
 				t.Fatalf("worker Bash calls=%d, want 2", workerCalls)
 			}
-			t.Logf("SIDEKICK_CONFORMANCE director=ds-pro/%s worker=ds-flash/high followup=true tools=true director_turns=%d worker_turns=%d duration_ms=%d", effortIDs[effort], a.modelTurns, a.sidekick.agent.modelTurns, time.Since(started).Milliseconds())
+			t.Logf("SIDEKICK_CONFORMANCE director=pro/%s worker=flash/high followup=true tools=true director_turns=%d worker_turns=%d duration_ms=%d", effortIDs[effort], a.modelTurns, a.sidekick.agent.modelTurns, time.Since(started).Milliseconds())
 		})
 	}
 }

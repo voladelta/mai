@@ -96,7 +96,11 @@ func (a *agent) runLoop(ctx context.Context, sess *session, userPrompt string) (
 	}
 	instructions := systemInstructions(sess, a.loadSkillInstructions(userPrompt), a.roleInstructions)
 	if sess.ContextTokens == 0 {
-		sess.ContextTokens = estimateHistoryTokens(sess.History) + estimateInstructionTokens(instructions)
+		history, err := sess.requestHistory()
+		if err != nil {
+			return nil, err
+		}
+		sess.ContextTokens = estimateHistoryTokens(history) + estimateInstructionTokens(instructions)
 	}
 	for turn := 0; a.maxTurns == -1 || turn < a.maxTurns; turn++ {
 		if err := ctx.Err(); err != nil {
@@ -234,6 +238,7 @@ func (a *agent) compactIfNeeded(ctx context.Context, sess *session, instructions
 	next := *sess
 	next.History = history
 	next.ContextEdits = nil
+	next.ReasoningStart = 0
 	if err := archiveTranscript(a.sessionPath, sess, &next); err != nil {
 		return err
 	}
@@ -385,7 +390,7 @@ func (a *agent) executeReadSkill(ctx context.Context, sess *session, arguments s
 	if err != nil {
 		return textToolOutput(toolError("read_skill failed", err))
 	}
-	if sess.Model == "ds-pro" && result.imageURL != "" {
+	if sess.Model == "pro" && result.imageURL != "" {
 		return a.describeImageOutput(ctx, sess, marshalToolResult(result), result.imageURL)
 	}
 	return skillFileToolOutput(result)
@@ -403,7 +408,7 @@ func (a *agent) executeViewImage(ctx context.Context, sess *session, arguments s
 	if err != nil {
 		return textToolOutput(toolError("view_image failed", err))
 	}
-	if sess.Model == "ds-pro" {
+	if sess.Model == "pro" {
 		return a.describeImageOutput(ctx, sess, marshalToolResult(result), result.imageURL)
 	}
 	return imageContentToolOutput(marshalToolResult(result), result.imageURL)

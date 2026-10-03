@@ -29,7 +29,7 @@ mai "investigate this failure" --timeout=20m
 | `--last` | Resume the current saved task. | `mai "review the fix" --last` |
 | `--f` | Select Flash/high without a sidekick. | `mai "explain this package" --f` |
 | `--max` | Select Pro/max; sidekick remains Flash/high. | `mai "review this refactor" --max` |
-| `-m`, `--model MODEL` | Select `ds-flash` or `ds-pro`. Explicit model selection uses high effort unless Pro/max is selected. | `mai "review this package" -m ds-pro` |
+| `--provider NAME` | Override `default_provider` from the selected config; built-in default is `deepseek`. | `mai "quick review" --provider enclave --f` |
 | `--max-turns COUNT` | Limit model turns; default 64, or `-1` for unlimited. | `mai "finish the migration" --max-turns -1` |
 | `--timeout DURATION` | Model request first-byte/idle timeout; default `10m`. | `mai "investigate the failure" --timeout 20m` |
 | `--cell-timeout DURATION` | Python cell wall-clock limit; default `10m`. | `mai "explore sales.csv" --cell-timeout 5m` |
@@ -48,25 +48,58 @@ New tasks default to Pro/high with a Flash/high sidekick available.
 mai "refactor this package"
 mai "explain this package" --f
 mai "review the implementation carefully" --max
-mai "continue the saved task" --last -m ds-pro
+mai "continue the saved task" --last
+mai "quick review" --provider openrouter --f
 ```
 
-`--f` and `--max` cannot be combined. `--f` conflicts with `-m ds-pro`;
-`--max` requires Pro and conflicts with `-m ds-flash`. `-m ds-pro --max`
-is valid. `-e` and `--effort` are unsupported.
+New tasks select Pro/high unless `--f` selects
+Flash/high or `--max` selects Pro/max. `--f` and `--max` cannot be combined.
+`-m`, `--model`, `-e`, and `--effort` are unsupported.
+
+## Providers and configuration
+
+Mai reads `.mai.config` in the current working directory first, otherwise
+`$HOME/.mai.config`. It uses one JSON file without merging. An invalid selected
+file fails with its path; it never silently falls back. With neither file,
+only the built-in DeepSeek provider is available.
+
+See [the example config](../.mai.config.example) for DeepSeek, OpenRouter, and
+Enclave. It has `default_provider` and a `providers` object. Each provider needs
+`base_url`, `api_key_env`, and `models.pro` / `models.flash` mappings. Credentials
+come from the named environment variable. URLs must be HTTPS, with HTTP allowed
+for loopback tests, and contain no embedded credentials, query or fragment.
+Mai appends `/responses` to the base URL.
+
+`--provider NAME` overrides the configured default for a new task.
+Pro, Flash, sidekicks, image descriptions, and checkpoints all use
+the selected provider. A missing provider, model mapping, or credential is an
+error; Mai never falls back to another provider. Upstream model IDs retain their
+exact casing. OpenRouter's maximum effort is sent as `xhigh`; native DeepSeek
+uses `max`.
 
 ## Saving and resuming
 
 ```sh
 mai "add useful tests for the parser" --persist
 mai "fix the failures" --last
-mai "review the result carefully" --last --max
+mai "review the result carefully" --last
 ```
 
 `--persist` and `--last` cannot be combined. Resume restores the original
-working directory, model, effort, and conversation, unless a model mode is
-explicitly selected. Python starts a new environment; sidekick IDs expire
+working directory, conversation, provider, endpoint, model mappings, model tier,
+and reasoning effort. Plain resume ignores current config files and rejects
+`--f` and `--max`. Use `--last --provider NAME` to load current provider config
+and switch backends while retaining the saved model tier and effort. The switch
+is saved for subsequent resumes. Credentials are read from the saved environment
+variable name each time, so rotating a key still works. Legacy DeepSeek sessions
+without a settings snapshot use the built-in endpoint and mappings.
+Python starts a new environment; sidekick IDs expire
 when the previous run ends.
+
+On a provider override, previous reasoning stays in original task history but
+is excluded from requests to the new backend. User messages, assistant answers,
+tool calls/results, and context edits remain intact. This avoids replaying
+provider-specific encrypted reasoning to a different server.
 
 Turn limits, request and cell timeouts, skip-skills, input, and output options
 apply only to this run. Pass them again when resuming.
@@ -89,7 +122,7 @@ saved; `--last` defaults to 64 unless you pass `--max-turns` again. When the
 limit is reached, Mai stops with an error after saving completed work for a
 persisted task, which you can continue with `--last`.
 
-Each DeepSeek Responses request has a 10-minute time-to-first-byte and idle timeout. Each
+Each Responses request has a 10-minute time-to-first-byte and idle timeout. Each
 received stream chunk restarts the idle timer, so an active response can run
 longer than 10 minutes. Set a different positive Go-style duration when necessary:
 

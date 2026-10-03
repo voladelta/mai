@@ -17,14 +17,17 @@ With `DEEPSEEK_API_KEY` populated and `jq` installed, run from the repository ro
 ```sh
 ./evals/run.sh
 ./evals/run.sh startup-timeout
-MAI_EVAL_MODEL=ds-flash ./evals/run.sh
+MAI_EVAL_MODE=flash ./evals/run.sh
 ```
 
 The runner builds Mai once, creates fresh Git projects and uses
 `--jsonl --no-input --skip-skills`. It defaults to Pro/high, matching Mai's
 default, with its Flash/high sidekick available. Skills are disabled so local
 and global skill catalogs do not change the tasks. `MAI_EVAL_BIN` selects an
-existing binary; `MAI_EVAL_MODEL` selects a supported model. These runs make
+existing binary; `MAI_EVAL_MODE` selects `pro`, `flash`, or `max`.
+`MAI_EVAL_PROVIDER` selects a configured provider (default: `deepseek`). Eval
+workspaces are fresh directories, so put shared provider settings in
+`$HOME/.mai.config`. These runs make
 paid API requests. The printed result directory contains events, stderr, final
 workspace, diff and grader output, including failures.
 
@@ -37,6 +40,20 @@ are a functional smoke suite, not a statistical performance benchmark. Review
 the diffs too.
 Do not treat `model.completed.total_tokens` as billable usage; sum available
 input/output/cache fields and checkpoint usage when measuring API work.
+
+## Router Flash conformance
+
+The opt-in provider probe runs the CLI with `--provider` and `--f`, executes one
+Bash marker command, and checks the follow-up answer. It uses the tracked example
+config in a temporary directory and makes paid API requests:
+
+```sh
+MAI_LIVE_PROVIDER=openrouter go test -v ./internal/mai -run '^TestLiveProviderFlash$' -count=1 -timeout=5m
+MAI_LIVE_PROVIDER=enclave go test -v ./internal/mai -run '^TestLiveProviderFlash$' -count=1 -timeout=5m
+```
+
+Export `OPENROUTER_API_KEY` or `ENCLAVE_API_KEY` for the selected probe. Ordinary
+`go test ./...` skips this test.
 
 ## Responses conformance
 
@@ -98,7 +115,7 @@ and correct answers without original-history retrieval evidence.
 
 ```sh
 ./evals/patch-rate.sh
-MAI_EVAL_MODEL=ds-flash ./evals/patch-rate.sh
+MAI_EVAL_MODE=flash ./evals/patch-rate.sh
 ./evals/timing.sh /absolute/path/events.jsonl
 ```
 

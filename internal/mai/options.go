@@ -9,23 +9,20 @@ import (
 )
 
 type options struct {
-	prompt         string
-	last           bool
-	persist        bool
-	effort         string
-	effortExplicit bool
-	model          string
-	modelExplicit  bool
-	fast           bool
-	maxEffort      bool
-	help           bool
-	version        bool
-	noInput        bool
-	skipSkills     bool
-	jsonl          bool
-	maxTurns       int
-	timeout        time.Duration
-	cellTimeout    time.Duration
+	prompt      string
+	last        bool
+	persist     bool
+	provider    string
+	fast        bool
+	maxEffort   bool
+	help        bool
+	version     bool
+	noInput     bool
+	skipSkills  bool
+	jsonl       bool
+	maxTurns    int
+	timeout     time.Duration
+	cellTimeout time.Duration
 }
 
 type optionKind int
@@ -40,7 +37,7 @@ const (
 	optionJSONL
 	optionFast
 	optionMaxEffort
-	optionModel
+	optionProvider
 	optionTimeout
 	optionCellTimeout
 	optionMaxTurns
@@ -53,10 +50,10 @@ var optionKinds = map[string]optionKind{
 	"--persist":  optionPersist,
 	"--no-input": optionNoInput,
 	"-s":         optionSkipSkills, "--skip-skills": optionSkipSkills,
-	"--jsonl": optionJSONL,
-	"--f":     optionFast,
-	"--max":   optionMaxEffort,
-	"-m":      optionModel, "--model": optionModel,
+	"--jsonl":        optionJSONL,
+	"--f":            optionFast,
+	"--max":          optionMaxEffort,
+	"--provider":     optionProvider,
 	"--timeout":      optionTimeout,
 	"--cell-timeout": optionCellTimeout,
 	"--max-turns":    optionMaxTurns,
@@ -141,7 +138,7 @@ func parseOptionTokens(args []string, out *options) ([]string, error) {
 }
 
 func (kind optionKind) takesValue() bool {
-	return kind == optionModel || kind == optionTimeout || kind == optionCellTimeout || kind == optionMaxTurns
+	return kind == optionProvider || kind == optionTimeout || kind == optionCellTimeout || kind == optionMaxTurns
 }
 
 func (out *options) setOption(kind optionKind, value string) error {
@@ -162,8 +159,11 @@ func (out *options) setOption(kind optionKind, value string) error {
 		out.fast = true
 	case optionMaxEffort:
 		out.maxEffort = true
-	case optionModel:
-		out.model, out.modelExplicit = value, true
+	case optionProvider:
+		if !validProviderName(value) {
+			return fmt.Errorf("invalid provider %q (use lowercase letters, digits, hyphens or underscores)", value)
+		}
+		out.provider = value
 	case optionMaxTurns:
 		maxTurns, err := strconv.Atoi(value)
 		if err != nil || (maxTurns <= 0 && maxTurns != -1) {
@@ -187,29 +187,8 @@ func (out *options) setOption(kind optionKind, value string) error {
 }
 
 func (out *options) normalizeSelections() error {
-	if out.modelExplicit {
-		out.model = normalizeModel(out.model)
-		if !supportedModel(out.model) {
-			return fmt.Errorf("invalid model %q (use ds-flash or ds-pro)", out.model)
-		}
-	}
 	if out.fast && out.maxEffort {
 		return errors.New("--f and --max cannot be used together")
-	}
-	if out.fast && out.modelExplicit && out.model != "ds-flash" {
-		return errors.New("--f conflicts with --model ds-pro")
-	}
-	if out.maxEffort && out.modelExplicit && out.model != "ds-pro" {
-		return errors.New("--max requires ds-pro")
-	}
-	if out.fast {
-		out.model, out.modelExplicit = "ds-flash", true
-	}
-	if out.maxEffort {
-		out.model, out.modelExplicit = "ds-pro", true
-		out.effort, out.effortExplicit = "max", true
-	} else if out.modelExplicit {
-		out.effort, out.effortExplicit = "h", true
 	}
 	return nil
 }
@@ -217,6 +196,9 @@ func (out *options) normalizeSelections() error {
 func (out options) validateMode(argCount int) error {
 	if out.last && out.persist {
 		return errors.New("--last and --persist cannot be used together")
+	}
+	if out.last && (out.fast || out.maxEffort) {
+		return errors.New("--last keeps the saved model and reasoning effort; --f and --max cannot be used with --last")
 	}
 	if out.prompt == "" && argCount > 0 {
 		return errors.New("prompt is required")
@@ -232,30 +214,14 @@ func parseTimeout(value string) (time.Duration, error) {
 	return timeout, nil
 }
 
-const defaultModel = "ds-pro"
+const defaultModel = "pro"
 
-func normalizeModel(model string) string {
-	return strings.ToLower(strings.TrimSpace(model))
+func supportedModel(model string) bool {
+	return model == "flash" || model == "pro"
 }
 
-func supportedModel(model string) bool { return deepseekModel(model) }
-
-func deepseekModel(model string) bool {
-	return model == "ds-flash" || model == "ds-pro"
-}
-
-func deepseekEffort(effort string) bool {
+func supportedEffort(effort string) bool {
 	return effort == "l" || effort == "h" || effort == "max"
-}
-
-func modelID(model string) string {
-	if model == "ds-flash" {
-		return "deepseek-flash"
-	}
-	if model == "ds-pro" {
-		return "deepseek-v4-pro"
-	}
-	return model
 }
 
 // Default input budget for DeepSeek Responses.

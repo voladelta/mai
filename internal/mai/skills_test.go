@@ -439,7 +439,7 @@ func TestProSkillImageFailureKeepsHistoryUsable(t *testing.T) {
 	mustWrite(t, filepath.Join(root, "demo", "assets", "icon.png"), string([]byte{0x89, 'P', 'N', 'G', 0, 1}))
 	a := &agent{stdout: io.Discard, stderr: io.Discard, skillsRoots: []string{root}}
 	sess := deepseekTestSession(t)
-	sess.Model = "ds-pro"
+	sess.Model = "pro"
 	call := functionCall{
 		Type:      "function_call",
 		CallID:    "skill-image",
@@ -452,7 +452,7 @@ func TestProSkillImageFailureKeepsHistoryUsable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := validateDeepSeekHistory(sess.History, sess.Model); err != nil {
+	if err := validateResponsesHistory(sess.History, sess.Model, defaultProvider); err != nil {
 		t.Fatalf("skill output made Pro history unusable: %v", err)
 	}
 	var output struct {

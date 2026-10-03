@@ -5,6 +5,14 @@ if ! command -v jq > /dev/null 2>&1; then
     exit 2
 fi
 
+provider=${MAI_EVAL_PROVIDER:-deepseek}
+case ${MAI_EVAL_MODE:-pro} in
+    pro) mode_flag= ;;
+    flash) mode_flag=--f ;;
+    max) mode_flag=--max ;;
+    *) printf 'MAI_EVAL_MODE must be pro, flash, or max\n' >&2; exit 2 ;;
+esac
+
 run_case() {
     case_name=$1
     fixture=$2
@@ -21,7 +29,7 @@ run_case() {
     git -C "$work_dir" -c user.name='Mai Eval' -c user.email='mai-eval@example.invalid' commit -qm 'Initial task state'
 
     started=$(date +%s)
-    if (cd "$work_dir" && "$mai_bin" "$prompt" --jsonl --no-input --skip-skills -m "$model" > "$output_dir/events.jsonl" 2> "$output_dir/mai.stderr"); then
+    if (cd "$work_dir" && "$mai_bin" "$prompt" --provider "$provider" ${mode_flag:+"$mode_flag"} --jsonl --no-input --skip-skills > "$output_dir/events.jsonl" 2> "$output_dir/mai.stderr"); then
         mai_status=0
     else
         mai_status=$?

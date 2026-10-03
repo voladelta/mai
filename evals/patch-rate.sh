@@ -7,7 +7,6 @@ fixture="$repo_root/evals/patch-rate/workspace"
 result_dir=$(mktemp -d "${TMPDIR:-/tmp}/mai-patch-rate.XXXXXX") || exit 1
 trap 'printf "Results: %s\n" "$result_dir"' EXIT
 mai_bin=${MAI_EVAL_BIN:-"$result_dir/mai"}
-model=${MAI_EVAL_MODEL:-ds-pro}
 
 if [ -z "${MAI_EVAL_BIN:-}" ]; then
     (cd "$repo_root" && go build -o "$mai_bin" ./cmd/mai)
