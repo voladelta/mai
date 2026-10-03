@@ -47,9 +47,11 @@ func portableHistory(ctx context.Context, sess *session, backend modelBackend) (
 	pending := map[string]bool{}
 	for _, raw := range history[:cut] {
 		var item struct {
-			Type   string `json:"type"`
-			Role   string `json:"role"`
-			CallID string `json:"call_id"`
+			Type    string          `json:"type"`
+			Role    string          `json:"role"`
+			CallID  string          `json:"call_id"`
+			Content json.RawMessage `json:"content"`
+			Output  json.RawMessage `json:"output"`
 		}
 		if err := json.Unmarshal(raw, &item); err != nil {
 			return nil, nil, err
@@ -58,26 +60,16 @@ func portableHistory(ctx context.Context, sess *session, backend modelBackend) (
 			return nil, nil, errors.New("opaque checkpoints are unsupported")
 		}
 		if item.Type == "message" || item.Type == "" {
-			var message struct {
-				Content json.RawMessage `json:"content"`
-			}
-			_ = json.Unmarshal(raw, &message)
-			if _, err := portableMessageText(message.Content); err != nil {
+			if _, err := portableMessageText(item.Content); err != nil {
 				return nil, nil, err
 			}
 		}
 		if item.Type == "function_call_output" {
-			var output struct {
-				Output json.RawMessage `json:"output"`
-			}
-			if err := json.Unmarshal(raw, &output); err != nil {
-				return nil, nil, err
-			}
 			var parts []struct {
 				Type string `json:"type"`
 			}
-			if len(output.Output) > 0 && output.Output[0] == '[' {
-				if err := json.Unmarshal(output.Output, &parts); err != nil {
+			if len(item.Output) > 0 && item.Output[0] == '[' {
+				if err := json.Unmarshal(item.Output, &parts); err != nil {
 					return nil, nil, err
 				}
 				for _, part := range parts {
@@ -170,14 +162,12 @@ func portableHistory(ctx context.Context, sess *session, backend modelBackend) (
 			unknownCache = unknownCache || partUsage.InputTokensDetails == nil || partUsage.InputTokensDetails.CachedTokens == nil
 		}
 		addUsage(usage, partUsage)
-		if len(text) == 0 {
-			item, _ := json.Marshal(map[string]any{
-				"role":    "user",
-				"content": []map[string]string{{"type": "input_text", "text": "Historical continuity checkpoint (model-authored; verify exact facts against original mai.history records).\n" + checkpoint}},
-			})
-			retained = append(retained, item)
-		}
 	}
+	item, _ := json.Marshal(map[string]any{
+		"role":    "user",
+		"content": []map[string]string{{"type": "input_text", "text": "Historical continuity checkpoint (model-authored; verify exact facts against original mai.history records).\n" + checkpoint}},
+	})
+	retained = append(retained, item)
 	retained = append(retained, history[cut:]...)
 	if estimateHistoryTokens(retained) >= estimateHistoryTokens(history) {
 		return nil, nil, errors.New("portable checkpoint does not reduce context")

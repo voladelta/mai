@@ -129,13 +129,7 @@ func (a *agent) loadSkillInstructions(userPrompt string) string {
 		fmt.Fprintf(a.stderr, "mai: skills unavailable: %v\n", a.skillsError)
 		return ""
 	}
-	skillContext, err := buildSkillContext(a.skillsRoots, userPrompt)
-	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintf(a.stderr, "mai: skills unavailable: %v\n", err)
-		}
-		return ""
-	}
+	skillContext := buildSkillContext(a.skillsRoots, userPrompt)
 	a.skillRootsByID = skillContext.rootsByID
 	for _, warning := range skillContext.Warnings {
 		fmt.Fprintf(a.stderr, "mai: skill warning: %s\n", warning)

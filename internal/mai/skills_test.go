@@ -136,10 +136,7 @@ func TestSkillDiscoveryWithMissingRootsAndBrokenRoot(t *testing.T) {
 		{name: "broken global preserves local", roots: []string{root, broken}, wantSkill: true, wantWarnings: 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			result, err := buildSkillContext(test.roots, "Use $demo.")
-			if err != nil {
-				t.Fatal(err)
-			}
+			result := buildSkillContext(test.roots, "Use $demo.")
 
 			if strings.Contains(result.Instructions, "# demo instructions") != test.wantSkill || len(result.Warnings) != test.wantWarnings {
 				t.Fatalf("unexpected context: %#v", result)
@@ -177,10 +174,8 @@ func TestBuildSkillContextListsImplicitSkillsAndLoadsExplicitOptOut(t *testing.T
 	writeTestSkill(t, root, "manual-dir", "manual-only", "Run only when explicitly requested.")
 	mustWrite(t, filepath.Join(root, "manual-dir", "agents", "openai.yaml"), "policy:\n  allow_implicit_invocation: false\n")
 
-	result, err := buildSkillContext([]string{root}, "Use $manual-only for this request. Mention $manual-only only once.")
-	if err != nil {
-		t.Fatal(err)
-	}
+	result := buildSkillContext([]string{root}, "Use $manual-only for this request. Mention $manual-only only once.")
+
 	available, explicit, ok := strings.Cut(result.Instructions, "### Explicit skill")
 	if !ok {
 		t.Fatalf("explicit skill was not loaded:\n%s", result.Instructions)
@@ -252,10 +247,7 @@ func TestSkillFrontMatterControlsAutomaticSelection(t *testing.T) {
 					"policy:\n  allow_implicit_invocation: "+test.policy+"\n")
 			}
 
-			result, err := buildSkillContext([]string{root}, "Use a selectable skill.")
-			if err != nil {
-				t.Fatal(err)
-			}
+			result := buildSkillContext([]string{root}, "Use a selectable skill.")
 
 			if strings.Contains(result.Instructions, "manual-only") != test.wantVisible {
 				t.Fatalf("catalog visibility should be %v:\n%s", test.wantVisible, result.Instructions)
@@ -265,10 +257,7 @@ func TestSkillFrontMatterControlsAutomaticSelection(t *testing.T) {
 			}
 
 			for _, mention := range []string{"manual-only", "manual-dir"} {
-				explicit, err := buildSkillContext([]string{root}, "Use $"+mention+".")
-				if err != nil {
-					t.Fatal(err)
-				}
+				explicit := buildSkillContext([]string{root}, "Use $"+mention+".")
 
 				if !strings.Contains(explicit.Instructions, "### Explicit skill: $manual-only (id: manual-dir)") ||
 					!strings.Contains(explicit.Instructions, "# Manual instructions") {
@@ -290,10 +279,7 @@ func TestSkillFrontMatterRejectsNonBooleanInvocationFlag(t *testing.T) {
 				"---\nname: invalid\ndescription: Invalid invocation flag.\ndisable-model-invocation: "+value+"\n---\n")
 			writeTestSkill(t, root, "valid", "valid", "Still available.")
 
-			result, err := buildSkillContext([]string{root}, "Inspect files.")
-			if err != nil {
-				t.Fatal(err)
-			}
+			result := buildSkillContext([]string{root}, "Inspect files.")
 
 			if strings.Contains(result.Instructions, "Invalid invocation flag.") || !strings.Contains(result.Instructions, "Still available.") {
 				t.Fatalf("invalid flag affected catalog incorrectly:\n%s", result.Instructions)
@@ -334,10 +320,8 @@ func TestImplicitPolicyDefaultsTrueAndParsesFalse(t *testing.T) {
 func TestUnknownDollarNameIsNotTreatedAsMissingSkill(t *testing.T) {
 	root := testSkillRoot(t)
 	writeTestSkill(t, root, "demo", "demo", "A demonstration skill.")
-	result, err := buildSkillContext([]string{root}, "Print the value of $path, but do not use a skill.")
-	if err != nil {
-		t.Fatal(err)
-	}
+	result := buildSkillContext([]string{root}, "Print the value of $path, but do not use a skill.")
+
 	if len(result.Warnings) != 0 || strings.Contains(result.Instructions, "### Explicit skill") {
 		t.Fatalf("unknown dollar name affected skill loading: %#v\n%s", result.Warnings, result.Instructions)
 	}
@@ -350,10 +334,8 @@ func TestSkillCatalogIncludesEveryValidDescription(t *testing.T) {
 		id := fmt.Sprintf("skill-%02d", i)
 		writeTestSkill(t, root, id, id, description)
 	}
-	result, err := buildSkillContext([]string{root}, "inspect the repository")
-	if err != nil {
-		t.Fatal(err)
-	}
+	result := buildSkillContext([]string{root}, "inspect the repository")
+
 	if len(result.Warnings) != 0 {
 		t.Fatalf("unexpected catalog warnings: %#v", result.Warnings)
 	}

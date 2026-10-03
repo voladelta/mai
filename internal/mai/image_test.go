@@ -179,6 +179,32 @@ func TestProImageToolsUseFlashAndContinueWithText(t *testing.T) {
 	}
 }
 
+func TestFlashImageDescriptionPreservesMessageBoundaries(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		deepseekTestResponse(w, `[{"type":"reasoning","content":[{"type":"reasoning_text","text":"private reasoning"}]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"A red label."}]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"It says ERROR."}]}]`)
+	}))
+	defer server.Close()
+
+	var output bytes.Buffer
+	client := &responsesClient{
+		profile:    profileDeepSeek,
+		models:     defaultProviderConfig().Models,
+		httpClient: server.Client(),
+		endpoint:   server.URL,
+		apiKey:     "test",
+		stdout:     &output,
+	}
+
+	description, usage, err := client.describeImage(context.Background(), deepseekTestSession(t), "data:image/png;base64,test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if description != "A red label.\nIt says ERROR." || usage == nil || output.Len() != 0 {
+		t.Fatalf("unexpected description: %q, usage=%+v, stdout=%q", description, usage, output.String())
+	}
+}
+
 func TestFlashImageDescriptionRejectsInvalidOutput(t *testing.T) {
 	for _, test := range []struct {
 		name  string

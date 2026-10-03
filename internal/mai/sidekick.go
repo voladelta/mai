@@ -106,18 +106,7 @@ func (a *agent) executeSidekick(ctx context.Context, parent *session, arguments 
 	}
 	var answer string
 	if err == nil {
-		var parts []string
-		for _, item := range terminalItems {
-			entry, visible, parseErr := visibleTranscriptEntry(item)
-			if parseErr != nil {
-				err = parseErr
-				break
-			}
-			if visible && entry.Kind == "assistant" {
-				parts = append(parts, entry.Text)
-			}
-		}
-		answer = strings.Join(parts, "\n")
+		answer, err = assistantResponseText(terminalItems, "\n")
 		if err == nil && strings.TrimSpace(answer) == "" {
 			err = errors.New("sidekick completed without an assistant answer")
 		}

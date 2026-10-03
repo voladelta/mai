@@ -61,11 +61,8 @@ func defaultSkillsRoot() (string, error) {
 	return filepath.Join(home, ".agents", "skills"), nil
 }
 
-func buildSkillContext(roots []string, userPrompt string) (skillContext, error) {
-	skills, warnings, err := loadSkills(roots)
-	if err != nil {
-		return skillContext{}, err
-	}
+func buildSkillContext(roots []string, userPrompt string) skillContext {
+	skills, warnings := loadSkills(roots)
 	rootsByID := make(map[string]string, len(skills))
 	visible := make([]skillSummary, 0, len(skills))
 	for _, skill := range skills {
@@ -114,10 +111,10 @@ func buildSkillContext(roots []string, userPrompt string) (skillContext, error) 
 		Instructions: instructions.String(),
 		Warnings:     warnings,
 		rootsByID:    rootsByID,
-	}, nil
+	}
 }
 
-func loadSkills(roots []string) ([]skillSummary, []string, error) {
+func loadSkills(roots []string) ([]skillSummary, []string) {
 	var skills []skillSummary
 	var warnings []string
 	seenIDs := make(map[string]bool)
@@ -152,7 +149,7 @@ func loadSkills(roots []string) ([]skillSummary, []string, error) {
 		}
 		return skills[i].ID < skills[j].ID
 	})
-	return skills, warnings, nil
+	return skills, warnings
 }
 
 func loadSkillsRoot(root string) ([]skillSummary, []string, error) {

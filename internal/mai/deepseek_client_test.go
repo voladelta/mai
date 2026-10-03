@@ -126,7 +126,7 @@ func TestDeepSeekCheckpointAndProTools(t *testing.T) {
 				t.Error("summary contains tools")
 			}
 		}
-		deepseekTestResponse(w, `[{"type":"reasoning","content":[{"type":"reasoning_text","text":"private reasoning"}]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Goal: preserve release REL-123 and UNKNOWN outcome."}]}]`)
+		deepseekTestResponse(w, `[{"type":"reasoning","content":[{"type":"reasoning_text","text":"private reasoning"}]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Goal: preserve release REL-123"}]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":" and UNKNOWN outcome."}]}]`)
 	}))
 	defer server.Close()
 	var output bytes.Buffer
@@ -145,7 +145,7 @@ func TestDeepSeekCheckpointAndProTools(t *testing.T) {
 	}
 	output.Reset()
 	text, usage, err := c.summarize(context.Background(), sess, "history")
-	if err != nil || !strings.Contains(text, "REL-123") || strings.Contains(text, "private reasoning") || usage == nil || *usage.InputTokensDetails.CachedTokens != 64 || output.Len() != 0 {
+	if err != nil || text != "Goal: preserve release REL-123 and UNKNOWN outcome." || usage == nil || *usage.InputTokensDetails.CachedTokens != 64 || output.Len() != 0 {
 		t.Fatalf("invalid checkpoint: %q %+v %v", text, usage, err)
 	}
 }

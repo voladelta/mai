@@ -157,6 +157,20 @@ func visibleTranscriptEntry(raw json.RawMessage) (transcriptEntry, bool, error) 
 	}
 }
 
+func assistantResponseText(items []json.RawMessage, separator string) (string, error) {
+	var texts []string
+	for _, raw := range items {
+		entry, visible, err := visibleTranscriptEntry(raw)
+		if err != nil {
+			return "", err
+		}
+		if visible && entry.Kind == "assistant" {
+			texts = append(texts, entry.Text)
+		}
+	}
+	return strings.Join(texts, separator), nil
+}
+
 func transcriptText(raw json.RawMessage, includeOutputText bool) (string, error) {
 	if len(raw) == 0 {
 		return "", nil

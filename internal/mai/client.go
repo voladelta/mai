@@ -55,7 +55,6 @@ type sseCollector struct {
 	items     map[int]json.RawMessage
 	wrote     bool
 	completed bool
-	tokens    int64
 	usage     *tokenUsage
 }
 
@@ -164,7 +163,7 @@ func (collector *sseCollector) complete(response *sseResponse) error {
 		return errors.New("Responses response.completed is missing response")
 	}
 	if response.Status != "completed" {
-		return newProviderFailure(fmt.Sprintf("Responses response ended with status %q", response.Status), response.Error)
+		return fmt.Errorf("Responses response ended with status %q: %s", response.Status, compactJSON(response.Error))
 	}
 
 	collector.completed = true
@@ -199,7 +198,6 @@ func (collector *sseCollector) complete(response *sseResponse) error {
 		}
 	}
 	if response.Usage != nil {
-		collector.tokens = response.Usage.TotalTokens
 		collector.usage = response.Usage
 	}
 
@@ -208,16 +206,12 @@ func (collector *sseCollector) complete(response *sseResponse) error {
 
 func (collector *sseCollector) fail(event sseEvent) error {
 	if event.Response != nil {
-		return newProviderFailure("Responses response failed", event.Response.Error)
+		return fmt.Errorf("Responses response failed: %s", compactJSON(event.Response.Error))
 	}
 	if len(event.Error) == 0 && (event.Code != "" || event.Message != "") {
 		return fmt.Errorf("Responses stream failed: %s (%s)", event.Message, event.Code)
 	}
-	return newProviderFailure("Responses stream failed", event.Error)
-}
-
-func newProviderFailure(context string, raw json.RawMessage) error {
-	return fmt.Errorf("%s: %s", context, compactJSON(raw))
+	return fmt.Errorf("Responses stream failed: %s", compactJSON(event.Error))
 }
 
 func (collector *sseCollector) result() streamResult {
@@ -230,7 +224,11 @@ func (collector *sseCollector) result() streamResult {
 	for _, index := range indexes {
 		ordered = append(ordered, collector.items[index])
 	}
-	return streamResult{items: ordered, wrote: collector.wrote, totalTokens: collector.tokens, usage: collector.usage}
+	result := streamResult{items: ordered, wrote: collector.wrote, usage: collector.usage}
+	if collector.usage != nil {
+		result.totalTokens = collector.usage.TotalTokens
+	}
+	return result
 }
 
 func compactJSON(raw json.RawMessage) string {

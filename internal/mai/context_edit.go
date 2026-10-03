@@ -203,13 +203,14 @@ func renderStdoutEdit(history []json.RawMessage, relationships contextCallIndex,
 }
 
 func (sess *session) requestHistory() ([]json.RawMessage, error) {
-	history := append([]json.RawMessage(nil), sess.History...)
+	var relationships contextCallIndex
 	if len(sess.ContextEdits) > 0 {
-		var err error
-		history, err = sess.projectHistory(indexContextCalls(sess.History))
-		if err != nil {
-			return nil, err
-		}
+		relationships = indexContextCalls(sess.History)
+	}
+
+	history, err := sess.projectHistory(relationships)
+	if err != nil {
+		return nil, err
 	}
 	if sess.ReasoningStart == 0 {
 		return history, nil
