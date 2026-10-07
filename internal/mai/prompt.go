@@ -36,7 +36,7 @@ Tools
 - rm: literal paths only; substitution, globs, or cd need approval.
 
 Delegation
-- Delegate only when authorized by the user or repository instructions. For stateless mai subprocesses, use --no-input and explicit scope; nesting depth is limited. Wait for completion and inspect effects.
+- Delegate only when authorized by the user or repository instructions. For stateless mai subprocesses, use --no-input and explicit scope; the harness refuses nested runs past its depth limit. Wait for completion and inspect effects.
 
 Recovery
 - A repaired interrupted tool result has an unknown outcome. It does not show that the tool failed or completed.
