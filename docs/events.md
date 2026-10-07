@@ -1,6 +1,6 @@
 # JSONL events
 
-[Back to README](../README.md) · [CLI reference](cli.md) · [Eval instructions](../evals/README.md)
+[Back to README](../README.md) · [CLI reference](cli.md)
 
 Use `--jsonl` to write one JSON event per line on standard output:
 
@@ -35,8 +35,4 @@ also includes `parent_id` (the source session ID) and `forked_at_turn` (the
 number of history items copied at fork time).
 
 Nested Python host calls count toward the outer
-Python tool duration. With `jq` installed, summarize a run with:
-
-```sh
-./evals/timing.sh run.jsonl
-```
+Python tool duration.

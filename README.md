@@ -23,7 +23,7 @@ Enclave is the built-in default, using `ENCLAVE_API_KEY`.
 See [Installation](#installation) for binary location and `PATH` setup.
 
 [Quick start](#quick-start) · [CLI](docs/cli.md) · [Tools](docs/tools.md) ·
-[Sessions](docs/sessions.md) · [JSONL events](docs/events.md) · [Evals](evals/README.md)
+[Sessions](docs/sessions.md) · [JSONL events](docs/events.md)
 
 ## Why Mai?
 
@@ -279,7 +279,7 @@ can overwrite or delete data. `--no-input` rejects approval requests.
 - Saved tasks must use the supported state format; incompatible older files
   require a new task.
 - Smaller contexts and checkpoints can add model requests and change cache
-  reuse. The included evals do not establish general speed or cost advantages.
+  reuse. No general speed or cost advantage is claimed.
 
 See [Tools and skills](docs/tools.md#safety) for execution boundaries and
 [Sessions and context](docs/sessions.md) for storage and recovery details.
@@ -343,10 +343,6 @@ you ran. From the repository root, the local checks are:
 go test -race ./...
 go vet ./...
 ```
-
-The [eval guide](evals/README.md) covers graded coding tasks, paid Responses and
-provider probes, and context-continuity checks. Live probes require explicit
-environment switches and make paid API requests.
 
 ## License
 
