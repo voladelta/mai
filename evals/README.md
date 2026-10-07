@@ -16,7 +16,7 @@ run against the resulting code.
 
 ## Graded coding tasks
 
-With `DEEPSEEK_API_KEY` populated and `jq` installed, run from the repository root:
+With `ENCLAVE_API_KEY` populated and `jq` installed, run from the repository root:
 
 ```sh
 ./evals/run.sh
@@ -30,7 +30,7 @@ high effort, matching Mai's default. Skills are disabled so local
 and global skill catalogs do not change the tasks. `MAI_EVAL_BIN` selects an
 existing binary; `MAI_EVAL_MODEL` overrides the provider's configured model and
 `MAI_EVAL_EFFORT` selects `l`, `h`, or `max`.
-`MAI_EVAL_PROVIDER` selects a configured provider (default: `deepseek`). Eval
+`MAI_EVAL_PROVIDER` selects a configured provider (default: `enclave`). Eval
 workspaces are fresh directories, so put shared provider settings in
 `$HOME/.mai.config`, or set `MAI_EVAL_CONFIG` to an absolute config path to copy
 into each workspace. These runs make
@@ -55,14 +55,14 @@ file and image reads, two persistent Python cells, a Python-to-Bash bridge,
 direct file writes/edits/reads, and verification of the resulting file. Both are paid probes:
 
 ```sh
-MAI_LIVE_DEEPSEEK_TOOLS=1 go test -v ./internal/mai -run '^TestLiveDeepSeekTools$' -count=1 -timeout=6m
-MAI_LIVE_DEEPSEEK_CONTEXT_EDIT=1 go test -v ./internal/mai -run '^TestLiveDeepSeekContextEdit$' -count=1 -timeout=10m
+MAI_LIVE_DEEPSEEK_TOOLS=1 MAI_LIVE_PROVIDER=deepseek MAI_LIVE_CONFIG=/absolute/path/.mai.config go test -v ./internal/mai -run '^TestLiveDeepSeekTools$' -count=1 -timeout=6m
+MAI_LIVE_DEEPSEEK_CONTEXT_EDIT=1 MAI_LIVE_PROVIDER=deepseek MAI_LIVE_CONFIG=/absolute/path/.mai.config go test -v ./internal/mai -run '^TestLiveDeepSeekContextEdit$' -count=1 -timeout=10m
 ```
 
-To run these probes against a configured provider, set
-`MAI_LIVE_PROVIDER=enclave` and `MAI_LIVE_CONFIG=/absolute/path/.mai.config`
-on each command. This uses the specified config rather than the built-in
-DeepSeek endpoint. Passing these prompted smoke
+The DeepSeek probes pin `MAI_LIVE_PROVIDER=deepseek` and a config file
+containing that provider; they skip otherwise. The same `MAI_LIVE_PROVIDER`
+plus `MAI_LIVE_CONFIG` pair (for example `enclave`) retargets the probes at a
+configured provider instead of the built-in default. Passing these prompted smoke
 checks establishes integration, not reliable autonomous tool selection across
 arbitrary tasks; use the graded coding suite to check task completion too.
 
@@ -81,7 +81,7 @@ Export `OPENROUTER_API_KEY` or `ENCLAVE_API_KEY` for the selected probe. Ordinar
 ## Responses conformance
 
 ```sh
-MAI_LIVE_DEEPSEEK_RESPONSES=1 go test -v ./internal/mai -run '^TestLiveDeepSeekResponses$' -count=1 -timeout=20m
+MAI_LIVE_DEEPSEEK_RESPONSES=1 MAI_LIVE_PROVIDER=deepseek MAI_LIVE_CONFIG=/absolute/path/.mai.config go test -v ./internal/mai -run '^TestLiveDeepSeekResponses$' -count=1 -timeout=20m
 ```
 
 This paid probe runs the configured model at low, high and max effort. Each trial runs
@@ -96,7 +96,7 @@ model/effort selection, original-history recall and image preservation.
 ## Coding and context continuity
 
 ```sh
-MAI_LIVE_DEEPSEEK_CODING=1 MAI_CONTEXT_RESEARCH_REPORT=/absolute/existing/directory/deepseek-coding.json go test -v ./internal/mai -run '^TestLiveDeepSeekCoding$' -count=1 -timeout=20m
+MAI_LIVE_DEEPSEEK_CODING=1 MAI_LIVE_PROVIDER=deepseek MAI_LIVE_CONFIG=/absolute/path/.mai.config MAI_CONTEXT_RESEARCH_REPORT=/absolute/existing/directory/deepseek-coding.json go test -v ./internal/mai -run '^TestLiveDeepSeekCoding$' -count=1 -timeout=20m
 ```
 
 This paid coding probe uses a three-stage Go task with unique
@@ -110,7 +110,7 @@ not a performance ranking.
 ## Explicit context editing and recall
 
 ```sh
-MAI_LIVE_DEEPSEEK_CONTEXT_EDIT=1 MAI_CONTEXT_EDIT_REPORT=/absolute/existing/directory/context-edit.json go test -v ./internal/mai -run '^TestLiveDeepSeekContextEdit$' -count=1 -timeout=20m
+MAI_LIVE_DEEPSEEK_CONTEXT_EDIT=1 MAI_LIVE_PROVIDER=deepseek MAI_LIVE_CONFIG=/absolute/path/.mai.config MAI_CONTEXT_EDIT_REPORT=/absolute/existing/directory/context-edit.json go test -v ./internal/mai -run '^TestLiveDeepSeekContextEdit$' -count=1 -timeout=20m
 ```
 
 This paid probe runs the configured model at high effort. Each trial reads a real temporary

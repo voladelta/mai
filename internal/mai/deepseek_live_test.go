@@ -16,6 +16,7 @@ func TestLiveDeepSeekResponses(t *testing.T) {
 	if os.Getenv("MAI_LIVE_DEEPSEEK_RESPONSES") != "1" {
 		t.Skip("set MAI_LIVE_DEEPSEEK_RESPONSES=1")
 	}
+	requireDeepSeekLiveProvider(t)
 	t.Setenv("MAI_CONTEXT_WINDOW", "32768")
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()

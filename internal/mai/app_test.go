@@ -32,14 +32,14 @@ func TestMainWithoutPromptShowsBuiltInDefault(t *testing.T) {
 	if code := Main(nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "Built-in default: DeepSeek deepseek-v4-pro/high.") {
+	if !strings.Contains(stdout.String(), "Built-in default: Enclave cyberouter/deepseek-v4.1-flash/high.") {
 		t.Fatalf("stdout does not show the built-in default:\n%s", stdout.String())
 	}
 }
 
 func TestMainSkipSkillsOnNewAndResumedTasks(t *testing.T) {
 	t.Chdir(t.TempDir())
-	writeTestDeepSeekConfig(t)
+	writeTestDefaultProviderConfig(t)
 	root := filepath.Join("agents", "skills")
 	writeTestSkill(t, root, "demo", "demo", "SECRET_SKILL_DESCRIPTION")
 	mustWrite(t, filepath.Join(root, "demo", "SKILL.md"), "---\nname: demo\ndescription: SECRET_SKILL_DESCRIPTION\n---\nSECRET_SKILL_BODY\n")
@@ -76,7 +76,7 @@ func TestMainSkipSkillsOnNewAndResumedTasks(t *testing.T) {
 		deepseekTestResponse(w, `[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}]`)
 	}))
 	defer server.Close()
-	t.Setenv("MAI_DEEPSEEK_URL", server.URL)
+	t.Setenv("MAI_BASE_URL", server.URL)
 	for _, args := range [][]string{{"Use $demo", "--persist", "-m", "deepseek-flash", "-s"}, {"Use $demo again", "--last", "--skip-skills"}} {
 		var stdout, stderr bytes.Buffer
 		if code := Main(args, &stdout, &stderr); code != 0 {
@@ -90,7 +90,7 @@ func TestMainSkipSkillsOnNewAndResumedTasks(t *testing.T) {
 
 func TestMainEnablesSkillsByDefaultOnNewAndResumedTasks(t *testing.T) {
 	t.Chdir(t.TempDir())
-	writeTestDeepSeekConfig(t)
+	writeTestDefaultProviderConfig(t)
 	root := filepath.Join("agents", "skills")
 	writeTestSkill(t, root, "demo", "demo", "Demo skill")
 	mustWrite(t, filepath.Join(root, "demo", "SKILL.md"), "---\nname: demo\ndescription: Demo skill\n---\nDEFAULT_SKILL_BODY\n")
@@ -120,7 +120,7 @@ func TestMainEnablesSkillsByDefaultOnNewAndResumedTasks(t *testing.T) {
 		deepseekTestResponse(w, `[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}]`)
 	}))
 	defer server.Close()
-	t.Setenv("MAI_DEEPSEEK_URL", server.URL)
+	t.Setenv("MAI_BASE_URL", server.URL)
 	for _, args := range [][]string{{"Use $demo", "--persist"}, {"Use $demo", "--last"}} {
 		var stdout, stderr bytes.Buffer
 		if code := Main(args, &stdout, &stderr); code != 0 {
@@ -148,7 +148,7 @@ func TestMainEnforcesMaxTurns(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Chdir(t.TempDir())
-			writeTestDeepSeekConfig(t)
+			writeTestDefaultProviderConfig(t)
 			requests := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				requests++
@@ -166,7 +166,7 @@ func TestMainEnforcesMaxTurns(t *testing.T) {
 				deepseekTestResponse(w, string(mustJSON(t, []functionCall{call})))
 			}))
 			defer server.Close()
-			t.Setenv("MAI_DEEPSEEK_URL", server.URL)
+			t.Setenv("MAI_BASE_URL", server.URL)
 
 			var stdout, stderr bytes.Buffer
 			if code := Main(test.args, &stdout, &stderr); code != test.wantCode {
@@ -186,7 +186,7 @@ func TestMainEnforcesMaxTurns(t *testing.T) {
 
 func TestMaxTurnsKeepsCompletedToolResultForResume(t *testing.T) {
 	t.Chdir(t.TempDir())
-	writeTestDeepSeekConfig(t)
+	writeTestDefaultProviderConfig(t)
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
@@ -210,7 +210,7 @@ func TestMaxTurnsKeepsCompletedToolResultForResume(t *testing.T) {
 		deepseekTestResponse(w, `[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}]`)
 	}))
 	defer server.Close()
-	t.Setenv("MAI_DEEPSEEK_URL", server.URL)
+	t.Setenv("MAI_BASE_URL", server.URL)
 
 	var stdout, stderr bytes.Buffer
 	if code := Main([]string{"work", "--persist", "--max-turns=1"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "stopped after 1 model turns") {
@@ -230,7 +230,7 @@ func TestMaxTurnsKeepsCompletedToolResultForResume(t *testing.T) {
 
 func TestMainJSONLProducesOnlyEventsOnStdout(t *testing.T) {
 	t.Chdir(t.TempDir())
-	writeTestDeepSeekConfig(t)
+	writeTestDefaultProviderConfig(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintln(w, `data: {"type":"response.output_text.delta","delta":"hello"}`)
 		fmt.Fprintln(w)
@@ -238,7 +238,7 @@ func TestMainJSONLProducesOnlyEventsOnStdout(t *testing.T) {
 		fmt.Fprintln(w)
 	}))
 	defer server.Close()
-	t.Setenv("MAI_DEEPSEEK_URL", server.URL)
+	t.Setenv("MAI_BASE_URL", server.URL)
 
 	var stdout, stderr bytes.Buffer
 	if code := Main([]string{"hello", "--jsonl"}, &stdout, &stderr); code != 0 {
@@ -272,12 +272,12 @@ func TestMainJSONLProducesOnlyEventsOnStdout(t *testing.T) {
 
 func TestMainJSONLReportsFailedModelDuration(t *testing.T) {
 	t.Chdir(t.TempDir())
-	writeTestDeepSeekConfig(t)
+	writeTestDefaultProviderConfig(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	defer server.Close()
-	t.Setenv("MAI_DEEPSEEK_URL", server.URL)
+	t.Setenv("MAI_BASE_URL", server.URL)
 
 	var stdout, stderr bytes.Buffer
 	if code := Main([]string{"hello", "--jsonl"}, &stdout, &stderr); code != 1 {
@@ -307,13 +307,13 @@ func TestMainJSONLReportsFailedModelDuration(t *testing.T) {
 
 func TestMainPrintsCompletedTextWithoutDeltas(t *testing.T) {
 	t.Chdir(t.TempDir())
-	writeTestDeepSeekConfig(t)
+	writeTestDefaultProviderConfig(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintln(w, `data: {"type":"response.completed","response":{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hello"}]}]}}`)
 		fmt.Fprintln(w)
 	}))
 	defer server.Close()
-	t.Setenv("MAI_DEEPSEEK_URL", server.URL)
+	t.Setenv("MAI_BASE_URL", server.URL)
 
 	var ordinary, ordinaryErr bytes.Buffer
 	if code := Main([]string{"hello"}, &ordinary, &ordinaryErr); code != 0 || ordinary.String() != "hello\n" {
@@ -344,7 +344,7 @@ func TestMainPrintsCompletedTextWithoutDeltas(t *testing.T) {
 
 func TestMainJSONLReportsToolCalls(t *testing.T) {
 	t.Chdir(t.TempDir())
-	writeTestDeepSeekConfig(t)
+	writeTestDefaultProviderConfig(t)
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
@@ -359,7 +359,7 @@ func TestMainJSONLReportsToolCalls(t *testing.T) {
 		fmt.Fprintln(w)
 	}))
 	defer server.Close()
-	t.Setenv("MAI_DEEPSEEK_URL", server.URL)
+	t.Setenv("MAI_BASE_URL", server.URL)
 
 	var stdout, stderr bytes.Buffer
 	if code := Main([]string{"run tool", "--jsonl"}, &stdout, &stderr); code != 0 {
@@ -450,7 +450,7 @@ func TestToolCompletedEventFailureKeepsSavedResult(t *testing.T) {
 func TestStatelessTaskDoesNotCreateMaiDirectory(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
-	writeTestDeepSeekFailureServer(t)
+	writeTestFailureServer(t)
 	var stdout, stderr bytes.Buffer
 	if code := Main([]string{"hello"}, &stdout, &stderr); code != 1 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
@@ -463,7 +463,7 @@ func TestStatelessTaskDoesNotCreateMaiDirectory(t *testing.T) {
 func TestPersistCreatesProjectSessionAndCurrentPointer(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
-	writeTestDeepSeekFailureServer(t)
+	writeTestFailureServer(t)
 	var stdout, stderr bytes.Buffer
 	if code := Main([]string{"hello", "--persist"}, &stdout, &stderr); code != 1 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
@@ -486,7 +486,7 @@ func TestPersistCreatesProjectSessionAndCurrentPointer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sess.ID != id || sess.Model != "deepseek-v4-pro" || sess.Effort != "h" || len(sess.History) != 1 {
+	if sess.ID != id || sess.Model != "cyberouter/deepseek-v4.1-flash" || sess.Effort != "h" || len(sess.History) != 1 {
 		t.Fatalf("saved session = %#v", sess)
 	}
 }
@@ -595,7 +595,7 @@ func TestMainHelpDocumentsPersistenceOptions(t *testing.T) {
 
 func TestResumePreservesHistoryModelAndEffort(t *testing.T) {
 	t.Chdir(t.TempDir())
-	writeTestDeepSeekConfig(t)
+	writeTestDefaultProviderConfig(t)
 	var requests []map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
@@ -607,7 +607,7 @@ func TestResumePreservesHistoryModelAndEffort(t *testing.T) {
 		writeSSEItem(t, w, `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}`, 100)
 	}))
 	defer server.Close()
-	t.Setenv("MAI_DEEPSEEK_URL", server.URL)
+	t.Setenv("MAI_BASE_URL", server.URL)
 	for _, args := range [][]string{
 		{"first", "--persist", "--effort", "max"},
 		{"second", "--last"},
@@ -623,7 +623,7 @@ func TestResumePreservesHistoryModelAndEffort(t *testing.T) {
 	}
 	for i, request := range requests {
 		wantEffort := "max"
-		wantModel := "deepseek-v4-pro"
+		wantModel := "cyberouter/deepseek-v4.1-flash"
 		if request["model"] != wantModel || request["reasoning"].(map[string]any)["effort"] != wantEffort {
 			t.Fatalf("model/effort %v", request)
 		}
@@ -682,7 +682,7 @@ func TestLastOverridesModelAndEffort(t *testing.T) {
 
 func TestLastModelOverrideDropsSavedReasoning(t *testing.T) {
 	t.Chdir(t.TempDir())
-	writeTestDeepSeekConfig(t)
+	writeTestDefaultProviderConfig(t)
 	var requests []map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
@@ -695,7 +695,7 @@ func TestLastModelOverrideDropsSavedReasoning(t *testing.T) {
 		writeSSEItem(t, w, `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}`, 100)
 	}))
 	defer server.Close()
-	t.Setenv("MAI_DEEPSEEK_URL", server.URL)
+	t.Setenv("MAI_BASE_URL", server.URL)
 	for _, args := range [][]string{
 		{"first", "--persist"},
 		{"second", "--last", "--model", "deepseek-flash"},
@@ -967,7 +967,7 @@ func TestForkTaskStartedReportsProvenance(t *testing.T) {
 	t.Chdir(root)
 	parent := forkParentFixture(t, root)
 	defer parent.close()
-	writeTestDeepSeekFailureServer(t)
+	writeTestFailureServer(t)
 	var stdout, stderr bytes.Buffer
 	if code := Main([]string{"child task", "--fork", "--jsonl"}, &stdout, &stderr); code != 1 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())

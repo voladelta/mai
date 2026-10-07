@@ -421,7 +421,7 @@ func BenchmarkContextEditInspect(b *testing.B) {
 }
 
 func TestAgentExecutesContextEditWithoutReplayingBash(t *testing.T) {
-	writeTestDeepSeekConfig(t)
+	writeTestDefaultProviderConfig(t)
 	sess := contextEditFixture(t)
 	marker := filepath.Join(sess.CWD, "bash-effects")
 	mustWrite(t, marker, "original\n")

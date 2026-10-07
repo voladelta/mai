@@ -33,6 +33,7 @@ func TestLiveDeepSeekCoding(t *testing.T) {
 	if os.Getenv("MAI_LIVE_DEEPSEEK_CODING") != "1" {
 		t.Skip("set MAI_LIVE_DEEPSEEK_CODING=1")
 	}
+	requireDeepSeekLiveProvider(t)
 	t.Setenv("MAI_CONTEXT_WINDOW", "32768")
 	seed, err := newSessionID()
 	if err != nil {

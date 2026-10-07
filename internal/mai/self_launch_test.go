@@ -28,7 +28,7 @@ func TestMaiCLISelfLaunchThroughTools(t *testing.T) {
 				pythonTestAgent(t)
 			}
 
-			writeTestDeepSeekConfig(t)
+			writeTestDefaultProviderConfig(t)
 			requests := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests++
@@ -60,7 +60,7 @@ func TestMaiCLISelfLaunchThroughTools(t *testing.T) {
 				deepseekTestResponse(w, `[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"review complete"}]}]`)
 			}))
 			defer server.Close()
-			t.Setenv("MAI_DEEPSEEK_URL", server.URL)
+			t.Setenv("MAI_BASE_URL", server.URL)
 
 			root := t.TempDir()
 			sess := &session{CWD: root, RepoRoot: root}

@@ -5,8 +5,8 @@
 **Give a repository task to a small Go agent, then pick it up later with
 searchable history and portable checkpoints.**
 
-Mai runs on macOS and Linux and uses the Responses API through DeepSeek,
-OpenRouter, Enclave, or another configured provider. It can read
+Mai runs on macOS and Linux and uses the Responses API through Enclave,
+DeepSeek, OpenRouter, or another configured provider. It can read
 code, edit files, run checks, and return a final answer from your terminal.
 
 [![Go 1.27+](https://img.shields.io/badge/Go-1.27%2B-00ADD8)](go.mod)
@@ -19,7 +19,7 @@ go install ./cmd/mai
 ```
 
 Requires Go 1.27+ to build and an API key for the selected provider to run tasks.
-DeepSeek is the built-in default, using `DEEPSEEK_API_KEY`.
+Enclave is the built-in default, using `ENCLAVE_API_KEY`.
 See [Installation](#installation) for binary location and `PATH` setup.
 
 [Quick start](#quick-start) · [CLI](docs/cli.md) · [Tools](docs/tools.md) ·
@@ -36,7 +36,7 @@ change the code, then save the conversation when you need to return to it.
 | Repository work | Bash, guarded file reads/writes/edits, and local image inspection. | `mai "fix the empty-input crash and run tests"` |
 | Saved tasks | Resume the original directory, provider settings, model, and conversation. | `mai "continue the fix" --last` |
 | Model selection | The provider's configured model at high effort by default; override either for one run. | `mai "review this refactor" --effort max` |
-| Provider selection | Route the task to a different endpoint and credential. | `mai "quick review" --provider enclave --model cyberouter/glm-5.3-flash` |
+| Provider selection | Route the task to a different endpoint and credential. | `mai "quick review" --provider openrouter --model deepseek/deepseek-v4-pro` |
 | Searchable history | Recall original visible text after context editing and compaction. | [Python history search](docs/tools.md#persistent-python) |
 | Repository skills | Load project instructions before global skills, with explicit skill selection. | `mai 'Use $my-skill to review this package'` |
 | Script output | Stream task, model, and tool events as JSON Lines. | `mai "review this package" --jsonl --no-input > run.jsonl` |
@@ -51,7 +51,7 @@ After installing Mai:
 1. Set your API key in the shell that will launch it:
 
    ```sh
-   export DEEPSEEK_API_KEY='your-api-key'
+   export ENCLAVE_API_KEY='your-api-key'
    ```
 
 2. Change into the repository you want Mai to work on:
@@ -84,7 +84,7 @@ a particular saved task at a time.
 - **macOS or Linux**, with `/bin/bash` for the Bash tool.
 - **Go 1.27 or later** to build from source.
 - **A provider API key** in its configured environment variable. The built-in
-  DeepSeek provider uses `DEEPSEEK_API_KEY`.
+  Enclave provider uses `ENCLAVE_API_KEY`.
 - **Git** for repository-root discovery. Without it, the working directory is
   the repository boundary.
 - **Python 3.9 or later**, optional, for persistent Python cells.
@@ -143,7 +143,7 @@ Each configured provider sets one `model`, which Mai sends upstream exactly as
 written. `--model` (or `-m`) overrides it for the current run only;
 `--effort` selects `l`, `h`, or `max` reasoning (default `h`). The provider
 comes from `--provider`, the selected config's `default_provider`, or the
-built-in DeepSeek default.
+built-in Enclave default.
 
 `--last` keeps the saved provider, endpoint, model, and reasoning effort.
 Plain `--last` ignores current `.mai.config` files. `--last --provider NAME`
@@ -169,7 +169,7 @@ See the [CLI reference](docs/cli.md) for every option, examples, and timeouts.
 Mai reads JSON from `.mai.config` in the current working directory, otherwise
 from `$HOME/.mai.config`. The local file takes priority; files are not merged,
 and an invalid local file fails instead of falling back. With neither file,
-Mai uses the built-in DeepSeek provider. Help, version, and plain `--last` do not
+Mai uses the built-in Enclave provider. Help, version, and plain `--last` do not
 load config.
 
 Copy [the complete example](.mai.config.example) to either location:
@@ -182,7 +182,7 @@ mai "quick review" --provider openrouter
 mai "quick review" --provider enclave --model cyberouter/glm-5.3-flash
 ```
 
-The config contains `default_provider` (defaults to `deepseek` when omitted)
+The config contains `default_provider` (defaults to `enclave` when omitted)
 and a `providers` object. Each provider defines `base_url`, `api_key_env`, and
 one `model`. Model IDs are sent exactly as written; `--model` or `-m` selects a
 different ID on the same provider, so one `enclave` entry can serve both
@@ -205,10 +205,10 @@ overrides it for one run. Checkpoints use the selected provider and its model. `
 
 | Variable | Purpose | Default |
 | --- | --- | --- |
-| `DEEPSEEK_API_KEY` | Credential for the built-in DeepSeek provider. | Unset |
+| `ENCLAVE_API_KEY` | Credential for the built-in Enclave provider. | Unset |
+| `DEEPSEEK_API_KEY` | Credential named by the example's DeepSeek provider. | Unset |
 | `OPENROUTER_API_KEY` | Credential named by the example's OpenRouter provider. | Unset |
-| `ENCLAVE_API_KEY` | Credential named by the example's Enclave provider. | Unset |
-| `MAI_DEEPSEEK_URL` | Override the complete Responses endpoint for the `deepseek` provider only; HTTPS required except for loopback. | `https://api.deepseek.com/responses` |
+| `MAI_BASE_URL` | Override the complete Responses endpoint for the built-in default provider (`enclave`) only; HTTPS required except for loopback. | `https://router.enclave.ai/v1/responses` |
 | `MAI_CONTEXT_WINDOW` | Input context budget, from 32,768 to 1,000,000 tokens. | `1000000` |
 | `MAI_DEPTH` | Nesting depth of this run; Mai sets it for the subprocesses it launches. | `0` |
 | `MAI_MAX_DEPTH` | Maximum permitted `MAI_DEPTH`; deeper nested runs refuse to start. | `2` |
@@ -289,7 +289,7 @@ See [Tools and skills](docs/tools.md#safety) for execution boundaries and
 | Symptom | Action |
 | --- | --- |
 | `mai: command not found` | Add `GOBIN`, or the default Go binary directory, to `PATH`; use `./mai` for a local build. |
-| `provider "deepseek" requires DEEPSEEK_API_KEY` | Export the selected provider's key in the shell launching Mai. |
+| `provider "enclave" requires ENCLAVE_API_KEY` | Export the selected provider's key in the shell launching Mai. |
 | `provider "enclave" is not configured` | Add the provider to the selected `.mai.config`; the local file replaces the home file. |
 | `no saved task in this project` | Start with `--persist`, then resume from the same project. |
 | `session ... is already running` | Wait for the process using that task to exit, or start a separate task. |

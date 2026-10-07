@@ -61,6 +61,7 @@ func TestLiveDeepSeekContextEdit(t *testing.T) {
 	if os.Getenv("MAI_LIVE_DEEPSEEK_CONTEXT_EDIT") != "1" {
 		t.Skip("set MAI_LIVE_DEEPSEEK_CONTEXT_EDIT=1")
 	}
+	requireDeepSeekLiveProvider(t)
 
 	seed, err := newSessionID()
 	if err != nil {

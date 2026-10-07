@@ -43,7 +43,7 @@ func TestProviderProfileControlsWireBehaviorAcrossAliasesAndResume(t *testing.T)
 				root := t.TempDir()
 				t.Chdir(root)
 				t.Setenv("MAI_PROFILE_KEY", "profile-test-key")
-				t.Setenv("MAI_DEEPSEEK_URL", "")
+				t.Setenv("MAI_BASE_URL", "")
 				t.Setenv("MAI_CONTEXT_WINDOW", "")
 
 				requests := 0
@@ -194,8 +194,8 @@ func TestProviderProfileDefaultsPreserveLegacySettings(t *testing.T) {
 }
 
 func TestProviderSettingsRejectedAtConfigSessionAndBackendBoundaries(t *testing.T) {
-	t.Setenv("DEEPSEEK_API_KEY", "test-key")
-	t.Setenv("MAI_DEEPSEEK_URL", "")
+	t.Setenv("ENCLAVE_API_KEY", "test-key")
+	t.Setenv("MAI_BASE_URL", "")
 	t.Setenv("MAI_CONTEXT_WINDOW", "")
 
 	for _, test := range []struct {

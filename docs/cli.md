@@ -31,7 +31,7 @@ mai "investigate this failure" --timeout=20m
 | `--fork-from ID` | Start a new saved session from the given saved session. | `mai "audit the logs" --fork-from 01234567-89ab-cdef-0123-456789abcdef` |
 | `-m`, `--model NAME` | Override the provider's configured model for this run. | `mai "quick review" --model cyberouter/glm-5.3-flash` |
 | `--effort VALUE` | Select reasoning effort: `l`, `h`, or `max` (default `h`). | `mai "review this refactor" --effort max` |
-| `--provider NAME` | Override `default_provider` from the selected config; built-in default is `deepseek`. | `mai "quick review" --provider enclave` |
+| `--provider NAME` | Override `default_provider` from the selected config; built-in default is `enclave`. | `mai "quick review" --provider enclave` |
 | `--max-turns COUNT` | Limit model turns; default 64, or `-1` for unlimited. | `mai "finish the migration" --max-turns -1` |
 | `--timeout DURATION` | Model request first-byte/idle timeout; default `10m`. | `mai "investigate the failure" --timeout 20m` |
 | `--cell-timeout DURATION` | Python cell wall-clock limit; default `10m`. | `mai "explore sales.csv" --cell-timeout 5m` |
@@ -63,7 +63,7 @@ run and is sent upstream exactly as written. `--effort` accepts `l`, `h`, or
 Mai reads `.mai.config` in the current working directory first, otherwise
 `$HOME/.mai.config`. It uses one JSON file without merging. An invalid selected
 file fails with its path; it never silently falls back. With neither file,
-only the built-in DeepSeek provider is available.
+only the built-in Enclave provider is available.
 
 See [the example config](../.mai.config.example) for DeepSeek, OpenRouter, and
 Enclave. It has `default_provider` and a `providers` object. Each provider needs
@@ -103,8 +103,8 @@ because a saved model ID is provider-specific, the switch adopts the new
 provider's configured model unless `--model` overrides it. `--model` and
 `--effort` also override the saved values on resume. The switch is saved for
 subsequent resumes. Credentials are read from the saved environment
-variable name each time, so rotating a key still works. DeepSeek sessions saved
-before backend settings were recorded use the built-in endpoint.
+variable name each time, so rotating a key still works. Sessions saved
+before backend settings were recorded use the built-in default provider's endpoint.
 Python starts a new environment when the previous run ends.
 
 `--fork` and `--fork-from ID` start a new saved session from an existing one,

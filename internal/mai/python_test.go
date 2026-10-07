@@ -298,7 +298,7 @@ func TestPythonMissingRuntimeIsActionable(t *testing.T) {
 
 func TestPythonHistoryCompactionAndRunCleanup(t *testing.T) {
 	a, sess := pythonTestAgent(t)
-	writeTestDeepSeekConfig(t)
+	writeTestDefaultProviderConfig(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {

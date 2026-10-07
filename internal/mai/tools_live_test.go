@@ -21,6 +21,7 @@ func TestLiveDeepSeekImageMessage(t *testing.T) {
 	if os.Getenv("MAI_LIVE_DEEPSEEK_TOOLS") != "1" {
 		t.Skip("set MAI_LIVE_DEEPSEEK_TOOLS=1")
 	}
+	requireDeepSeekLiveProvider(t)
 	sess := deepseekTestSession(t)
 	sess.History = nil
 	img := image.NewRGBA(image.Rect(0, 0, 64, 64))
@@ -65,10 +66,20 @@ func TestLiveDeepSeekImageMessage(t *testing.T) {
 	t.Logf("DIRECT_IMAGE answer=%q", answer)
 }
 
+func requireDeepSeekLiveProvider(t *testing.T) {
+	t.Helper()
+	if os.Getenv("MAI_LIVE_PROVIDER") != "deepseek" {
+		t.Skip("set MAI_LIVE_PROVIDER=deepseek and MAI_LIVE_CONFIG to run this DeepSeek probe")
+	}
+}
+
 func liveToolProvider(t *testing.T, sess *session) providerConfig {
 	t.Helper()
 	name := os.Getenv("MAI_LIVE_PROVIDER")
 	if name == "" {
+		// Offline callers stand in for the built-in default provider so
+		// MAI_BASE_URL redirection applies. Paid probes must set
+		// MAI_LIVE_PROVIDER and MAI_LIVE_CONFIG explicitly.
 		return defaultProviderConfig()
 	}
 	path := os.Getenv("MAI_LIVE_CONFIG")
@@ -97,6 +108,7 @@ func TestLiveDeepSeekTools(t *testing.T) {
 	if os.Getenv("MAI_LIVE_DEEPSEEK_TOOLS") != "1" {
 		t.Skip("set MAI_LIVE_DEEPSEEK_TOOLS=1")
 	}
+	requireDeepSeekLiveProvider(t)
 	sess := deepseekTestSession(t)
 	sess.History = nil
 	token := "TOKEN-" + sess.ID

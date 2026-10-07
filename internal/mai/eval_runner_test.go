@@ -129,7 +129,7 @@ func TestEvalRunnersReportFailures(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, line := range strings.Split(strings.TrimSpace(string(invocations)), "\n") {
-				if !strings.HasSuffix(line, "--provider deepseek --jsonl --no-input --skip-skills") {
+				if !strings.HasSuffix(line, "--provider enclave --jsonl --no-input --skip-skills") {
 					t.Fatalf("runner does not use the current default model and isolated CLI flags: %q", line)
 				}
 			}

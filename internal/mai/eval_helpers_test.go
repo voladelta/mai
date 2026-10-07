@@ -72,19 +72,30 @@ func mustJSON(t *testing.T, value any) []byte {
 	return out
 }
 
-func writeTestDeepSeekConfig(t *testing.T) {
+func writeTestDefaultProviderConfig(t *testing.T) {
 	t.Helper()
-	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+	t.Setenv("ENCLAVE_API_KEY", "test-key")
 	t.Setenv("MAI_CONTEXT_WINDOW", "")
 	// Keep the developer's real ~/.mai.config out of tests: an empty HOME
-	// makes loadProviderConfig fall back to the built-in DeepSeek default.
+	// makes loadProviderConfig fall back to the built-in enclave default.
 	t.Setenv("HOME", t.TempDir())
 }
 
-func writeTestDeepSeekFailureServer(t *testing.T) {
+// deepseekProviderConfig is the DeepSeek provider preset for tests whose
+// subject is the deepseek protocol profile, not the built-in default.
+func deepseekProviderConfig() providerConfig {
+	return providerConfig{
+		BaseURL:   "https://api.deepseek.com",
+		APIKeyEnv: "DEEPSEEK_API_KEY",
+		Model:     "deepseek-v4-pro",
+		Profile:   profileDeepSeek,
+	}
+}
+
+func writeTestFailureServer(t *testing.T) {
 	t.Helper()
-	writeTestDeepSeekConfig(t)
+	writeTestDefaultProviderConfig(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusUnauthorized) }))
 	t.Cleanup(server.Close)
-	t.Setenv("MAI_DEEPSEEK_URL", server.URL)
+	t.Setenv("MAI_BASE_URL", server.URL)
 }

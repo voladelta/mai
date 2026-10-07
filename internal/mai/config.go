@@ -9,11 +9,12 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 )
 
-const defaultProvider = "deepseek"
+const defaultProvider = "enclave"
 
 type providerFile struct {
 	DefaultProvider string                    `json:"default_provider"`
@@ -27,6 +28,9 @@ type providerConfig struct {
 	// Retired two-tier field, accepted only to report an actionable error.
 	Models  json.RawMessage `json:"models,omitempty"`
 	Profile protocolProfile `json:"profile,omitempty"`
+	// builtin marks the compiled-in default provider — the only one
+	// MAI_BASE_URL may redirect. File-configured providers never have it.
+	builtin bool
 }
 
 type protocolProfile string
@@ -38,10 +42,11 @@ const (
 )
 
 func resolveProtocolProfile(provider string, profile protocolProfile) (protocolProfile, error) {
-	// Omitted profiles preserve the behavior of existing configs and snapshots.
+	// Omitted profiles preserve the behavior of existing configs and snapshots;
+	// the mapping keys on provider names, not on which provider is the default.
 	if profile == "" {
 		switch provider {
-		case defaultProvider:
+		case "deepseek":
 			profile = profileDeepSeek
 		case "openrouter":
 			profile = profileOpenRouter
@@ -72,10 +77,11 @@ func validateProviderSettings(endpoint, apiKeyEnv string) error {
 
 func defaultProviderConfig() providerConfig {
 	return providerConfig{
-		BaseURL:   "https://api.deepseek.com",
-		APIKeyEnv: "DEEPSEEK_API_KEY",
-		Model:     "deepseek-v4-pro",
-		Profile:   profileDeepSeek,
+		BaseURL:   "https://router.enclave.ai/v1",
+		APIKeyEnv: "ENCLAVE_API_KEY",
+		Model:     "cyberouter/deepseek-v4.1-flash",
+		Profile:   profileResponses,
+		builtin:   true,
 	}
 }
 
@@ -108,10 +114,15 @@ func loadProviderConfig(cwd, userHome string) (providerFile, error) {
 }
 
 func decodeProviderConfig(reader io.Reader) (providerFile, error) {
-	cfg := providerFile{DefaultProvider: defaultProvider}
+	// Decode into a shadow type so an omitted default_provider is
+	// distinguishable from an explicit one.
+	var raw struct {
+		DefaultProvider *string                   `json:"default_provider"`
+		Providers       map[string]providerConfig `json:"providers"`
+	}
 	decoder := json.NewDecoder(reader)
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&cfg); err != nil {
+	if err := decoder.Decode(&raw); err != nil {
 		return providerFile{}, fmt.Errorf("invalid configuration JSON: %w", err)
 	}
 
@@ -119,8 +130,29 @@ func decodeProviderConfig(reader io.Reader) (providerFile, error) {
 		return providerFile{}, errors.New("configuration must contain one JSON object")
 	}
 
+	cfg := providerFile{Providers: raw.Providers}
 	if len(cfg.Providers) == 0 {
 		return providerFile{}, errors.New("configuration requires providers")
+	}
+
+	switch {
+	case raw.DefaultProvider != nil:
+		cfg.DefaultProvider = *raw.DefaultProvider
+	case len(cfg.Providers) == 1:
+		for name := range cfg.Providers {
+			cfg.DefaultProvider = name
+		}
+	default:
+		if _, exists := cfg.Providers[defaultProvider]; exists {
+			cfg.DefaultProvider = defaultProvider
+		} else {
+			names := make([]string, 0, len(cfg.Providers))
+			for name := range cfg.Providers {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			return providerFile{}, fmt.Errorf("default_provider is required when several providers are configured (have: %s)", strings.Join(names, ", "))
+		}
 	}
 
 	for name, provider := range cfg.Providers {

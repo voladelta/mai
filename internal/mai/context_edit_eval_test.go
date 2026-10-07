@@ -27,7 +27,7 @@ func TestContextEditEvalRejectsClaimsWithoutEvidence(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			writeTestDeepSeekConfig(t)
+			writeTestDefaultProviderConfig(t)
 			seed := "01234567-89ab-cdef-0123-456789abcdef"
 			requests := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -82,7 +82,7 @@ func TestContextEditEvalRejectsClaimsWithoutEvidence(t *testing.T) {
 				writeSSEItem(t, w, string(mustJSONValue(t, item)), 5000)
 			}))
 			defer server.Close()
-			t.Setenv("MAI_DEEPSEEK_URL", server.URL)
+			t.Setenv("MAI_BASE_URL", server.URL)
 
 			trial := runContextEditTrial(t, seed)
 			if !strings.Contains(trial.Error, test.wantError) || trial.Correct != test.wantCorrect || trial.HistoryRetrieved {

@@ -5,7 +5,7 @@ if ! command -v jq > /dev/null 2>&1; then
     exit 2
 fi
 
-provider=${MAI_EVAL_PROVIDER:-deepseek}
+provider=${MAI_EVAL_PROVIDER:-enclave}
 model_args=
 if [ -n "${MAI_EVAL_MODEL:-}" ]; then
     model_args="--model $MAI_EVAL_MODEL"

@@ -17,14 +17,14 @@ import (
 func TestNestingDepthRefusalIsCheap(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
-	writeTestDeepSeekConfig(t)
+	writeTestDefaultProviderConfig(t)
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		requests++
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer server.Close()
-	t.Setenv("MAI_DEEPSEEK_URL", server.URL)
+	t.Setenv("MAI_BASE_URL", server.URL)
 	t.Setenv("MAI_DEPTH", "3")
 
 	var stdout, stderr bytes.Buffer
@@ -44,14 +44,14 @@ func TestNestingDepthRefusalIsCheap(t *testing.T) {
 
 func TestNestingDepthAtLimitRuns(t *testing.T) {
 	t.Chdir(t.TempDir())
-	writeTestDeepSeekConfig(t)
+	writeTestDefaultProviderConfig(t)
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		requests++
 		deepseekTestResponse(w, `[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}]`)
 	}))
 	defer server.Close()
-	t.Setenv("MAI_DEEPSEEK_URL", server.URL)
+	t.Setenv("MAI_BASE_URL", server.URL)
 	t.Setenv("MAI_DEPTH", "2")
 
 	var stdout, stderr bytes.Buffer

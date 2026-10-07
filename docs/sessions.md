@@ -92,8 +92,8 @@ At the context threshold, Mai builds a portable checkpoint.
 
 ## Providers and model modes
 
-DeepSeek is the built-in default at `https://api.deepseek.com/responses`.
-Set `DEEPSEEK_API_KEY` in your environment before running, or configure another
+Enclave is the built-in default at `https://router.enclave.ai/v1/responses`.
+Set `ENCLAVE_API_KEY` in your environment before running, or configure another
 provider in [`.mai.config`](../.mai.config.example). Local configuration takes
 priority over `$HOME/.mai.config`, without merging. `--provider` overrides the
 configured default for a new task; resume uses its saved settings.
@@ -105,7 +105,7 @@ mai "review this implementation" --effort max
 mai "quick review" --provider enclave --model cyberouter/glm-5.3-flash
 ```
 
-The built-in DeepSeek provider uses `deepseek-v4-pro`; configured providers set
+The built-in Enclave provider uses `cyberouter/deepseek-v4.1-flash`; configured providers set
 their own `model` ID, sent upstream exactly as written. `--model`/`-m` overrides
 the model and `--effort` selects `l`, `h`, or `max` reasoning (default `h`).
 
@@ -129,14 +129,14 @@ The new provider settings are saved for later runs.
 Previous reasoning remains in original history but is excluded from requests to
 the new backend; visible messages, tool relationships, and context edits survive.
 API keys are read afresh from the saved environment-variable name.
-DeepSeek sessions saved before backend settings were recorded use the
-built-in endpoint. Saved sessions from older state versions are rejected;
+Sessions saved before backend settings were recorded use the
+built-in default provider's endpoint. Saved sessions from older state versions are rejected;
 start a new task to continue.
 
 Mai builds portable checkpoints automatically, at 80% of a default
 1,000,000-token budget. Set `MAI_CONTEXT_WINDOW` to a smaller input budget
 between 32,768 and 1,000,000 if needed.
-`MAI_DEEPSEEK_URL` overrides the complete Responses URL for local testing.
+`MAI_BASE_URL` overrides the built-in default provider's complete Responses URL for local testing.
 HTTPS is required except for loopback.
 
 `view_image` and `read_skill` return typed image content that is replayed with

@@ -17,7 +17,7 @@ import (
 func TestProviderConfigDiscovery(t *testing.T) {
 	cwd, userHome := t.TempDir(), t.TempDir()
 	cfg, err := loadProviderConfig(cwd, userHome)
-	if err != nil || cfg.DefaultProvider != "deepseek" || cfg.Providers["deepseek"].Model != "deepseek-v4-pro" {
+	if err != nil || cfg.DefaultProvider != "enclave" || cfg.Providers["enclave"].Model != "cyberouter/deepseek-v4.1-flash" {
 		t.Fatalf("built-in config = %+v, %v", cfg, err)
 	}
 
@@ -57,8 +57,8 @@ func TestProviderConfigDiscovery(t *testing.T) {
 func TestProviderConfigRejectsInvalidAndUnsafeSettings(t *testing.T) {
 	valid := `{"providers":{"deepseek":{"base_url":"https://api.deepseek.com","api_key_env":"DEEPSEEK_API_KEY","model":"DeepSeek/Pro"}}}`
 	cfg, err := decodeProviderConfig(strings.NewReader(valid))
-	if err != nil || cfg.DefaultProvider != defaultProvider || cfg.Providers[defaultProvider].Model != "DeepSeek/Pro" {
-		t.Fatalf("defaults or model ID casing changed: %+v, %v", cfg, err)
+	if err != nil || cfg.DefaultProvider != "deepseek" || cfg.Providers["deepseek"].Model != "DeepSeek/Pro" {
+		t.Fatalf("single-provider default or model ID casing changed: %+v, %v", cfg, err)
 	}
 
 	for _, raw := range []string{
@@ -99,7 +99,6 @@ func TestProviderConfigRejectsInvalidAndUnsafeSettings(t *testing.T) {
 func TestProviderCLISelectionToolReplayAndResume(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
-	t.Setenv("MAI_DEEPSEEK_URL", "https://wrong-endpoint.invalid/responses")
 	t.Setenv("MAI_CONTEXT_WINDOW", "")
 	t.Setenv("MAI_TEST_ROUTER_KEY", "router-test-secret")
 	t.Setenv("MAI_TEST_ENCLAVE_KEY", "enclave-test-secret")
@@ -137,6 +136,9 @@ func TestProviderCLISelectionToolReplayAndResume(t *testing.T) {
 		deepseekTestResponse(w, `[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"PROVIDER_OK"}]}]`)
 	}))
 	defer server.Close()
+	// MAI_BASE_URL must be ignored: it scopes to the compiled-in default
+	// provider, and every provider here came from a config file.
+	t.Setenv("MAI_BASE_URL", "https://wrong-endpoint.invalid/responses")
 
 	cfg := providerFile{
 		DefaultProvider: "openrouter",
@@ -299,5 +301,48 @@ func TestProviderSwitchKeepsContextEditIndexesAndResetsBoundaryAfterCompaction(t
 	}
 	if err := validateSessionHeader(sess); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDefaultProviderResolution(t *testing.T) {
+	provider := func() providerConfig {
+		return providerConfig{BaseURL: "https://provider.example", APIKeyEnv: "KEY", Model: "m"}
+	}
+	write := func(names ...string) map[string]providerConfig {
+		out := map[string]providerConfig{}
+		for _, name := range names {
+			out[name] = provider()
+		}
+		return out
+	}
+
+	// Omitted with exactly one provider resolves to it.
+	cfg, err := decodeProviderConfig(strings.NewReader(
+		`{"providers":{"deepseek":{"base_url":"https://provider.example","api_key_env":"KEY","model":"m"}}}`))
+	if err != nil || cfg.DefaultProvider != "deepseek" {
+		t.Fatalf("single-provider config = %+v, %v", cfg, err)
+	}
+
+	// Omitted with the built-in default among several resolves to it.
+	providers, _ := json.Marshal(write("enclave", "deepseek", "openrouter"))
+	cfg, err = decodeProviderConfig(strings.NewReader(`{"providers":` + string(providers) + `}`))
+	if err != nil || cfg.DefaultProvider != "enclave" {
+		t.Fatalf("built-in default among several = %+v, %v", cfg, err)
+	}
+
+	// Omitted with several providers, none the built-in default, is an error
+	// naming them in sorted order.
+	providers, _ = json.Marshal(write("openrouter", "deepseek", "zeta"))
+	_, err = decodeProviderConfig(strings.NewReader(`{"providers":` + string(providers) + `}`))
+	want := `default_provider is required when several providers are configured (have: deepseek, openrouter, zeta)`
+	if err == nil || err.Error() != want {
+		t.Fatalf("multi-provider error = %v, want %q", err, want)
+	}
+
+	// Explicit default_provider must name a configured provider.
+	providers, _ = json.Marshal(write("enclave"))
+	_, err = decodeProviderConfig(strings.NewReader(`{"default_provider":"deepseek","providers":` + string(providers) + `}`))
+	if err == nil || !strings.Contains(err.Error(), `default_provider "deepseek" is not configured`) {
+		t.Fatalf("explicit unknown default = %v", err)
 	}
 }

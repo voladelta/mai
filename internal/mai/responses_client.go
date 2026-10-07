@@ -42,8 +42,10 @@ func (a *agent) configureBackend(sess *session, provider providerConfig) error {
 		settings = *sess.Backend
 	} else {
 		endpoint := strings.TrimRight(provider.BaseURL, "/") + "/responses"
-		if sess.Provider == defaultProvider && os.Getenv("MAI_DEEPSEEK_URL") != "" {
-			endpoint = os.Getenv("MAI_DEEPSEEK_URL")
+		// MAI_BASE_URL overrides only the compiled-in default provider, never
+		// a file-configured provider that shares its name.
+		if provider.builtin && sess.Provider == defaultProvider && os.Getenv("MAI_BASE_URL") != "" {
+			endpoint = os.Getenv("MAI_BASE_URL")
 		}
 
 		settings = sessionBackend{

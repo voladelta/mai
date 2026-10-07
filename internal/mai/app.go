@@ -82,7 +82,7 @@ Usage:
 Example:
   mai "add tests for the parser"
 
-Built-in default: DeepSeek deepseek-v4-pro/high.
+Built-in default: Enclave cyberouter/deepseek-v4.1-flash/high.
 Run 'mai --help' for more information.
 `)
 		return 0

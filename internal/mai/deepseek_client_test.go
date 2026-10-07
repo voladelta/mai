@@ -68,11 +68,11 @@ func TestDeepSeekResponsesToolReasoningAndResume(t *testing.T) {
 		deepseekTestResponse(w, `[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}]`)
 	}))
 	defer server.Close()
-	t.Setenv("MAI_DEEPSEEK_URL", server.URL+"/responses")
+	t.Setenv("MAI_BASE_URL", server.URL+"/responses")
 	sess := deepseekTestSession(t)
 	path := filepath.Join(t.TempDir(), "session.json")
 	a := newAgent(io.Discard, io.Discard, path, time.Second, false)
-	if err := a.configureBackend(sess, defaultProviderConfig()); err != nil {
+	if err := a.configureBackend(sess, builtinDeepSeekConfig()); err != nil {
 		t.Fatal(err)
 	}
 	if a.contextWindow != 1_000_000 {
@@ -89,7 +89,7 @@ func TestDeepSeekResponsesToolReasoningAndResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.configureBackend(sess, defaultProviderConfig()); err != nil {
+	if err := a.configureBackend(sess, builtinDeepSeekConfig()); err != nil {
 		t.Fatal(err)
 	}
 	if terminalItems, err := a.runTurn(context.Background(), sess, "test"); err != nil || len(terminalItems) == 0 {
@@ -189,10 +189,10 @@ func TestDeepSeekIdleTimeoutAndRedirectIsolation(t *testing.T) {
 			defer server.Close()
 			t.Setenv("DEEPSEEK_API_KEY", "test")
 			t.Setenv("MAI_CONTEXT_WINDOW", "")
-			t.Setenv("MAI_DEEPSEEK_URL", server.URL)
+			t.Setenv("MAI_BASE_URL", server.URL)
 			sess := deepseekTestSession(t)
 			a := newAgent(io.Discard, io.Discard, "", 30*time.Millisecond, false)
-			if err := a.configureBackend(sess, defaultProviderConfig()); err != nil {
+			if err := a.configureBackend(sess, builtinDeepSeekConfig()); err != nil {
 				t.Fatal(err)
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -360,4 +360,12 @@ func TestDeepSeekRejectsNamelessHistoryBeforeRequest(t *testing.T) {
 	if requests != 0 || !bytes.Equal(before, mustJSON(t, sess)) {
 		t.Fatal("invalid history made a request or changed session state")
 	}
+}
+
+// builtinDeepSeekConfig pins the DeepSeek profile while standing in as the
+// built-in default provider, so MAI_BASE_URL redirection applies.
+func builtinDeepSeekConfig() providerConfig {
+	cfg := deepseekProviderConfig()
+	cfg.builtin = true
+	return cfg
 }
