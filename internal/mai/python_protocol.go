@@ -129,8 +129,11 @@ func (k *pythonKernel) awaitReady(ctx context.Context) error {
 	select {
 	case message, open := <-k.messages:
 		frame := message.frame
-		if !open || message.err != nil {
-			return fmt.Errorf("Python startup protocol: %v", message.err)
+		if !open {
+			return fmt.Errorf("Python startup protocol: %w", io.ErrUnexpectedEOF)
+		}
+		if message.err != nil {
+			return fmt.Errorf("Python startup protocol: %w", message.err)
 		}
 		if frame.Type != "ready" || frame.Generation != k.generation || frame.Version == "" || frame.Executable == "" {
 			return errors.New("invalid Python ready message")

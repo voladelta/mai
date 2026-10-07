@@ -171,7 +171,7 @@ func (out *options) setOption(kind optionKind, value string) error {
 		}
 		out.model = value
 	case optionEffort:
-		if _, ok := effortIDs[value]; !ok {
+		if !supportedEffort(value) {
 			return fmt.Errorf("invalid --effort %q (use l, h or max)", value)
 		}
 		out.effort = value

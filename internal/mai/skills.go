@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"unicode/utf8"
 )
 
@@ -403,16 +404,8 @@ func secureSkillDir(root, id string) (string, error) {
 }
 
 func readBoundedRegularFile(path string) ([]byte, error) {
-	// Reject special files before opening, which could block on a FIFO.
-	info, err := os.Stat(path)
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file", path)
-	}
-
-	file, err := os.Open(path)
+	// Nonblocking open lets readBoundedFile reject a FIFO without waiting for a writer.
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}

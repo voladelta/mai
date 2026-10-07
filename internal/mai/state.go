@@ -249,7 +249,7 @@ func normalizeSessionSettings(out *session) error {
 		return fmt.Errorf("saved session has invalid model %q", out.Model)
 	}
 
-	if _, ok := effortIDs[out.Effort]; !ok {
+	if !supportedEffort(out.Effort) {
 		return fmt.Errorf("saved session has invalid effort %q", out.Effort)
 	}
 

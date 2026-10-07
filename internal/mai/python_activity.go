@@ -85,12 +85,15 @@ func (a *agent) pythonHost(sess *session, outerCall string) pythonHostHandler {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		// Only operations with outside effects need a durable record before and
+		// after dispatch; a lost read cannot leave unknown effects.
+		durable := a.sessionPath != "" && name != "read"
 		index := len(sess.PythonActivities)
 		sess.PythonActivities = append(sess.PythonActivities, pythonActivity{
 			OuterCallID: outerCall, Generation: generation, Cell: cell, Call: call,
 			Name: name, Arguments: arguments, Status: "pending",
 		})
-		if a.sessionPath != "" {
+		if durable {
 			if err := saveJSON(a.sessionPath, sess); err != nil {
 				sess.PythonActivities[index].Status = "not_started"
 				return nil, fmt.Errorf("save Python activity before dispatch: %w", err)
@@ -130,7 +133,7 @@ func (a *agent) pythonHost(sess *session, outerCall string) pythonHostHandler {
 		}
 		sess.PythonActivities[index].Status = status
 		sess.PythonActivities[index].Result = result
-		if a.sessionPath != "" {
+		if durable {
 			if err := saveJSON(a.sessionPath, sess); err != nil {
 				// The saved entry is still pending. Do not acknowledge durable
 				// completion or cause a retry when the result cannot be saved.
