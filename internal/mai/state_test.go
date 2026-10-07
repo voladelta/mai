@@ -223,7 +223,7 @@ func TestRepairInterruptedToolCalls(t *testing.T) {
 	sess := &session{History: []json.RawMessage{
 		json.RawMessage(`{"type":"function_call","call_id":"done","name":"bash","arguments":"{}"}`),
 		json.RawMessage(`{"type":"function_call_output","call_id":"done","output":"ok"}`),
-		json.RawMessage(`{"type":"function_call","call_id":"pending","name":"apply_patch","arguments":"{}"}`),
+		json.RawMessage(`{"type":"function_call","call_id":"pending","name":"write","arguments":"{}"}`),
 	}}
 	if err := repairInterruptedToolCalls(sess); err != nil {
 		t.Fatal(err)
@@ -255,9 +255,8 @@ func TestRepairInterruptedToolCalls(t *testing.T) {
 		t.Fatalf("recovery result does not state an unknown outcome: %#v", recovery)
 	}
 	if !strings.Contains(recovery.Error, "tool outcome is unknown") ||
-		!strings.Contains(recovery.Instruction, "reconcile") ||
-		!strings.Contains(recovery.Instruction, "apply_patch is retired") {
-		t.Fatalf("unsafe apply_patch recovery guidance: %#v", recovery)
+		!strings.Contains(recovery.Instruction, "reconcile") {
+		t.Fatalf("unsafe write recovery guidance: %#v", recovery)
 	}
 
 	repaired := mustJSON(t, sess)
@@ -313,7 +312,7 @@ func TestInterruptedToolRecoveryPersists(t *testing.T) {
 		Version: stateVersion, ID: "01234567-89ab-cdef-0123-456789abcdef", CWD: t.TempDir(), RepoRoot: t.TempDir(),
 		Model: "deepseek-flash", Effort: "max",
 		History: []json.RawMessage{
-			json.RawMessage(`{"type":"function_call","call_id":"pending","name":"apply_patch","arguments":"{}"}`),
+			json.RawMessage(`{"type":"function_call","call_id":"pending","name":"write","arguments":"{}"}`),
 		},
 	}
 	if err := repairInterruptedToolCalls(sess); err != nil {
@@ -333,7 +332,7 @@ func TestInterruptedToolRecoveryPersists(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(output.Output, `"outcome":"unknown"`) ||
-		!strings.Contains(output.Output, "reconcile the requested patch") {
+		!strings.Contains(output.Output, "reconcile the intended change") {
 		t.Fatalf("persisted recovery output is incomplete: %s", output.Output)
 	}
 }

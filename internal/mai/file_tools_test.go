@@ -522,7 +522,7 @@ func TestRootPublicationCannotFollowReplacedParentOutside(t *testing.T) {
 }
 
 func TestFileMutationRecoveryPreservesUnknownOutcomes(t *testing.T) {
-	for _, name := range []string{"write", "edit", "apply_patch"} {
+	for _, name := range []string{"write", "edit"} {
 		sess := &session{History: []json.RawMessage{mustJSON(t, functionCall{Type: "function_call", CallID: "pending", Name: name, Arguments: `{}`})}}
 		if err := repairInterruptedToolCalls(sess); err != nil {
 			t.Fatal(err)

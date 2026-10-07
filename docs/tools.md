@@ -99,8 +99,7 @@ Freshness is rechecked immediately before publication; external programs do
 not participate in these locks and can still race a replacement after that
 check. Each call commits one file. Use Bash for moves and deletes.
 
-`apply_patch` and `mai.apply_patch` have been removed. Older saved tool history
-remains readable. Interrupted mutations have an unknown outcome: inspect the
+Interrupted mutations have an unknown outcome: inspect the
 target with `read` before retrying rather than automatically replaying a call.
 
 ## Skills

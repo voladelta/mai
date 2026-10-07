@@ -440,8 +440,6 @@ func estimateHistoryItemTokens(item json.RawMessage) int64 {
 
 func interruptedToolInstruction(name string) string {
 	switch name {
-	case "apply_patch":
-		return "Read the target files and reconcile the requested patch with their current contents. apply_patch is retired; use write/edit for any remaining changes. Do not automatically replay the old call."
 	case "write", "edit":
 		return "The file mutation has an unknown outcome. Read the target file and reconcile the intended change before retrying; do not automatically replay the mutation."
 	case "bash":
