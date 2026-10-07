@@ -6,12 +6,16 @@ if ! command -v jq > /dev/null 2>&1; then
 fi
 
 provider=${MAI_EVAL_PROVIDER:-deepseek}
-case ${MAI_EVAL_MODE:-pro} in
-    pro) mode_flag= ;;
-    flash) mode_flag=--f ;;
-    max) mode_flag=--max ;;
-    *) printf 'MAI_EVAL_MODE must be pro, flash, or max\n' >&2; exit 2 ;;
-esac
+model_args=
+if [ -n "${MAI_EVAL_MODEL:-}" ]; then
+    model_args="--model $MAI_EVAL_MODEL"
+fi
+if [ -n "${MAI_EVAL_EFFORT:-}" ]; then
+    case $MAI_EVAL_EFFORT in
+        l|h|max) model_args="$model_args --effort $MAI_EVAL_EFFORT" ;;
+        *) printf 'MAI_EVAL_EFFORT must be l, h, or max\n' >&2; exit 2 ;;
+    esac
+fi
 
 run_case() {
     case_name=$1
@@ -37,7 +41,7 @@ run_case() {
     git -C "$work_dir" -c user.name='Mai Eval' -c user.email='mai-eval@example.invalid' commit -qm 'Initial task state'
 
     started=$(date +%s)
-    if (cd "$work_dir" && "$mai_bin" "$prompt" --provider "$provider" ${mode_flag:+"$mode_flag"} ${persist_flag:+"$persist_flag"} --jsonl --no-input --skip-skills > "$output_dir/events.jsonl" 2> "$output_dir/mai.stderr"); then
+    if (cd "$work_dir" && "$mai_bin" "$prompt" --provider "$provider" $model_args ${persist_flag:+"$persist_flag"} --jsonl --no-input --skip-skills > "$output_dir/events.jsonl" 2> "$output_dir/mai.stderr"); then
         mai_status=0
     else
         mai_status=$?

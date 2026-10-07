@@ -17,7 +17,7 @@ import (
 func TestProviderConfigDiscovery(t *testing.T) {
 	cwd, userHome := t.TempDir(), t.TempDir()
 	cfg, err := loadProviderConfig(cwd, userHome)
-	if err != nil || cfg.DefaultProvider != "deepseek" || cfg.Providers["deepseek"].Models.Pro != "deepseek-v4-pro" {
+	if err != nil || cfg.DefaultProvider != "deepseek" || cfg.Providers["deepseek"].Model != "deepseek-v4-pro" {
 		t.Fatalf("built-in config = %+v, %v", cfg, err)
 	}
 
@@ -55,9 +55,9 @@ func TestProviderConfigDiscovery(t *testing.T) {
 }
 
 func TestProviderConfigRejectsInvalidAndUnsafeSettings(t *testing.T) {
-	valid := `{"providers":{"deepseek":{"base_url":"https://api.deepseek.com","api_key_env":"DEEPSEEK_API_KEY","models":{"flash":"DeepSeek/Flash","pro":"deepseek-v4-pro"}}}}`
+	valid := `{"providers":{"deepseek":{"base_url":"https://api.deepseek.com","api_key_env":"DEEPSEEK_API_KEY","model":"DeepSeek/Pro"}}}`
 	cfg, err := decodeProviderConfig(strings.NewReader(valid))
-	if err != nil || cfg.DefaultProvider != defaultProvider || cfg.Providers[defaultProvider].Models.Flash != "DeepSeek/Flash" {
+	if err != nil || cfg.DefaultProvider != defaultProvider || cfg.Providers[defaultProvider].Model != "DeepSeek/Pro" {
 		t.Fatalf("defaults or model ID casing changed: %+v, %v", cfg, err)
 	}
 
@@ -73,12 +73,18 @@ func TestProviderConfigRejectsInvalidAndUnsafeSettings(t *testing.T) {
 		strings.Replace(valid, "https://api.deepseek.com", "https://provider.example/v1?key=secret", 1),
 		strings.Replace(valid, "https://api.deepseek.com", "https://provider.example/v1#fragment", 1),
 		strings.Replace(valid, "DEEPSEEK_API_KEY", "sk-raw-secret", 1),
-		strings.Replace(valid, `"pro":"deepseek-v4-pro"`, `"pro":""`, 1),
-		strings.Replace(valid, `"flash":"DeepSeek/Flash"`, `"ds-flash":"DeepSeek/Flash"`, 1),
+		strings.Replace(valid, `"DeepSeek/Pro"`, `""`, 1),
+		strings.Replace(valid, `"model":"DeepSeek/Pro"`, `"models":{"flash":"DeepSeek/Flash","pro":"deepseek-v4-pro"}`, 1),
 	} {
 		if _, err := decodeProviderConfig(strings.NewReader(raw)); err == nil {
 			t.Fatalf("accepted invalid configuration: %s", raw)
 		}
+	}
+
+	legacy := `{"providers":{"enclave":{"base_url":"https://router.enclave.ai/v1","api_key_env":"ENCLAVE_API_KEY","model":"cyberouter/deepseek-v4.1-flash","models":{"flash":"a","pro":"b"}}}}`
+	if _, err := decodeProviderConfig(strings.NewReader(legacy)); err == nil ||
+		!strings.Contains(err.Error(), `provider "enclave": "models" is no longer supported; replace it with a single "model" string`) {
+		t.Fatalf("legacy models config error = %v", err)
 	}
 
 	cwd := t.TempDir()
@@ -138,13 +144,13 @@ func TestProviderCLISelectionToolReplayAndResume(t *testing.T) {
 			"openrouter": {
 				BaseURL:   server.URL + "/v1/",
 				APIKeyEnv: "MAI_TEST_ROUTER_KEY",
-				Models:    modelMappings{Flash: "deepseek/Flash", Pro: "deepseek/Pro"},
+				Model:     "deepseek/Pro",
 				Profile:   profileOpenRouter,
 			},
 			"enclave": {
 				BaseURL:   server.URL + "/v1",
 				APIKeyEnv: "MAI_TEST_ENCLAVE_KEY",
-				Models:    modelMappings{Flash: "cyberouter/Flash", Pro: "cyberouter/Pro"},
+				Model:     "cyberouter/Flash",
 				Profile:   profileResponses,
 			},
 		},
@@ -154,7 +160,7 @@ func TestProviderCLISelectionToolReplayAndResume(t *testing.T) {
 	}
 
 	for index, args := range [][]string{
-		{"probe", "--f", "--persist"},
+		{"probe", "--persist"},
 		{"continue", "--last"},
 		{"continue", "--last", "--provider", "enclave"},
 		{"continue", "--last"},
@@ -187,7 +193,7 @@ func TestProviderCLISelectionToolReplayAndResume(t *testing.T) {
 	if len(requests) != 5 {
 		t.Fatalf("requests = %d", len(requests))
 	}
-	for index, want := range []string{"deepseek/Flash", "deepseek/Flash", "deepseek/Flash", "cyberouter/Flash", "cyberouter/Flash"} {
+	for index, want := range []string{"deepseek/Pro", "deepseek/Pro", "deepseek/Pro", "cyberouter/Flash", "cyberouter/Flash"} {
 		if requests[index].Model != want {
 			t.Fatalf("request %d model = %s, want %s", index, requests[index].Model, want)
 		}
@@ -212,7 +218,7 @@ func TestProviderCLISelectionToolReplayAndResume(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if saved.Provider != "enclave" || saved.Model != "flash" || saved.Effort != "h" || saved.ReasoningStart == 0 {
+	if saved.Provider != "enclave" || saved.Model != "cyberouter/Flash" || saved.Effort != "h" || saved.ReasoningStart == 0 {
 		t.Fatalf("provider switch lost saved mode/settings: %+v, %v", saved, err)
 	}
 
@@ -244,67 +250,16 @@ func TestProviderCLISelectionToolReplayAndResume(t *testing.T) {
 	}
 }
 
-func TestProviderSidekickAndImageUseFlashMapping(t *testing.T) {
-	t.Setenv("MAI_TEST_PROVIDER_KEY", "test-secret")
-	t.Setenv("MAI_CONTEXT_WINDOW", "")
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		var body struct {
-			Model string `json:"model"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Error(err)
-		}
-		if body.Model != "cyberouter/mapped-flash" || r.Header.Get("Authorization") != "Bearer test-secret" {
-			t.Error("Flash request escaped the selected provider")
-		}
-		deepseekTestResponse(w, `[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"FLASH_OK"}]}]`)
-	}))
-	defer server.Close()
-
+func TestVersion2SessionIsRejected(t *testing.T) {
 	sess := deepseekTestSession(t)
-	sess.Provider, sess.Model = "enclave", "pro"
-	a := newAgent(io.Discard, io.Discard, "", time.Second, false)
-	defer a.close()
-	a.skipSkills = true
-	if err := a.configureBackend(sess, providerConfig{
-		BaseURL: server.URL, APIKeyEnv: "MAI_TEST_PROVIDER_KEY",
-		Models: modelMappings{Flash: "cyberouter/mapped-flash", Pro: "cyberouter/mapped-pro"},
-	}); err != nil {
+	sess.Version = 2
+	sess.Model = "pro"
+	path := filepath.Join(t.TempDir(), "session.json")
+	if err := saveJSON(path, sess); err != nil {
 		t.Fatal(err)
 	}
-	worker, err := a.newSidekick(sess)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer worker.agent.close()
-	if worker.session.Provider != "enclave" {
-		t.Fatal("sidekick lost provider identity")
-	}
-	if err := worker.agent.run(context.Background(), worker.session, "answer"); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := a.backend.(*responsesClient).describeImage(context.Background(), sess, "data:image/png;base64,iVBORw0KGgo="); err != nil {
-		t.Fatal(err)
-	}
-	if requests != 2 {
-		t.Fatalf("Flash requests = %d", requests)
-	}
-}
-
-func TestLegacySessionAliasesLoad(t *testing.T) {
-	for _, legacy := range []string{"ds-flash", "ds-pro"} {
-		sess := deepseekTestSession(t)
-		sess.Model = legacy
-		path := filepath.Join(t.TempDir(), "session.json")
-		if err := saveJSON(path, sess); err != nil {
-			t.Fatal(err)
-		}
-		loaded, err := loadSession(path)
-		if err != nil || loaded.Provider != defaultProvider || loaded.Model != strings.TrimPrefix(legacy, "ds-") {
-			t.Fatalf("legacy task did not load: %+v, %v", loaded, err)
-		}
+	if _, err := loadSession(path); err == nil || !strings.Contains(err.Error(), "incomplete or unsupported") {
+		t.Fatalf("version 2 session loaded: %v", err)
 	}
 }
 
@@ -326,7 +281,7 @@ func TestProviderSwitchKeepsContextEditIndexesAndResetsBoundaryAfterCompaction(t
 	if !bytes.Equal(original, mustJSON(t, sess.History[:4])) || sess.ContextEdits[0].Index != 3 {
 		t.Fatal("provider switch mutated original history or context edit indexes")
 	}
-	if err := validateResponsesHistory(history, sess.Model, profileDeepSeek); err != nil {
+	if err := validateResponsesHistory(history, profileDeepSeek); err != nil {
 		t.Fatal(err)
 	}
 

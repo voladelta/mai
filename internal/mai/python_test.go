@@ -312,14 +312,13 @@ func TestPythonHistoryCompactionAndRunCleanup(t *testing.T) {
 	a.stdout = io.Discard
 	a.backend = &responsesClient{
 		profile:    profileDeepSeek,
-		models:     defaultProviderConfig().Models,
 		httpClient: server.Client(),
 		stdout:     io.Discard,
 		endpoint:   server.URL,
 	}
 	a.sessionPath = filepath.Join(t.TempDir(), "session.json")
 	sess.Version, sess.ID = stateVersion, "01234567-89ab-cdef-0123-456789abcdef"
-	sess.Model, sess.Effort, sess.RepoRoot = "flash", "h", sess.CWD
+	sess.Model, sess.Effort, sess.RepoRoot = "deepseek-flash", "h", sess.CWD
 	_ = appendUserPrompt(sess, strings.Repeat("context ", 1000))
 	sess.History = append(sess.History, mustJSONValue(t, functionCall{Type: "function_call", Name: "python", CallID: "cell", Arguments: `{"code":"value = 42"}`}))
 	err := a.executeCalls(context.Background(), sess, []functionCall{{Name: "python", CallID: "cell", Arguments: `{"code":"value = 42"}`}})

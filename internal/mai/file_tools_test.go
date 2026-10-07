@@ -381,21 +381,19 @@ func TestFileToolsResumeDoesNotReuseObservations(t *testing.T) {
 	requireFileOK(t, fileCall(t, fresh, &resumed, "edit", map[string]any{"file_path": "file", "old_string": "old", "new_string": "new"}))
 }
 
-func TestSidekickSharesFileLocksButRequiresOwnRead(t *testing.T) {
+func TestAgentsSharingFileToolsShareLocksButRequireOwnReads(t *testing.T) {
 	a, sess := fileTestAgent(t)
-	a.backend = &responsesClient{}
 	requireFileOK(t, fileCall(t, a, sess, "write", map[string]any{"file_path": "file", "content": "old"}))
-	worker, err := a.newSidekick(sess)
-	if err != nil {
-		t.Fatal(err)
+	other := newAgent(io.Discard, io.Discard, "", time.Second, false)
+	other.files = a.fileTools()
+	if a.fileTools() != other.fileTools() {
+		t.Fatal("agents have independent mutation locks")
 	}
-	if a.fileTools() != worker.agent.fileTools() {
-		t.Fatal("sidekick has independent mutation locks")
-	}
+	otherSess := *sess
 	args := map[string]any{"file_path": "file", "old_string": "old", "new_string": "worker"}
-	requireFileCode(t, fileCall(t, worker.agent, worker.session, "edit", args), "FS_NOT_OBSERVED")
-	requireFileOK(t, fileCall(t, worker.agent, worker.session, "read", map[string]any{"file_path": "file"}))
-	requireFileOK(t, fileCall(t, worker.agent, worker.session, "edit", args))
+	requireFileCode(t, fileCall(t, other, &otherSess, "edit", args), "FS_NOT_OBSERVED")
+	requireFileOK(t, fileCall(t, other, &otherSess, "read", map[string]any{"file_path": "file"}))
+	requireFileOK(t, fileCall(t, other, &otherSess, "edit", args))
 	requireFileCode(t, fileCall(t, a, sess, "write", map[string]any{"file_path": "file", "content": "director"}), "FS_STALE_VERSION")
 	assertContent(t, filepath.Join(sess.RepoRoot, "file"), "worker")
 }
@@ -586,7 +584,7 @@ func TestFileToolsResponsesLoopRecoversStaleEdit(t *testing.T) {
 		deepseekTestResponse(w, string(mustJSON(t, []functionCall{call})))
 	}))
 	defer server.Close()
-	a.backend = &responsesClient{profile: profileDeepSeek, models: defaultProviderConfig().Models, httpClient: server.Client(), endpoint: server.URL, stdout: io.Discard}
+	a.backend = &responsesClient{profile: profileDeepSeek, httpClient: server.Client(), endpoint: server.URL, stdout: io.Discard}
 	if err := a.run(context.Background(), sess, "Read, edit and verify the file."); err != nil {
 		t.Fatal(err)
 	}

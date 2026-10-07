@@ -20,17 +20,21 @@ Completed model events also include `input_tokens`, `output_tokens`, and
 unavailable; `total_tokens` keeps its existing context-size meaning.
 `compaction.completed` includes elapsed time and a `usage` object with the
 backend's available token fields, so checkpoint generation can be counted too.
+It also carries a `changes` array describing what the checkpoint replaced: each
+entry has `kind` (`"compacted"`), `source`, `reason`, the replaced `records`
+count, per-tool `tool_calls` counts, the `call_ids` usable as `mai.history`
+search anchors, and `call_ids_omitted` when the list was capped.
 Model duration covers the full model request.
 Tool duration covers execution of that call; task duration covers the agent run.
 The default output remains human-readable.
 
-`task.started` includes `provider`, `model` (`pro` or `flash`), and `effort`.
-The provider is the selected configuration name, and the model is the stable
-tier alias rather than its upstream ID.
+`task.started` includes `provider`, `model`, and `effort`. The provider is the
+selected configuration name, and the model is the upstream model ID sent in
+requests. When the run forked a saved session (`--fork` or `--fork-from`), it
+also includes `parent_id` (the source session ID) and `forked_at_turn` (the
+number of history items copied at fork time).
 
-Sidekick model and tool events carry `worker_id`. When summing elapsed time,
-count those worker events and exclude the enclosing `sidekick` tool duration,
-which includes the same work. Nested Python host calls count toward the outer
+Nested Python host calls count toward the outer
 Python tool duration. With `jq` installed, summarize a run with:
 
 ```sh

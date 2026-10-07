@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -27,17 +28,19 @@ Examples:
   mai "add tests for the parser"
   mai "start a saved task" --persist
   mai "now fix the failing test" --last
-  mai "refactor this" --max
-  mai "quick review" --f
+  mai "refactor this" --effort max
+  mai "quick review" --provider enclave --model cyberouter/glm-5.3-flash
 
 Options:
   -h, --help             Show this help text.
   --version              Show the mai version.
   --persist              Save this new task in the current project.
   --last                 Resume the saved task and its provider/model settings.
-  --f                    Use Flash/high without the sidekick tool.
-  --max                  Use Pro/max (sidekick remains Flash/high).
+  --fork                 Start a new saved session from this project's saved task.
+  --fork-from ID         Start a new saved session from session ID in this project.
   --provider NAME        Select a provider, including when resuming with --last.
+  -m, --model NAME       Override the provider's configured model for this run.
+  --effort VALUE         Select reasoning effort: l, h or max (default: h).
   --max-turns COUNT      Set the model-turn limit (default: 64; -1: unlimited).
   --timeout DURATION     Set the per-request first-byte/idle timeout (default: 10m).
   --cell-timeout DURATION      Set the wall-clock limit for each Python cell (default: 10m).
@@ -46,9 +49,9 @@ Options:
   --jsonl                 Write task, model, and tool events as JSON Lines.
 
 Tasks are stateless unless you use --persist or --last.
-The built-in default is DeepSeek Pro/high with a Flash/high sidekick available.
+The built-in default is DeepSeek deepseek-v4-pro/high.
 Provider settings: .mai.config in the current directory, then $HOME/.mai.config.
---last keeps the saved model and effort; --provider can switch its backend.
+--last keeps the saved model and effort; --provider adopts its configured model.
 
 Documentation and support: https://github.com/voladelta/mai
 `
@@ -79,12 +82,42 @@ Usage:
 Example:
   mai "add tests for the parser"
 
-Built-in default: DeepSeek Pro/high.
+Built-in default: DeepSeek deepseek-v4-pro/high.
 Run 'mai --help' for more information.
 `)
 		return 0
 	}
 	return runTask(opts, stdout, stderr)
+}
+
+// nestingDepth enforces the delegation depth limit before any state or model
+// request exists, so a refused run costs nothing. MAI_DEPTH is this run's
+// depth (default 0); MAI_MAX_DEPTH is the maximum (default 2).
+func nestingDepth() (int, error) {
+	depth, err := parseDepthEnv("MAI_DEPTH", 0)
+	if err != nil {
+		return 0, err
+	}
+	limit, err := parseDepthEnv("MAI_MAX_DEPTH", 2)
+	if err != nil {
+		return 0, err
+	}
+	if depth > limit {
+		return 0, fmt.Errorf("nesting depth %d exceeds the limit of %d (MAI_MAX_DEPTH); complete this work directly instead of starting another mai", depth, limit)
+	}
+	return depth, nil
+}
+
+func parseDepthEnv(name string, fallback int) (int, error) {
+	value := os.Getenv(name)
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < 0 {
+		return 0, fmt.Errorf("%s must be a non-negative integer, got %q", name, value)
+	}
+	return parsed, nil
 }
 
 func runTask(opts options, stdout, stderr io.Writer) int {
@@ -94,6 +127,10 @@ func runTask(opts options, stdout, stderr io.Writer) int {
 		}
 		fmt.Fprintf(stderr, "mai: %v\n", err)
 		return 1
+	}
+	depth, err := nestingDepth()
+	if err != nil {
+		return reportError(err)
 	}
 	taskCfg := configForTask(opts)
 	provider := defaultProviderConfig()
@@ -118,6 +155,9 @@ func runTask(opts options, stdout, stderr io.Writer) int {
 		if !exists {
 			return reportError(fmt.Errorf("provider %q is not configured", taskCfg.Provider))
 		}
+		if taskCfg.Model == "" {
+			taskCfg.Model = provider.Model
+		}
 	}
 
 	active, err := startSession(taskCfg, opts)
@@ -125,14 +165,23 @@ func runTask(opts options, stdout, stderr io.Writer) int {
 		return reportError(err)
 	}
 	defer active.close()
+	if active.forkedFrom != "" {
+		fmt.Fprintf(stderr, "mai: forked %s at %d items -> %s\n", active.forkedFrom, active.forkedAt, active.session.ID)
+	}
 	if opts.last && opts.provider != "" {
+		// A saved model ID is provider-specific, so adopt the new
+		// provider's configured model unless --model overrides it.
 		active.session.Provider = opts.provider
 		active.session.Backend = nil
 		active.session.ReasoningStart = len(active.session.History)
 		active.session.ContextTokens = 0
+		if opts.model == "" {
+			active.session.Model = provider.Model
+		}
 	}
 
 	runner := newAgent(stdout, stderr, active.path, opts.timeout, !opts.noInput && isTerminal(os.Stdin))
+	runner.depth = depth
 	runner.skipSkills = opts.skipSkills
 	if !opts.skipSkills {
 		runner.skillsRoots, runner.skillsError = discoverSkillRoots()
@@ -154,11 +203,16 @@ func runTask(opts options, stdout, stderr io.Writer) int {
 		return reportError(fmt.Errorf("save task: %w", err))
 	}
 	if opts.jsonl {
-		if err := writeJSONLEvent(stdout, map[string]any{
+		started := map[string]any{
 			"type": "task.started", "session_id": active.session.ID,
 			"provider": active.session.Provider,
 			"model":    active.session.Model, "effort": active.session.Effort,
-		}); err != nil {
+		}
+		if active.session.ParentID != "" {
+			started["parent_id"] = active.session.ParentID
+			started["forked_at_turn"] = active.session.ForkedAtTurn
+		}
+		if err := writeJSONLEvent(stdout, started); err != nil {
 			return reportError(err)
 		}
 	}
@@ -190,10 +244,12 @@ func runTask(opts options, stdout, stderr io.Writer) int {
 }
 
 type activeTask struct {
-	session *session
-	path    string
-	paths   sessionPaths
-	lock    *os.File
+	session    *session
+	path       string
+	paths      sessionPaths
+	lock       *os.File
+	forkedFrom string
+	forkedAt   int
 }
 
 func (task *activeTask) saveInitial() error {
@@ -213,21 +269,22 @@ func (task *activeTask) close() {
 }
 
 func configForTask(opts options) taskConfig {
-	cfg := taskConfig{Provider: defaultProvider, Model: defaultModel, Effort: "h"}
+	// An empty Model means the selected provider's configured model.
+	cfg := taskConfig{Provider: defaultProvider, Model: opts.model, Effort: "h"}
 	if opts.provider != "" {
 		cfg.Provider = opts.provider
 	}
-	if opts.fast {
-		cfg.Model = "flash"
-	}
-	if opts.maxEffort {
-		cfg.Effort = "max"
+	if opts.effort != "" {
+		cfg.Effort = opts.effort
 	}
 	return cfg
 }
 
 func startSession(cfg taskConfig, opts options) (*activeTask, error) {
 	if !opts.last {
+		if opts.fork || opts.forkFrom != "" {
+			return startForkedSession(cfg, opts)
+		}
 		sess, err := createSession(cfg)
 		if err != nil {
 			return nil, err
@@ -277,7 +334,125 @@ func startSession(cfg taskConfig, opts options) (*activeTask, error) {
 		lock.Close()
 		return nil, fmt.Errorf("resume task directory %s: %w", sess.CWD, err)
 	}
+	if opts.model != "" && opts.model != sess.Model {
+		// Reasoning can be tied to its model; a different upstream model must
+		// not replay another model's reasoning.
+		sess.ReasoningStart = len(sess.History)
+		sess.ContextTokens = 0
+		sess.Model = opts.model
+	}
+	if opts.effort != "" {
+		sess.Effort = opts.effort
+	}
 	return &activeTask{session: sess, path: path, paths: paths, lock: lock}, nil
+}
+
+// startForkedSession clones a saved session into a new child. The parent file
+// is read without its lock: saveJSON writes atomically via rename, so a running
+// parent's file is always a complete snapshot.
+func startForkedSession(cfg taskConfig, opts options) (*activeTask, error) {
+	cwd, err := currentDir()
+	if err != nil {
+		return nil, err
+	}
+	root := findRepoRoot(cwd)
+	paths := projectSessionPaths(root)
+	parentID := opts.forkFrom
+	if parentID == "" {
+		parentID, err = loadCurrentSessionID(paths)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := prepareSessionPaths(paths); err != nil {
+		return nil, err
+	}
+	parent, err := loadSession(sessionPath(paths, parentID))
+	if err != nil {
+		return nil, fmt.Errorf("fork session %s: %w", parentID, err)
+	}
+	if parent.RepoRoot != root {
+		return nil, fmt.Errorf("session %s does not belong to this project", parentID)
+	}
+	childID, err := newSessionID()
+	if err != nil {
+		return nil, err
+	}
+	child := *parent
+	child.ID = childID
+	child.ParentID = parentID
+	child.ForkedAtTurn = len(parent.History)
+	child.PythonActivities = nil // kernel state belongs to the parent's process
+	child.History = append([]json.RawMessage(nil), parent.History...)
+	child.ContextEdits = append([]contextEdit(nil), parent.ContextEdits...)
+	child.Transcript = append([]transcriptEntry(nil), parent.Transcript...)
+	if child.Backend != nil {
+		backend := *child.Backend
+		child.Backend = &backend
+	}
+	childPath := sessionPath(paths, childID)
+	child.transcriptPath = transcriptPath(childPath)
+
+	if opts.provider != "" && opts.provider != child.Provider {
+		// Same reset as resuming across providers; cfg.Model is the new
+		// provider's configured model or an explicit --model.
+		child.Provider = opts.provider
+		child.Backend = nil
+		child.ReasoningStart = len(child.History)
+		child.ContextTokens = 0
+		child.Model = cfg.Model
+		if opts.model != "" {
+			child.Model = opts.model
+		}
+	} else if opts.model != "" && opts.model != child.Model {
+		// Reasoning can be tied to its model; a different upstream model must
+		// not replay another model's reasoning.
+		child.ReasoningStart = len(child.History)
+		child.ContextTokens = 0
+		child.Model = opts.model
+	}
+	if opts.effort != "" {
+		child.Effort = opts.effort
+	}
+
+	lock, err := acquireSessionLock(paths, childID)
+	if err != nil {
+		return nil, err
+	}
+	if child.TranscriptEnd > 0 {
+		// Copy the parent's committed archive prefix; the parent may keep
+		// appending, so the child must not share its file.
+		if err := copyTranscriptPrefix(parent.transcriptPath, child.transcriptPath, child.TranscriptEnd); err != nil {
+			lock.Close()
+			return nil, fmt.Errorf("copy transcript archive: %w", err)
+		}
+	}
+	if err := os.Chdir(child.CWD); err != nil {
+		lock.Close()
+		return nil, fmt.Errorf("resume task directory %s: %w", child.CWD, err)
+	}
+	return &activeTask{session: &child, path: childPath, paths: paths, lock: lock, forkedFrom: parentID, forkedAt: len(parent.History)}, nil
+}
+
+func copyTranscriptPrefix(srcPath, dstPath string, end int64) error {
+	src, err := openTranscript(srcPath, os.O_RDONLY)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	dst, err := os.OpenFile(dstPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := io.CopyN(dst, src, end); err != nil {
+		dst.Close()
+		return err
+	}
+	if err := dst.Sync(); err != nil {
+		dst.Close()
+		return err
+	}
+	return dst.Close()
 }
 
 func appendUserPrompt(sess *session, prompt string) error {

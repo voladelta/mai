@@ -17,15 +17,12 @@ import (
 	"time"
 )
 
-func TestLiveDeepSeekFlashImageMessage(t *testing.T) {
-	if os.Getenv("MAI_LIVE_DEEPSEEK_FLASH_TOOLS") != "1" {
-		t.Skip("set MAI_LIVE_DEEPSEEK_FLASH_TOOLS=1")
+func TestLiveDeepSeekImageMessage(t *testing.T) {
+	if os.Getenv("MAI_LIVE_DEEPSEEK_TOOLS") != "1" {
+		t.Skip("set MAI_LIVE_DEEPSEEK_TOOLS=1")
 	}
 	sess := deepseekTestSession(t)
 	sess.History = nil
-	if err := appendUserPrompt(sess, "Identify the solid color of the supplied image. Do not guess if it is unavailable."); err != nil {
-		t.Fatal(err)
-	}
 	img := image.NewRGBA(image.Rect(0, 0, 64, 64))
 	for y := 0; y < 64; y++ {
 		for x := 0; x < 64; x++ {
@@ -36,15 +33,32 @@ func TestLiveDeepSeekFlashImageMessage(t *testing.T) {
 	if err := png.Encode(&pngBytes, img); err != nil {
 		t.Fatal(err)
 	}
+	input, err := json.Marshal(map[string]any{
+		"role": "user",
+		"content": []map[string]string{
+			{"type": "input_text", "text": "Identify the solid color of the supplied image. Do not guess if it is unavailable."},
+			{"type": "input_image", "image_url": "data:image/png;base64," + base64.StdEncoding.EncodeToString(pngBytes.Bytes()), "detail": "auto"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess.History = append(sess.History, input)
 	a := newAgent(io.Discard, io.Discard, "", time.Minute, false)
 	defer a.close()
 	a.skipSkills = true
-	if err := a.configureBackend(sess, liveToolProvider(t, sess)); err != nil {
+	provider := liveToolProvider(t, sess)
+	sess.Model = provider.Model
+	if err := a.configureBackend(sess, provider); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	answer, _, err := a.backend.(*responsesClient).describeImage(ctx, sess, "data:image/png;base64,"+base64.StdEncoding.EncodeToString(pngBytes.Bytes()))
+	result, err := a.backend.stream(ctx, sess, "Answer the user's image question directly.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer, err := assistantResponseText(result.items, "\n")
 	if err != nil || !strings.Contains(strings.ToLower(answer), "blue") {
 		t.Fatalf("direct user-image interpretation: answer=%q err=%v", answer, err)
 	}
@@ -78,10 +92,10 @@ func liveToolProvider(t *testing.T, sess *session) providerConfig {
 }
 
 // Paid model-driven integration. Context editing and original-history recall
-// have their own stronger probe in TestLiveDeepSeekContextEdit/flash.
-func TestLiveDeepSeekFlashTools(t *testing.T) {
-	if os.Getenv("MAI_LIVE_DEEPSEEK_FLASH_TOOLS") != "1" {
-		t.Skip("set MAI_LIVE_DEEPSEEK_FLASH_TOOLS=1")
+// have their own stronger probe in TestLiveDeepSeekContextEdit.
+func TestLiveDeepSeekTools(t *testing.T) {
+	if os.Getenv("MAI_LIVE_DEEPSEEK_TOOLS") != "1" {
+		t.Skip("set MAI_LIVE_DEEPSEEK_TOOLS=1")
 	}
 	sess := deepseekTestSession(t)
 	sess.History = nil
@@ -117,6 +131,7 @@ Your entire final response must be the single token TOOLS_OK if verified. Do not
 	a := newAgent(io.Discard, io.Discard, "", 2*time.Minute, false)
 	a.skipSkills, a.maxTurns = true, 12
 	provider := liveToolProvider(t, sess)
+	sess.Model = provider.Model
 	if err := a.configureBackend(sess, provider); err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +219,7 @@ Your entire final response must be the single token TOOLS_OK if verified. Do not
 	}
 	got, err := os.ReadFile(filepath.Join(sess.CWD, "result.txt"))
 	want := token + "\nblue\n43\n"
-	t.Logf("FLASH_TOOLS provider=%s model=%s counts=%s turns=%d duration_ms=%d", sess.Provider, provider.Models.Flash, fmt.Sprint(counts), a.modelTurns, time.Since(started).Milliseconds())
+	t.Logf("FLASH_TOOLS provider=%s model=%s counts=%s turns=%d duration_ms=%d", sess.Provider, provider.Model, fmt.Sprint(counts), a.modelTurns, time.Since(started).Milliseconds())
 	if err != nil || string(got) != want || pythonResults != 2 || !bridge || !answered {
 		t.Fatalf("tool effects: file=%q err=%v python_results=%d bridge=%v answered=%v answer=%q", got, err, pythonResults, bridge, answered, answerText)
 	}

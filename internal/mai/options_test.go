@@ -66,13 +66,13 @@ func TestParseOptionsInterspersed(t *testing.T) {
 	}{
 		{
 			name: "short forms after prompt",
-			args: []string{"fix", "the", "test", "--persist", "--f"},
-			want: options{prompt: "fix the test", persist: true, fast: true, timeout: defaultHTTPTimeout},
+			args: []string{"fix", "the", "test", "--persist", "-m", "deepseek-flash"},
+			want: options{prompt: "fix the test", persist: true, model: "deepseek-flash", timeout: defaultHTTPTimeout},
 		},
 		{
 			name: "long forms around prompt",
-			args: []string{"hello", "--max", "--persist"},
-			want: options{prompt: "hello", persist: true, maxEffort: true, timeout: defaultHTTPTimeout},
+			args: []string{"hello", "--effort", "max", "--persist"},
+			want: options{prompt: "hello", persist: true, effort: "max", timeout: defaultHTTPTimeout},
 		},
 		{
 			name: "provider selection",
@@ -85,9 +85,9 @@ func TestParseOptionsInterspersed(t *testing.T) {
 			want: options{prompt: "continue", last: true, provider: "enclave", timeout: defaultHTTPTimeout},
 		},
 		{
-			name: "inline provider",
-			args: []string{"hello", "--provider=openrouter", "--f"},
-			want: options{prompt: "hello", provider: "openrouter", fast: true, timeout: defaultHTTPTimeout},
+			name: "inline provider and model",
+			args: []string{"hello", "--provider=openrouter", "--model=deepseek/deepseek-v4-pro"},
+			want: options{prompt: "hello", provider: "openrouter", model: "deepseek/deepseek-v4-pro", timeout: defaultHTTPTimeout},
 		},
 		{
 			name: "end of options",
@@ -138,8 +138,8 @@ func TestParseOptionsRejectsInvalid(t *testing.T) {
 		t.Fatal("expected invalid timeout error")
 	}
 	for _, args := range [][]string{
-		{"work", "--last", "--f"},
-		{"work", "--last", "--max"},
+		{"work", "--f"},
+		{"work", "--max"},
 		{"hello", "--subagent", "repo_scout"},
 		{"hello", "--subagent-timeout", "1h"},
 	} {
@@ -150,7 +150,7 @@ func TestParseOptionsRejectsInvalid(t *testing.T) {
 }
 
 func TestParseOptionsDoesNotTreatOptionValuesAsHelp(t *testing.T) {
-	for _, flag := range []string{"--provider", "--timeout", "--max-turns"} {
+	for _, flag := range []string{"--provider", "--model", "--timeout", "--max-turns"} {
 		t.Run(flag, func(t *testing.T) {
 			if _, err := parseOptions([]string{"work", flag, "--help"}); err == nil {
 				t.Fatal("invalid option value was interpreted as a help request")
@@ -165,11 +165,13 @@ func TestExecutionModeSelection(t *testing.T) {
 		model  string
 		effort string
 	}{
-		{[]string{"work"}, "pro", "h"},
-		{[]string{"work", "--max"}, "pro", "max"},
-		{[]string{"work", "--f"}, "flash", "h"},
-		{[]string{"work", "--provider", "enclave"}, "pro", "h"},
-		{[]string{"work", "--provider", "openrouter", "--f"}, "flash", "h"},
+		{[]string{"work"}, "", "h"},
+		{[]string{"work", "--effort", "max"}, "", "max"},
+		{[]string{"work", "--effort=l"}, "", "l"},
+		{[]string{"work", "--model", "deepseek-flash"}, "deepseek-flash", "h"},
+		{[]string{"work", "-m", "cyberouter/glm-5.3-flash"}, "cyberouter/glm-5.3-flash", "h"},
+		{[]string{"work", "--provider", "enclave"}, "", "h"},
+		{[]string{"work", "--provider", "openrouter", "--model", "deepseek/deepseek-v4-pro", "--effort", "l"}, "deepseek/deepseek-v4-pro", "l"},
 	} {
 		opts, err := parseOptions(test.args)
 		if err != nil {
@@ -183,27 +185,47 @@ func TestExecutionModeSelection(t *testing.T) {
 	}
 
 	for _, args := range [][]string{
-		{"work", "--f", "--max"},
-		{"work", "--max", "--f"},
-		{"work", "--f", "-m", "pro"},
-		{"work", "--max", "-m", "flash"},
-		{"work", "-m", "flash", "--max"},
+		{"work", "--effort", "bogus"},
+		{"work", "--effort="},
+		{"work", "--model", ""},
+		{"work", "--model", "  "},
+		{"work", "-m", "two words"},
+		{"work", "-m", "bad\tmodel"},
+		{"work", "--model", "-badmodel"},
+		{"work", "-m=-flash"},
+		{"work", "--model=" + strings.Repeat("x", 257)},
 		{"work", "-e", "h"},
-		{"work", "--effort=max"},
 	} {
 		if _, err := parseOptions(args); err == nil {
-			t.Fatalf("accepted conflicting or removed options: %v", args)
+			t.Fatalf("accepted invalid model or effort option: %v", args)
 		}
 	}
 }
 
-func TestRemovedModelSelectionAndInvalidProviders(t *testing.T) {
-	for _, args := range [][]string{{"hello", "-m", "pro"}, {"hello", "--model=flash"}} {
-		if _, err := parseOptions(args); err == nil || !strings.Contains(err.Error(), "unknown option") {
-			t.Fatalf("%v: error = %v", args, err)
+func TestLastAllowsModelAndEffortOverrides(t *testing.T) {
+	for _, test := range []struct {
+		args   []string
+		model  string
+		effort string
+	}{
+		{[]string{"continue", "--last"}, "", ""},
+		{[]string{"continue", "--last", "--provider", "enclave"}, "", ""},
+		{[]string{"continue", "--last", "--model", "cyberouter/glm-5.3-flash"}, "cyberouter/glm-5.3-flash", ""},
+		{[]string{"continue", "--last", "-m", "deepseek-flash"}, "deepseek-flash", ""},
+		{[]string{"continue", "--last", "--effort", "l"}, "", "l"},
+		{[]string{"continue", "--last", "--provider", "enclave", "--model", "x/y", "--effort", "max"}, "x/y", "max"},
+	} {
+		opts, err := parseOptions(test.args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !opts.last || opts.model != test.model || opts.effort != test.effort {
+			t.Fatalf("%v: options = %#v", test.args, opts)
 		}
 	}
+}
 
+func TestInvalidModelIDsAndProviders(t *testing.T) {
 	for _, provider := range []string{"", "../enclave", "OpenRouter", "--help", "two words"} {
 		if _, err := parseOptions([]string{"hello", "--provider=" + provider}); err == nil || !strings.Contains(err.Error(), "invalid provider") {
 			t.Fatalf("%q: error = %v", provider, err)

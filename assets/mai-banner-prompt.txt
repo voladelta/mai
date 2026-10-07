@@ -4,14 +4,14 @@ Primary request: Regenerate the banner as a fresh, polished illustration. Use th
 Input image 1: style and brand reference, not a layout to copy exactly.
 
 Canvas: wide 3:1 landscape, ideally 2400 x 800. One flat editorial silkscreen print on solid cool gray paper #E9E9E5. One ink only: cobalt #2148B8, through solid fills, outlines, and halftone densities. Opaque background.
-Subject: a giant friendly robot-face processor chip explored by a few very tiny human-like coding-agent figures, reflecting Pro directing a Flash sidekick. Build a readable playful landscape from the chip's pins, circuit paths, and heat-sink terraces. The figures inspect different parts of the same machine, scattered irregularly and much smaller than the robot face. No separate decorative objects.
+Subject: a giant friendly robot-face processor chip explored by a few very tiny human-like coding-agent figures, reflecting one coding agent directing nested helper runs. Build a readable playful landscape from the chip's pins, circuit paths, and heat-sink terraces. The figures inspect different parts of the same machine, scattered irregularly and much smaller than the robot face. No separate decorative objects.
 Composition: asymmetric panoramic editorial cover. Illustration fills the left 60–65 percent and crops at the left and bottom edges. Typography occupies quiet exposed paper on the right, with about 6 percent safe margin at the right edge. Exposed paper and clean negative space occupy roughly one third of the banner. The large robot face and the word mai are immediately readable at GitHub display width. Keep the tiny figures legible and the overall composition calm.
 Typography: large lowercase geometric grotesk display, with smaller crisp monospaced supporting text. Make the word mai dominant; metadata remains secondary but readable. All lettering must be spelled exactly, with no additional words.
 Exact text, in reading order:
 mai
 Little agents, giant circuits
 DeepSeek Responses API
-Pro + Flash sidekick
+Single model, CLI delegation
 Native Go / persistent Python
 The three metadata lines should form a tidy compact group under the tagline. No counts or version numbers.
 Print quality: fine regular halftone dots and restrained ink edge grain, sharply drawn forms, exposed-paper cutouts separating layers. More economical and clean than the reference while preserving its charming mechanical world. Include at most one small printed registration mark.

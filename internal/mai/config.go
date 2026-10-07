@@ -21,10 +21,12 @@ type providerFile struct {
 }
 
 type providerConfig struct {
-	BaseURL   string          `json:"base_url"`
-	APIKeyEnv string          `json:"api_key_env"`
-	Models    modelMappings   `json:"models"`
-	Profile   protocolProfile `json:"profile,omitempty"`
+	BaseURL   string `json:"base_url"`
+	APIKeyEnv string `json:"api_key_env"`
+	Model     string `json:"model"`
+	// Retired two-tier field, accepted only to report an actionable error.
+	Models  json.RawMessage `json:"models,omitempty"`
+	Profile protocolProfile `json:"profile,omitempty"`
 }
 
 type protocolProfile string
@@ -56,7 +58,7 @@ func resolveProtocolProfile(provider string, profile protocolProfile) (protocolP
 	}
 }
 
-func validateProviderSettings(endpoint, apiKeyEnv string, models modelMappings) error {
+func validateProviderSettings(endpoint, apiKeyEnv string) error {
 	if !validEndpoint(endpoint) {
 		return errors.New("URL must be HTTPS (HTTP allowed for loopback), without credentials, query or fragment")
 	}
@@ -65,23 +67,14 @@ func validateProviderSettings(endpoint, apiKeyEnv string, models modelMappings) 
 		return errors.New("requires a valid api_key_env name")
 	}
 
-	if strings.TrimSpace(models.Flash) == "" || strings.TrimSpace(models.Pro) == "" {
-		return errors.New("requires flash and pro model mappings")
-	}
-
 	return nil
-}
-
-type modelMappings struct {
-	Flash string `json:"flash"`
-	Pro   string `json:"pro"`
 }
 
 func defaultProviderConfig() providerConfig {
 	return providerConfig{
 		BaseURL:   "https://api.deepseek.com",
 		APIKeyEnv: "DEEPSEEK_API_KEY",
-		Models:    modelMappings{Flash: "deepseek-flash", Pro: "deepseek-v4-pro"},
+		Model:     "deepseek-v4-pro",
 		Profile:   profileDeepSeek,
 	}
 }
@@ -135,8 +128,16 @@ func decodeProviderConfig(reader io.Reader) (providerFile, error) {
 			return providerFile{}, fmt.Errorf("invalid provider name %q", name)
 		}
 
-		if err := validateProviderSettings(provider.BaseURL, provider.APIKeyEnv, provider.Models); err != nil {
+		if len(provider.Models) != 0 && string(provider.Models) != "null" {
+			return providerFile{}, fmt.Errorf("provider %q: \"models\" is no longer supported; replace it with a single \"model\" string", name)
+		}
+
+		if err := validateProviderSettings(provider.BaseURL, provider.APIKeyEnv); err != nil {
 			return providerFile{}, fmt.Errorf("provider %q: %w", name, err)
+		}
+
+		if strings.TrimSpace(provider.Model) == "" {
+			return providerFile{}, fmt.Errorf("provider %q: requires a model", name)
 		}
 
 		profile, err := resolveProtocolProfile(name, provider.Profile)

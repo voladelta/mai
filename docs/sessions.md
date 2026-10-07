@@ -29,6 +29,19 @@ Each persisted task has a separate session file. Starting concurrent tasks does
 not replace their history. An atomic update to `current` selects the task that a
 later `--last` command will resume.
 
+## Forking a task
+
+`--fork` copies the project's current saved task into a new session;
+`--fork-from ID` forks a specific session in the project. The child gets a new
+session ID, records `parent_id` and `forked_at_turn`, and duplicates the
+parent's committed transcript prefix so `mai.history` still reaches pre-fork
+entries. The parent's file and lock are untouched, so it can keep running.
+Forked tasks are saved like `--persist` tasks and move `current` to the child;
+they cannot be combined with `--last` or `--persist`. `--provider`, `--model`,
+and `--effort` override the inherited values; a provider switch drops the saved
+backend settings, and a provider or model change excludes earlier reasoning
+from requests, as with `--last`.
+
 Saved history includes completed responses and provider reasoning. Native
 DeepSeek reasoning is stored as plain text. Other Responses providers can replay
 their summary or encrypted reasoning. Provider overrides exclude previous
@@ -86,45 +99,39 @@ priority over `$HOME/.mai.config`, without merging. `--provider` overrides the
 configured default for a new task; resume uses its saved settings.
 
 ```sh
-mai "add useful tests for the parser" --f --persist
+mai "add useful tests for the parser" --persist
 mai "continue the task" --last
-mai "review this implementation" --max
-mai "quick review" --provider enclave --f
+mai "review this implementation" --effort max
+mai "quick review" --provider enclave --model cyberouter/glm-5.3-flash
 ```
 
-| CLI mode | API model | Effort |
-| --- | --- | --- |
-| Default | `deepseek-v4-pro` | `high` |
-| `--max` | `deepseek-v4-pro` | `max` |
-| `--f` | `deepseek-flash` | `high` |
-
-The table shows the built-in DeepSeek model mappings; configured providers map
-the stable `pro` and `flash` names to their own upstream IDs.
+The built-in DeepSeek provider uses `deepseek-v4-pro`; configured providers set
+their own `model` ID, sent upstream exactly as written. `--model`/`-m` overrides
+the model and `--effort` selects `l`, `h`, or `max` reasoning (default `h`).
 
 Responses stream through the existing text and function-tool flow. Mai replays
 the full local history, including provider reasoning between tool calls;
 Mai does not rely on server-side conversation state. Each request allows up to
 32,768 output tokens, including reasoning. Credentials stay in the environment.
 Saved tasks record the selected provider, protocol profile, endpoint, credential
-environment-variable name, both model mappings, model tier, and effort.
+environment-variable name, model, and effort.
 The profile determines effort translation and reasoning handling independently
 of the provider name.
 Older snapshots without a profile infer it from the saved provider name:
 `deepseek`, `openrouter`, or `responses` for other names.
 
-New tasks select Pro/high unless `--f` or `--max` is passed. Plain resume restores
-these settings and ignores current config files. `--f` and `--max` are rejected
-on resume.
-`--last --provider NAME` loads current config to switch providers, retaining the
-saved model tier and effort. The new provider settings are saved for later runs.
+New tasks use the provider's configured model unless `--model` overrides it.
+Plain resume restores the saved settings and ignores current config files.
+`--last --provider NAME` loads current config to switch providers and adopts
+the new provider's configured model, since a saved model ID is
+provider-specific; `--model` and `--effort` override the saved values on resume.
+The new provider settings are saved for later runs.
 Previous reasoning remains in original history but is excluded from requests to
 the new backend; visible messages, tool relationships, and context edits survive.
-API keys are read
-afresh from the saved environment-variable name. Older saved
-DeepSeek tasks with `ds-flash` / `ds-pro` aliases still load as `flash` / `pro`.
-Start a new task to switch model tier or reasoning effort. Legacy
-DeepSeek sessions without a settings snapshot use the built-in endpoint and
-mappings. Pro rejects image-bearing history.
+API keys are read afresh from the saved environment-variable name.
+DeepSeek sessions saved before backend settings were recorded use the
+built-in endpoint. Saved sessions from older state versions are rejected;
+start a new task to continue.
 
 Mai builds portable checkpoints automatically, at 80% of a default
 1,000,000-token budget. Set `MAI_CONTEXT_WINDOW` to a smaller input budget
@@ -132,12 +139,8 @@ between 32,768 and 1,000,000 if needed.
 `MAI_DEEPSEEK_URL` overrides the complete Responses URL for local testing.
 HTTPS is required except for loopback.
 
-Flash accepts inline image output from `view_image` and `read_skill`. On Pro,
-both tools send images to Flash for a task-relevant description and return only
-labeled text to Pro. Each image adds one Flash request at low reasoning effort,
-using the selected provider's Flash mapping, endpoint, and request timeout. Descriptions include source
-metadata and usage when available, and mark their interpretation as unverified.
-Description failures return text tool errors without adding images to Pro history.
+`view_image` and `read_skill` return typed image content that is replayed with
+the rest of the history, so the configured model must accept inline images.
 Responses image parts can reference existing Files API `file_id`
 values, but Mai does not upload or manage remote files. Portable checkpoints
 currently handle text histories: an older image-bearing message or tool output

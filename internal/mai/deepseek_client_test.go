@@ -22,7 +22,7 @@ func deepseekTestSession(t *testing.T) *session {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	sess := &session{Version: stateVersion, ID: id, CWD: dir, RepoRoot: dir, Model: "flash", Effort: "h"}
+	sess := &session{Version: stateVersion, ID: id, CWD: dir, RepoRoot: dir, Model: "deepseek-flash", Effort: "h"}
 	if err := appendUserPrompt(sess, "Use the tool, then answer."); err != nil {
 		t.Fatal(err)
 	}
@@ -109,8 +109,8 @@ func TestDeepSeekCheckpointAndProTools(t *testing.T) {
 		if string(body["model"]) != `"deepseek-v4-pro"` || !bytes.Contains(body["reasoning"], []byte(`"max"`)) {
 			t.Error("Pro model/effort lost")
 		}
-		if string(body["tool_choice"]) != `"none"` && (!bytes.Contains(body["tools"], []byte("view_image")) || !bytes.Contains(body["tools"], []byte("Flash request"))) {
-			t.Error("Pro did not advertise the Flash image fallback")
+		if string(body["tool_choice"]) != `"none"` && !bytes.Contains(body["tools"], []byte("view_image")) {
+			t.Error("image tool was not advertised")
 		}
 		if string(body["tool_choice"]) == `"none"` {
 			if _, exists := body["tools"]; exists {
@@ -123,14 +123,13 @@ func TestDeepSeekCheckpointAndProTools(t *testing.T) {
 	var output bytes.Buffer
 	c := &responsesClient{
 		profile:    profileDeepSeek,
-		models:     defaultProviderConfig().Models,
 		httpClient: server.Client(),
 		endpoint:   server.URL,
 		apiKey:     "test",
 		stdout:     &output,
 	}
 	sess := deepseekTestSession(t)
-	sess.Model, sess.Effort = "pro", "max"
+	sess.Model, sess.Effort = "deepseek-v4-pro", "max"
 	if _, err := c.stream(context.Background(), sess, "test"); err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +149,6 @@ func TestDeepSeekRejectsIncompleteResponsesAndOpaqueHistory(t *testing.T) {
 			defer server.Close()
 			c := &responsesClient{
 				profile:    profileDeepSeek,
-				models:     defaultProviderConfig().Models,
 				httpClient: server.Client(),
 				endpoint:   server.URL,
 				stdout:     io.Discard,
@@ -162,16 +160,13 @@ func TestDeepSeekRejectsIncompleteResponsesAndOpaqueHistory(t *testing.T) {
 		})
 	}
 	for _, raw := range []string{`{"type":"reasoning","encrypted_content":"opaque"}`, `{"type":"compaction","encrypted_content":"opaque"}`, `{"type":"reasoning","summary":[]}`, `{"type":"function_call_output","call_id":"missing","output":"x"}`} {
-		if err := validateResponsesHistory([]json.RawMessage{json.RawMessage(raw)}, "flash", profileDeepSeek); err == nil {
+		if err := validateResponsesHistory([]json.RawMessage{json.RawMessage(raw)}, profileDeepSeek); err == nil {
 			t.Fatalf("accepted %s", raw)
 		}
 	}
 	image := json.RawMessage(`{"role":"user","content":[{"type":"input_image","file_id":"file-api-example"}]}`)
-	if err := validateResponsesHistory([]json.RawMessage{image}, "pro", profileDeepSeek); err == nil {
-		t.Fatal("Pro accepted image")
-	}
-	if err := validateResponsesHistory([]json.RawMessage{image}, "flash", profileDeepSeek); err != nil {
-		t.Fatal(err)
+	if err := validateResponsesHistory([]json.RawMessage{image}, profileDeepSeek); err != nil {
+		t.Fatalf("image-bearing history rejected: %v", err)
 	}
 }
 
@@ -227,7 +222,6 @@ func TestDeepSeekFlashPreservesToolImagesAndRejectsLossyCompaction(t *testing.T)
 	defer server.Close()
 	c := &responsesClient{
 		profile:    profileDeepSeek,
-		models:     defaultProviderConfig().Models,
 		httpClient: server.Client(),
 		endpoint:   server.URL,
 		stdout:     io.Discard,
@@ -243,7 +237,7 @@ func TestDeepSeekFlashPreservesToolImagesAndRejectsLossyCompaction(t *testing.T)
 		t.Fatal(err)
 	}
 	backend := &checkpointStub{reply: "summary"}
-	if _, _, err := portableHistory(context.Background(), sess, backend); err == nil {
+	if _, _, _, err := portableHistory(context.Background(), sess, backend); err == nil {
 		t.Fatal("image silently discarded by checkpoint")
 	}
 	after, err := json.Marshal(sess)
@@ -262,7 +256,6 @@ func TestDeepSeekRejectsMalformedCompletedToolItems(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { deepseekTestResponse(w, items) }))
 		c := &responsesClient{
 			profile:    profileDeepSeek,
-			models:     defaultProviderConfig().Models,
 			httpClient: server.Client(),
 			endpoint:   server.URL,
 			stdout:     io.Discard,
@@ -303,7 +296,6 @@ func TestDeepSeekChecksToolCallIDAgainstHistoryBeforeEffects(t *testing.T) {
 			a := &agent{
 				backend: &responsesClient{
 					profile:    profileDeepSeek,
-					models:     defaultProviderConfig().Models,
 					httpClient: server.Client(),
 					endpoint:   server.URL,
 					stdout:     io.Discard,
@@ -333,7 +325,7 @@ func TestDeepSeekChecksToolCallIDAgainstHistoryBeforeEffects(t *testing.T) {
 				}
 			}
 
-			if err := validateResponsesHistory(sess.History, sess.Model, profileDeepSeek); err != nil {
+			if err := validateResponsesHistory(sess.History, profileDeepSeek); err != nil {
 				t.Fatalf("left invalid history: %v", err)
 			}
 		})
@@ -356,7 +348,6 @@ func TestDeepSeekRejectsNamelessHistoryBeforeRequest(t *testing.T) {
 	before := mustJSON(t, sess)
 	client := &responsesClient{
 		profile:    profileDeepSeek,
-		models:     defaultProviderConfig().Models,
 		httpClient: server.Client(),
 		endpoint:   server.URL,
 		stdout:     io.Discard,

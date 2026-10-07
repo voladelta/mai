@@ -14,7 +14,7 @@ import (
 	"syscall"
 )
 
-const stateVersion = 2
+const stateVersion = 3
 
 type taskConfig struct {
 	Provider string
@@ -25,13 +25,14 @@ type taskConfig struct {
 type sessionBackend struct {
 	Endpoint  string          `json:"endpoint"`
 	APIKeyEnv string          `json:"api_key_env"`
-	Models    modelMappings   `json:"models"`
 	Profile   protocolProfile `json:"profile,omitempty"`
 }
 
 type session struct {
 	Version          int               `json:"version"`
 	ID               string            `json:"id"`
+	ParentID         string            `json:"parent_id,omitempty"`
+	ForkedAtTurn     int               `json:"forked_at_turn,omitempty"`
 	CWD              string            `json:"cwd"`
 	RepoRoot         string            `json:"repo_root"`
 	Provider         string            `json:"provider,omitempty"`
@@ -221,16 +222,8 @@ func checkSavedTranscript(path string, end int64) error {
 }
 
 func normalizeSessionSettings(out *session) error {
-	// Existing version-2 tasks used DeepSeek-specific aliases and no provider.
 	if out.Provider == "" {
 		out.Provider = defaultProvider
-	}
-
-	switch out.Model {
-	case "ds-flash":
-		out.Model = "flash"
-	case "ds-pro":
-		out.Model = "pro"
 	}
 
 	if !validProviderName(out.Provider) {
@@ -238,7 +231,7 @@ func normalizeSessionSettings(out *session) error {
 	}
 
 	if out.Backend != nil {
-		if err := validateProviderSettings(out.Backend.Endpoint, out.Backend.APIKeyEnv, out.Backend.Models); err != nil {
+		if err := validateProviderSettings(out.Backend.Endpoint, out.Backend.APIKeyEnv); err != nil {
 			return fmt.Errorf("saved session has invalid provider settings: %w", err)
 		}
 
@@ -252,7 +245,7 @@ func normalizeSessionSettings(out *session) error {
 		return errors.New("saved session is missing provider settings; start a new task")
 	}
 
-	if !supportedModel(out.Model) {
+	if !validModelID(out.Model) {
 		return fmt.Errorf("saved session has invalid model %q", out.Model)
 	}
 
@@ -447,8 +440,6 @@ func estimateHistoryItemTokens(item json.RawMessage) int64 {
 
 func interruptedToolInstruction(name string) string {
 	switch name {
-	case "sidekick":
-		return "The sidekick conversation has expired and its effects are unknown. Inspect files and command effects before assigning replacement work; do not automatically replay the assignment."
 	case "apply_patch":
 		return "Read the target files and reconcile the requested patch with their current contents. apply_patch is retired; use write/edit for any remaining changes. Do not automatically replay the old call."
 	case "write", "edit":

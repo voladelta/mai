@@ -34,10 +34,9 @@ change the code, then save the conversation when you need to return to it.
 | Capability | What it gives you | Try it |
 | --- | --- | --- |
 | Repository work | Bash, guarded file reads/writes/edits, and local image inspection. | `mai "fix the empty-input crash and run tests"` |
-| Saved tasks | Resume the original directory, provider settings, model mode, and conversation. | `mai "continue the fix" --last` |
-| Model selection | Pro/high by default, Pro/max or Flash/high when selected. | `mai "review this refactor" --max` |
-| Provider selection | Keep `pro` and `flash` names while switching endpoints and credentials. | `mai "quick review" --provider enclave --f` |
-| Pro sidekick | One Flash/high worker with its own conversation for bounded assignments. | [Sidekick behavior](docs/tools.md#pro-sidekick) |
+| Saved tasks | Resume the original directory, provider settings, model, and conversation. | `mai "continue the fix" --last` |
+| Model selection | The provider's configured model at high effort by default; override either for one run. | `mai "review this refactor" --effort max` |
+| Provider selection | Route the task to a different endpoint and credential. | `mai "quick review" --provider enclave --model cyberouter/glm-5.3-flash` |
 | Searchable history | Recall original visible text after context editing and compaction. | [Python history search](docs/tools.md#persistent-python) |
 | Repository skills | Load project instructions before global skills, with explicit skill selection. | `mai 'Use $my-skill to review this package'` |
 | Script output | Stream task, model, and tool events as JSON Lines. | `mai "review this package" --jsonl --no-input > run.jsonl` |
@@ -134,31 +133,25 @@ installed or built binary to work in another project.
 ## Models and commands
 
 ```sh
-mai "add useful tests for the parser"              # Pro/high
-mai "review the implementation carefully" --max   # Pro/max
-mai "explain this package" --f                    # Flash/high
-mai "continue the saved task" --last             # Resume the saved mode
-mai "quick review" --provider enclave --f         # Enclave Flash/high
+mai "add useful tests for the parser"                                # Configured model/high
+mai "review the implementation carefully" --effort max              # Configured model/max
+mai "quick review" --provider enclave --model cyberouter/glm-5.3-flash  # One-off model override
+mai "continue the saved task" --last                                # Resume the saved settings
 ```
 
-| Selection | API model | Reasoning effort | Sidekick |
-| --- | --- | --- | --- |
-| Default | `deepseek-v4-pro` | High | Flash/high |
-| `--max` | `deepseek-v4-pro` | Max | Flash/high |
-| `--f` | `deepseek-flash` | High | None |
+Each configured provider sets one `model`, which Mai sends upstream exactly as
+written. `--model` (or `-m`) overrides it for the current run only;
+`--effort` selects `l`, `h`, or `max` reasoning (default `h`). The provider
+comes from `--provider`, the selected config's `default_provider`, or the
+built-in DeepSeek default.
 
-The table shows the built-in DeepSeek mappings. Each configured provider maps
-`pro` and `flash` to its own upstream model IDs. New tasks use Pro/high unless
-you pass `--f` or `--max`. The provider comes from
-`--provider`, the selected config's `default_provider`, or the built-in DeepSeek
-default. `--f` and `--max` conflict; `--model`, `-m`, and `--effort` are unsupported.
-
-`--last` keeps the saved provider, endpoint, model mappings, model tier, and
-reasoning effort. Plain `--last` ignores current `.mai.config` files; `--f` and
-`--max` are rejected. `--last --provider NAME` loads the selected config to switch
-providers while preserving the saved model tier and effort. Credentials are
-read afresh from the saved environment-variable name, so API key rotation does
-not require a new task.
+`--last` keeps the saved provider, endpoint, model, and reasoning effort.
+Plain `--last` ignores current `.mai.config` files. `--last --provider NAME`
+loads the selected config and adopts that provider's configured model, since a
+saved model ID is provider-specific; `--last --model NAME` and
+`--last --effort VALUE` override the saved values. Credentials are read afresh
+from the saved environment-variable name, so API key rotation does not require
+a new task.
 
 The default run limit is 64 model turns. Increase it or use `-1` for unlimited
 turns until completion, error, or interruption:
@@ -185,13 +178,15 @@ Copy [the complete example](.mai.config.example) to either location:
 cp .mai.config.example "$HOME/.mai.config"
 export OPENROUTER_API_KEY='your-openrouter-key'
 export ENCLAVE_API_KEY='your-enclave-key'
-mai "quick review" --provider openrouter --f
-mai "quick review" --provider enclave --f
+mai "quick review" --provider openrouter
+mai "quick review" --provider enclave --model cyberouter/glm-5.3-flash
 ```
 
 The config contains `default_provider` (defaults to `deepseek` when omitted)
 and a `providers` object. Each provider defines `base_url`, `api_key_env`, and
-both `models.pro` and `models.flash`. Model IDs are sent exactly as written.
+one `model`. Model IDs are sent exactly as written; `--model` or `-m` selects a
+different ID on the same provider, so one `enclave` entry can serve both
+`cyberouter/deepseek-v4.1-flash` and `cyberouter/glm-5.3-flash`.
 
 Set `profile` to `deepseek` for native DeepSeek, `openrouter` for OpenRouter,
 or `responses` for other Responses providers. The profile controls maximum-effort
@@ -206,8 +201,7 @@ fields, missing mappings, unknown providers, and missing selected credentials
 produce errors. Config files must be regular files no larger than 1 MiB.
 
 Change only `default_provider` to switch your usual backend. `--provider NAME`
-overrides it for one run. Sidekicks, image descriptions, and checkpoints use the
-selected provider and its mappings. `.mai.config` is ignored in this checkout.
+overrides it for one run. Checkpoints use the selected provider and its model. `.mai.config` is ignored in this checkout.
 
 | Variable | Purpose | Default |
 | --- | --- | --- |
@@ -216,6 +210,8 @@ selected provider and its mappings. `.mai.config` is ignored in this checkout.
 | `ENCLAVE_API_KEY` | Credential named by the example's Enclave provider. | Unset |
 | `MAI_DEEPSEEK_URL` | Override the complete Responses endpoint for the `deepseek` provider only; HTTPS required except for loopback. | `https://api.deepseek.com/responses` |
 | `MAI_CONTEXT_WINDOW` | Input context budget, from 32,768 to 1,000,000 tokens. | `1000000` |
+| `MAI_DEPTH` | Nesting depth of this run; Mai sets it for the subprocesses it launches. | `0` |
+| `MAI_MAX_DEPTH` | Maximum permitted `MAI_DEPTH`; deeper nested runs refuse to start. | `2` |
 | `MAI_PYTHON` | Executable for the optional persistent Python tool. | `python3` |
 
 For example, lower the context budget and give each Python cell five minutes:
@@ -249,7 +245,7 @@ Go agent loop <----> Selected provider's Responses API (streaming)
          |
          +--> Bash / file reads and edits / skills / images / context editing
          +--> Optional persistent Python --> Go tool bridge
-         +--> Pro sidekick --> Flash/high agent (synchronous)
+         +--> Nested `mai` subprocesses via Bash (depth-limited)
          |
          +--> Terminal text or JSONL events
          +--> With --persist / --last: .mai/ session + history archive
@@ -273,13 +269,12 @@ boundaries, and Mai asks for approval for recognizable `rm` commands with
 external or unresolved targets. That check covers `rm` only; other commands
 can overwrite or delete data. `--no-input` rejects approval requests.
 
-- Pro cannot accept image-bearing history. Its image tools ask Flash for a
-  labeled description; Flash can receive inline images directly.
+- The configured model must accept inline images for image tools to help;
+  there is no runtime capability check.
 - Portable compaction currently handles text histories. Older image-bearing
   records may require a new task or text-only history.
-- Python variables and sidekick conversations last for one run.
-  `--last` restores conversation history, not those runtime environments.
-- Sidekick execution is synchronous, with one worker and 32 total model turns.
+- Python variables last for one run.
+  `--last` restores conversation history, not that runtime environment.
 - There is no mid-turn steering or automatic retry of failed work.
 - Saved tasks must use the supported state format; incompatible older files
   require a new task.
@@ -300,7 +295,7 @@ See [Tools and skills](docs/tools.md#safety) for execution boundaries and
 | `session ... is already running` | Wait for the process using that task to exit, or start a separate task. |
 | `agent stopped after 64 model turns` | Resume a persisted task with a larger `--max-turns` value or `-1`. |
 | `Python is unavailable` | Install Python 3.9+ on `PATH`, or set `MAI_PYTHON`. |
-| `Pro does not support image-bearing history` | Start a new Flash task with `--f`, or use a text-only Pro history. |
+| `input_image` errors from a provider | Switch to a model that accepts inline images, or keep the history text-only. |
 | `Responses request failed (network or timeout)` | Check connectivity and the selected provider's endpoint; raise `--timeout` if needed. |
 
 An interrupted tool call has an unknown outcome on resume. Inspect its file
@@ -319,9 +314,10 @@ Git. Keep the session JSON and transcript archive together when backing up a tas
 
 ### Can I switch models when resuming?
 
-`--last` keeps the saved model and reasoning effort. Start a new task with `--f`
-or `--max` to select another mode. `--last --provider NAME` can switch providers
-if the previous one runs out of credits, while keeping the same model tier.
+`--last` keeps the saved model and reasoning effort; `--model` and `--effort`
+override either for the resumed run. `--last --provider NAME` can switch
+providers if the previous one runs out of credits; it adopts the new provider's
+configured model.
 
 ### Do I need Python?
 
@@ -332,11 +328,6 @@ work through Go. Mai does not install Python packages.
 
 They survive compaction within a run. Exiting Mai, including before `--last`,
 ends the Python environment.
-
-### Does the sidekick run in parallel?
-
-No. Pro waits for its Flash/high worker, then integrates the result. The worker
-has a separate conversation and Python namespace.
 
 ### Can I use Mai in scripts?
 
@@ -354,7 +345,7 @@ go vet ./...
 ```
 
 The [eval guide](evals/README.md) covers graded coding tasks, paid Responses and
-sidekick probes, and context-continuity checks. Live probes require explicit
+provider probes, and context-continuity checks. Live probes require explicit
 environment switches and make paid API requests.
 
 ## License

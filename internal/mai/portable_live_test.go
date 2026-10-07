@@ -40,7 +40,7 @@ func TestLiveDeepSeekCoding(t *testing.T) {
 	}
 	var trials []portableProviderTrial
 	for _, mode := range []string{"full", "portable"} {
-		trial := runPortableProviderCoding(t, "flash", mode, seed)
+		trial := runPortableProviderCoding(t, mode, seed)
 		trials = append(trials, trial)
 		if path := os.Getenv("MAI_CONTEXT_RESEARCH_REPORT"); path != "" {
 			data, err := json.MarshalIndent(trials, "", "  ")
@@ -58,10 +58,9 @@ func TestLiveDeepSeekCoding(t *testing.T) {
 	}
 }
 
-func runPortableProviderCoding(t *testing.T, model, mode, seed string) (trial portableProviderTrial) {
+func runPortableProviderCoding(t *testing.T, mode, seed string) (trial portableProviderTrial) {
 	t.Helper()
 	started := time.Now()
-	trial.Model = model
 	trial.Mode, trial.Seed = mode, seed
 	trial.Reasoning = "high"
 	defer func() { trial.WallMS = time.Since(started).Milliseconds() }()
@@ -73,9 +72,10 @@ func runPortableProviderCoding(t *testing.T, model, mode, seed string) (trial po
 		}
 	}
 	id, _ := newSessionID()
-	sess := &session{Version: stateVersion, ID: id, CWD: dir, RepoRoot: dir, Model: defaultModel, Effort: "h"}
-	sess.Model = model
+	sess := &session{Version: stateVersion, ID: id, CWD: dir, RepoRoot: dir, Effort: "h"}
 	provider := liveToolProvider(t, sess)
+	sess.Model = provider.Model
+	trial.Model = provider.Model
 	_ = appendUserPrompt(sess, "Use verified facts in saved build-log evidence to implement the requested configuration. The log is stored in task history, not project files.")
 	facts := "Verified release: REL-" + seed[:8] + ". Current audit: AUD-" + seed[9:13] + ". Retired audit: OLD-" + seed[14:18] + ". Initial batch: 64. Deploy interrupted before saved result; outcome UNKNOWN.\n"
 	// Non-repeating records exercise bounded chunk folding instead of letting

@@ -84,7 +84,7 @@ func TestContextEditEvalRejectsClaimsWithoutEvidence(t *testing.T) {
 			defer server.Close()
 			t.Setenv("MAI_DEEPSEEK_URL", server.URL)
 
-			trial := runContextEditTrial(t, "flash", seed)
+			trial := runContextEditTrial(t, seed)
 			if !strings.Contains(trial.Error, test.wantError) || trial.Correct != test.wantCorrect || trial.HistoryRetrieved {
 				t.Fatalf("unearned grade: %#v", trial)
 			}

@@ -30,7 +30,7 @@ func contextEditFixture(t *testing.T) *session {
 	})
 	sess := &session{
 		Version: stateVersion, ID: "01234567-89ab-cdef-0123-456789abcdef",
-		CWD: dir, RepoRoot: dir, Model: "flash", Effort: "h",
+		CWD: dir, RepoRoot: dir, Model: "deepseek-flash", Effort: "h",
 		History: []json.RawMessage{
 			json.RawMessage(`{"role":"user","content":"Preserve user requirements"}`),
 			json.RawMessage(`{"type":"reasoning","content":[{"type":"reasoning_text","text":"private reasoning"}]}`),
@@ -71,7 +71,6 @@ func TestContextHintsPreserveRequestPrefixAndAllowDirectShrink(t *testing.T) {
 	defer server.Close()
 	client := &responsesClient{
 		profile:    profileDeepSeek,
-		models:     defaultProviderConfig().Models,
 		httpClient: server.Client(),
 		stdout:     io.Discard,
 		endpoint:   server.URL,
@@ -465,7 +464,6 @@ func TestAgentExecutesContextEditWithoutReplayingBash(t *testing.T) {
 	a := newAgent(io.Discard, io.Discard, filepath.Join(sess.CWD, "session.json"), time.Second, false)
 	a.backend = &responsesClient{
 		profile:    profileDeepSeek,
-		models:     defaultProviderConfig().Models,
 		httpClient: server.Client(),
 		stdout:     io.Discard,
 		endpoint:   server.URL,

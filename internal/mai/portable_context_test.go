@@ -47,7 +47,8 @@ func TestPortableCheckpointArchivesOriginalAndRetainsActiveTurn(t *testing.T) {
 	if err := a.compactIfNeeded(context.Background(), sess, "instructions"); err != nil {
 		t.Fatal(err)
 	}
-	if len(backend.sources) != 1 || !bytes.Equal(last, sess.History[len(sess.History)-1]) || len(sess.ContextEdits) != 0 {
+	// The last item is the compaction notice; the active turn precedes it.
+	if len(backend.sources) != 1 || !bytes.Equal(last, sess.History[len(sess.History)-2]) || len(sess.ContextEdits) != 0 {
 		t.Fatal("active turn changed or summary not applied")
 	}
 	for _, item := range sess.History {
@@ -140,7 +141,7 @@ func TestPortableCheckpointPreservesToolOutputFormatting(t *testing.T) {
 			})
 			backend := &checkpointStub{reply: "checkpoint"}
 
-			_, _, err := portableHistory(context.Background(), sess, backend)
+			_, _, _, err := portableHistory(context.Background(), sess, backend)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -212,7 +213,7 @@ func TestPortableCheckpointCompactsLargeTextHistory(t *testing.T) {
 	if len(backend.sources) < 2 || sess.ContextTokens >= modelContextWindow*80/100 {
 		t.Fatal("large text history was not folded and compacted")
 	}
-	if !bytes.Equal(activeTurn, sess.History[len(sess.History)-1]) {
+	if !bytes.Equal(activeTurn, sess.History[len(sess.History)-2]) {
 		t.Fatal("compaction changed the active turn")
 	}
 	var folded strings.Builder
@@ -255,7 +256,7 @@ func TestPortableCheckpointRefusesPendingCallsAndOpaqueState(t *testing.T) {
 		sess.History = append(sess.History[:len(sess.History)-1], item)
 		_ = appendUserPrompt(sess, "next")
 		backend := &checkpointStub{reply: "summary"}
-		if _, _, err := portableHistory(context.Background(), sess, backend); err == nil || len(backend.sources) != 0 {
+		if _, _, _, err := portableHistory(context.Background(), sess, backend); err == nil || len(backend.sources) != 0 {
 			t.Fatal("unsafe prefix reached generation")
 		}
 	}
@@ -266,7 +267,7 @@ func TestPortableChunksPreserveMultibyteText(t *testing.T) {
 	_ = appendUserPrompt(sess, "a"+strings.Repeat("界", 40000))
 	_ = appendUserPrompt(sess, "active")
 	backend := &checkpointStub{reply: "checkpoint retained"}
-	if _, _, err := portableHistory(context.Background(), sess, backend); err != nil {
+	if _, _, _, err := portableHistory(context.Background(), sess, backend); err != nil {
 		t.Fatal(err)
 	}
 	if len(backend.sources) < 2 {
@@ -276,5 +277,90 @@ func TestPortableChunksPreserveMultibyteText(t *testing.T) {
 		if !utf8.ValidString(source) {
 			t.Fatal("chunk split a UTF-8 character")
 		}
+	}
+}
+
+func TestCompactionReportNotifiesModelAndStaysOutOfTranscript(t *testing.T) {
+	dir := t.TempDir()
+	sess := portableFixture(t)
+	var events bytes.Buffer
+	a := newAgent(io.Discard, io.Discard, filepath.Join(dir, "session.json"), time.Second, false)
+	a.events = &events
+	a.backend = &checkpointStub{reply: "Goal: batch 128. Retrieve the original with call ID logs."}
+	if err := a.compactIfNeeded(context.Background(), sess, "instructions"); err != nil {
+		t.Fatal(err)
+	}
+	notice := sess.History[len(sess.History)-1]
+	var item struct {
+		Role    string `json:"role"`
+		Content []struct {
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(notice, &item); err != nil || item.Role != "developer" || len(item.Content) == 0 {
+		t.Fatalf("last history item is not the developer notice: %s", notice)
+	}
+	text := item.Content[0].Text
+	for _, want := range []string{"replaced 4 earlier records", "bash=1", "logs", "mai.history", "Verify exact facts"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("compaction notice missing %q:\n%s", want, text)
+		}
+	}
+	if len(text) >= 4<<10 {
+		t.Fatalf("notice exceeds 4 KiB: %d", len(text))
+	}
+	if sess.TranscriptSkip != len(sess.History) {
+		t.Fatalf("TranscriptSkip = %d, want %d", sess.TranscriptSkip, len(sess.History))
+	}
+	var sawEvent bool
+	for _, line := range strings.Split(strings.TrimSpace(events.String()), "\n") {
+		var event struct {
+			Type    string           `json:"type"`
+			Changes []map[string]any `json:"changes"`
+		}
+		if err := json.Unmarshal([]byte(line), &event); err != nil || event.Type != "compaction.completed" {
+			continue
+		}
+		sawEvent = true
+		change := event.Changes[0]
+		if len(event.Changes) != 1 || change["kind"] != "compacted" ||
+			change["source"] != "conversation history" || change["reason"] != "context budget reached" ||
+			change["records"] != float64(4) {
+			t.Fatalf("unexpected changes field: %v", event.Changes)
+		}
+		calls, _ := change["tool_calls"].(map[string]any)
+		if calls["bash"] != float64(1) {
+			t.Fatalf("tool call counts missing: %v", change)
+		}
+		ids, _ := change["call_ids"].([]any)
+		if len(ids) != 1 || ids[0] != "logs" {
+			t.Fatalf("call IDs missing: %v", change)
+		}
+	}
+	if !sawEvent {
+		t.Fatal("compaction.completed event missing")
+	}
+	transcript, err := os.ReadFile(transcriptPath(a.sessionPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(transcript, []byte("Context checkpoint replaced")) {
+		t.Fatal("compaction notice reached the transcript archive")
+	}
+	// A second compaction must not duplicate the notice.
+	_ = appendUserPrompt(sess, "Follow-up after first compaction.")
+	sess.ContextTokens = modelContextWindow
+	a.backend = &checkpointStub{reply: "Second checkpoint."}
+	if err := a.compactIfNeeded(context.Background(), sess, "instructions"); err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, raw := range sess.History {
+		if isCompactionNotice(raw) {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("compaction notice duplicated: %d", count)
 	}
 }

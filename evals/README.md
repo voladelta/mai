@@ -21,14 +21,15 @@ With `DEEPSEEK_API_KEY` populated and `jq` installed, run from the repository ro
 ```sh
 ./evals/run.sh
 ./evals/run.sh startup-timeout
-MAI_EVAL_MODE=flash ./evals/run.sh
+MAI_EVAL_MODEL=cyberouter/glm-5.3-flash MAI_EVAL_PROVIDER=enclave ./evals/run.sh
 ```
 
 The runner builds Mai once, creates fresh Git projects and uses
-`--jsonl --no-input --skip-skills`. It defaults to Pro/high, matching Mai's
-default, with its Flash/high sidekick available. Skills are disabled so local
+`--jsonl --no-input --skip-skills`. It uses the provider's configured model at
+high effort, matching Mai's default. Skills are disabled so local
 and global skill catalogs do not change the tasks. `MAI_EVAL_BIN` selects an
-existing binary; `MAI_EVAL_MODE` selects `pro`, `flash`, or `max`.
+existing binary; `MAI_EVAL_MODEL` overrides the provider's configured model and
+`MAI_EVAL_EFFORT` selects `l`, `h`, or `max`.
 `MAI_EVAL_PROVIDER` selects a configured provider (default: `deepseek`). Eval
 workspaces are fresh directories, so put shared provider settings in
 `$HOME/.mai.config`, or set `MAI_EVAL_CONFIG` to an absolute config path to copy
@@ -36,42 +37,42 @@ into each workspace. These runs make
 paid API requests. The printed result directory contains events, stderr, final
 workspace, diff and grader output, including failures.
 
-Model request counts include completed and failed requests, including sidekick
-worker requests. Tool counts and wall time accompany each grade. Nonzero tool
+Model request counts include completed and failed requests. Tool counts and
+wall time accompany each grade. Nonzero tool
 results are decoded from each JSONL tool output's top-level `ok` field and
-include intentional regression failures. Sidekick worker events count too;
+include intentional regression failures.
 Python host calls are represented by the outer Python tool event. These cases
 are a functional smoke suite, not a statistical performance benchmark. Review
 the diffs too.
 Do not treat `model.completed.total_tokens` as billable usage; sum available
 input/output/cache fields and checkpoint usage when measuring API work.
 
-## Router Flash conformance
+## Router tool conformance
 
-For the enabled Flash tools, combine the tool integration probe with the
+For the enabled tools, combine the tool integration probe with the
 context-edit and original-history recall probe. The first requires actual
 file and image reads, two persistent Python cells, a Python-to-Bash bridge,
 direct file writes/edits/reads, and verification of the resulting file. Both are paid probes:
 
 ```sh
-MAI_LIVE_DEEPSEEK_FLASH_TOOLS=1 go test -v ./internal/mai -run '^TestLiveDeepSeekFlashTools$' -count=1 -timeout=6m
-MAI_LIVE_DEEPSEEK_CONTEXT_EDIT=1 go test -v ./internal/mai -run '^TestLiveDeepSeekContextEdit/flash$' -count=1 -timeout=10m
+MAI_LIVE_DEEPSEEK_TOOLS=1 go test -v ./internal/mai -run '^TestLiveDeepSeekTools$' -count=1 -timeout=6m
+MAI_LIVE_DEEPSEEK_CONTEXT_EDIT=1 go test -v ./internal/mai -run '^TestLiveDeepSeekContextEdit$' -count=1 -timeout=10m
 ```
 
-To run these probes against a configured Flash provider, set
+To run these probes against a configured provider, set
 `MAI_LIVE_PROVIDER=enclave` and `MAI_LIVE_CONFIG=/absolute/path/.mai.config`
 on each command. This uses the specified config rather than the built-in
-DeepSeek endpoint. Flash has no sidekick tool. Passing these prompted smoke
+DeepSeek endpoint. Passing these prompted smoke
 checks establishes integration, not reliable autonomous tool selection across
 arbitrary tasks; use the graded coding suite to check task completion too.
 
-The opt-in provider probe runs the CLI with `--provider` and `--f`, executes one
+The opt-in provider probe runs the CLI with `--provider`, executes one
 Bash marker command, and checks the follow-up answer. It uses the tracked example
 config in a temporary directory and makes paid API requests:
 
 ```sh
-MAI_LIVE_PROVIDER=openrouter go test -v ./internal/mai -run '^TestLiveProviderFlash$' -count=1 -timeout=5m
-MAI_LIVE_PROVIDER=enclave go test -v ./internal/mai -run '^TestLiveProviderFlash$' -count=1 -timeout=5m
+MAI_LIVE_PROVIDER=openrouter go test -v ./internal/mai -run '^TestLiveProviderConformance$' -count=1 -timeout=5m
+MAI_LIVE_PROVIDER=enclave go test -v ./internal/mai -run '^TestLiveProviderConformance$' -count=1 -timeout=5m
 ```
 
 Export `OPENROUTER_API_KEY` or `ENCLAVE_API_KEY` for the selected probe. Ordinary
@@ -80,10 +81,10 @@ Export `OPENROUTER_API_KEY` or `ENCLAVE_API_KEY` for the selected probe. Ordinar
 ## Responses conformance
 
 ```sh
-MAI_LIVE_DEEPSEEK_RESPONSES=1 go test -v ./internal/mai -run '^TestLiveDeepSeek(Responses|Sidekick)$' -count=1 -timeout=20m
+MAI_LIVE_DEEPSEEK_RESPONSES=1 go test -v ./internal/mai -run '^TestLiveDeepSeekResponses$' -count=1 -timeout=20m
 ```
 
-This paid probe runs Flash and Pro at low, high and max effort. Each trial runs
+This paid probe runs the configured model at low, high and max effort. Each trial runs
 one harmless Bash printf, saves and reloads between responses, and produces a
 tool-free checkpoint retaining an exact audit code and UNKNOWN outcome.
 Reasoning items are replayed when returned; simple requests can omit them.
@@ -91,9 +92,6 @@ This tests protocol conformance, not coding performance. Deterministic tests
 cover incomplete streams, malformed tools, credential isolation, timeouts,
 model/effort selection, original-history recall and image preservation.
 
-The sidekick probe checks Pro/high and Pro/max directing a Flash/high worker
-through two assignments, with Bash execution and recall from its separate
-conversation.
 
 ## Coding and context continuity
 
@@ -101,7 +99,7 @@ conversation.
 MAI_LIVE_DEEPSEEK_CODING=1 MAI_CONTEXT_RESEARCH_REPORT=/absolute/existing/directory/deepseek-coding.json go test -v ./internal/mai -run '^TestLiveDeepSeekCoding$' -count=1 -timeout=20m
 ```
 
-This paid Flash/high coding probe uses a three-stage Go task with unique
+This paid coding probe uses a three-stage Go task with unique
 diagnostic records, buried identifiers, a corrected batch value, UNKNOWN
 deployment outcome and hidden checks. Sessions reload between stages. Two
 arms use identical facts: full history and two forced checkpoints under a
@@ -115,7 +113,7 @@ not a performance ranking.
 MAI_LIVE_DEEPSEEK_CONTEXT_EDIT=1 MAI_CONTEXT_EDIT_REPORT=/absolute/existing/directory/context-edit.json go test -v ./internal/mai -run '^TestLiveDeepSeekContextEdit$' -count=1 -timeout=20m
 ```
 
-This paid probe runs Flash/high and Pro/high. Each trial reads a real temporary
+This paid probe runs the configured model at high effort. Each trial reads a real temporary
 Bash build log, then removes the source file and captures. The model must
 inspect and shrink that output, retaining the current release and UNKNOWN
 deployment outcome while omitting a random retired audit code. An HTTP
@@ -137,20 +135,18 @@ and correct answers without original-history retrieval evidence.
 
 ```sh
 ./evals/patch-rate.sh
-MAI_EVAL_MODE=flash ./evals/patch-rate.sh
+MAI_EVAL_EFFORT=l ./evals/patch-rate.sh
 ./evals/timing.sh /absolute/path/events.jsonl
 ```
 
-The edit probe (`patch-rate.sh`, retaining its historical name) defaults to Pro/high
+The edit probe (`patch-rate.sh`, retaining its historical name) uses the configured model at high effort
 and checks twelve repeated-context edits through the file tools.
 Both coding runners require `jq` and exit nonzero when any case fails.
 The edit probe requires actual `read`, `write`, and `edit` calls and reports
 grades and tool failures; the grader catches edits to
 the wrong similar line. The timing helper requires `jq` and reports task,
 model, tool and remaining duration in milliseconds. Cache usage is available
-in the JSONL events, rather than in the timing table. Worker model and tool events count
-individually; the enclosing sidekick duration is excluded to avoid counting
-that work twice. Tool execution within a Python cell counts toward that outer
+in the JSONL events, rather than in the timing table. Tool execution within a Python cell counts toward that outer
 Python tool duration. Small samples and service/cache
 variation do not establish general speed, price or quality advantages.
 
@@ -174,5 +170,5 @@ Image results can include exact `solid_color` hex metadata for small, fully
 opaque uniform images. The tool probe checks this bounded color contract;
 passing it does not establish reliable interpretation of arbitrary screenshots.
 
-The Flash Responses and coding-continuity probes also accept
+The Responses and coding-continuity probes also accept
 `MAI_LIVE_PROVIDER` and `MAI_LIVE_CONFIG` for configured providers.

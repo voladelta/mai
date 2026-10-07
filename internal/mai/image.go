@@ -2,9 +2,7 @@ package mai
 
 import (
 	"bytes"
-	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
@@ -14,37 +12,12 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
-	"time"
 )
 
 const (
 	maxImageBytes     = 8 << 20
 	maxImageDimension = 8192
 )
-
-func (a *agent) describeImageOutput(ctx context.Context, sess *session, metadata, imageURL string) json.RawMessage {
-	client, ok := a.backend.(*responsesClient)
-	if !ok {
-		return textToolOutput(toolError("image description failed", errors.New("Flash backend is unavailable")))
-	}
-	fmt.Fprintln(a.stderr, "→ Flash image description")
-	started := time.Now()
-	description, usage, err := client.describeImage(ctx, sess, imageURL)
-	if err != nil {
-		return textToolOutput(toolError("Flash image description failed", err))
-	}
-
-	var result map[string]any
-	_ = json.Unmarshal([]byte(metadata), &result)
-	result["description"] = description
-	result["description_model"] = "flash"
-	result["description_note"] = "Flash-generated image description; a lossy interpretation, not verified facts. Uncertain details require verification."
-	result["description_duration_ms"] = time.Since(started).Milliseconds()
-	if usage != nil {
-		result["description_usage"] = usage
-	}
-	return textToolOutput(marshalToolResult(result))
-}
 
 type imageFileResult struct {
 	OK         bool   `json:"ok"`

@@ -76,6 +76,9 @@ func writeTestDeepSeekConfig(t *testing.T) {
 	t.Helper()
 	t.Setenv("DEEPSEEK_API_KEY", "test-key")
 	t.Setenv("MAI_CONTEXT_WINDOW", "")
+	// Keep the developer's real ~/.mai.config out of tests: an empty HOME
+	// makes loadProviderConfig fall back to the built-in DeepSeek default.
+	t.Setenv("HOME", t.TempDir())
 }
 
 func writeTestDeepSeekFailureServer(t *testing.T) {

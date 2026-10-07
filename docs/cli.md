@@ -15,7 +15,7 @@ Options may appear before or after the prompt. Options with values also accept
 `--option=value`. Use `--` to end parsing when the prompt starts with `-`:
 
 ```sh
-mai --f -- "--no-input: explain this flag"
+mai --no-input -- "--no-input: explain this flag"
 mai "investigate this failure" --timeout=20m
 ```
 
@@ -27,9 +27,11 @@ mai "investigate this failure" --timeout=20m
 | `--version` | Print the Mai version. | `mai --version` |
 | `--persist` | Save a new task in the current project. | `mai "fix the parser" --persist` |
 | `--last` | Resume the current saved task. | `mai "review the fix" --last` |
-| `--f` | Select Flash/high without a sidekick. | `mai "explain this package" --f` |
-| `--max` | Select Pro/max; sidekick remains Flash/high. | `mai "review this refactor" --max` |
-| `--provider NAME` | Override `default_provider` from the selected config; built-in default is `deepseek`. | `mai "quick review" --provider enclave --f` |
+| `--fork` | Start a new saved session from the current saved task. | `mai "audit the logs" --fork` |
+| `--fork-from ID` | Start a new saved session from the given saved session. | `mai "audit the logs" --fork-from 01234567-89ab-cdef-0123-456789abcdef` |
+| `-m`, `--model NAME` | Override the provider's configured model for this run. | `mai "quick review" --model cyberouter/glm-5.3-flash` |
+| `--effort VALUE` | Select reasoning effort: `l`, `h`, or `max` (default `h`). | `mai "review this refactor" --effort max` |
+| `--provider NAME` | Override `default_provider` from the selected config; built-in default is `deepseek`. | `mai "quick review" --provider enclave` |
 | `--max-turns COUNT` | Limit model turns; default 64, or `-1` for unlimited. | `mai "finish the migration" --max-turns -1` |
 | `--timeout DURATION` | Model request first-byte/idle timeout; default `10m`. | `mai "investigate the failure" --timeout 20m` |
 | `--cell-timeout DURATION` | Python cell wall-clock limit; default `10m`. | `mai "explore sales.csv" --cell-timeout 5m` |
@@ -42,19 +44,19 @@ Task commands make paid API requests.
 
 ## Model selection
 
-New tasks default to Pro/high with a Flash/high sidekick available.
+Each provider config sets one `model`; new tasks use it at high effort.
 
 ```sh
 mai "refactor this package"
-mai "explain this package" --f
-mai "review the implementation carefully" --max
+mai "explain this package" --model cyberouter/glm-5.3-flash
+mai "review the implementation carefully" --effort max
 mai "continue the saved task" --last
-mai "quick review" --provider openrouter --f
+mai "quick review" --provider openrouter --model deepseek/deepseek-v4-pro
 ```
 
-New tasks select Pro/high unless `--f` selects
-Flash/high or `--max` selects Pro/max. `--f` and `--max` cannot be combined.
-`-m`, `--model`, `-e`, and `--effort` are unsupported.
+`--model` (or `-m`) overrides the provider's configured model for the current
+run and is sent upstream exactly as written. `--effort` accepts `l`, `h`, or
+`max` (default `h`).
 
 ## Providers and configuration
 
@@ -65,7 +67,7 @@ only the built-in DeepSeek provider is available.
 
 See [the example config](../.mai.config.example) for DeepSeek, OpenRouter, and
 Enclave. It has `default_provider` and a `providers` object. Each provider needs
-`base_url`, `api_key_env`, and `models.pro` / `models.flash` mappings. Credentials
+`base_url`, `api_key_env`, and a single `model` ID. Credentials
 come from the named environment variable. URLs must be HTTPS, with HTTP allowed
 for loopback tests, and contain no embedded credentials, query or fragment.
 Mai appends `/responses` to the base URL.
@@ -78,9 +80,9 @@ For existing configs that omit `profile`, the names `deepseek` and `openrouter`
 select their corresponding profiles; other names select `responses`.
 Use an explicit profile for custom aliases. See the example config.
 
-`--provider NAME` overrides the configured default for a new task.
-Pro, Flash, sidekicks, image descriptions, and checkpoints all use
-the selected provider. A missing provider, model mapping, or credential is an
+`--provider NAME` overrides the configured default for a new task; the whole
+run, including checkpoints, uses the selected provider and its model.
+A missing provider, model, or credential is an
 error; Mai never falls back to another provider. Upstream model IDs retain their
 exact casing. OpenRouter's maximum effort is sent as `xhigh`; native DeepSeek
 uses `max`.
@@ -94,15 +96,23 @@ mai "review the result carefully" --last
 ```
 
 `--persist` and `--last` cannot be combined. Resume restores the original
-working directory, conversation, provider, profile, endpoint, model mappings,
-model tier, and reasoning effort. Plain resume ignores current config files
-and rejects `--f` and `--max`. Use `--last --provider NAME` to load current provider config
-and switch backends while retaining the saved model tier and effort. The switch
-is saved for subsequent resumes. Credentials are read from the saved environment
-variable name each time, so rotating a key still works. Legacy DeepSeek sessions
-without a settings snapshot use the built-in endpoint and mappings.
-Python starts a new environment; sidekick IDs expire
-when the previous run ends.
+working directory, conversation, provider, profile, endpoint, model, and
+reasoning effort. Plain resume ignores current config files. Use
+`--last --provider NAME` to load current provider config and switch backends;
+because a saved model ID is provider-specific, the switch adopts the new
+provider's configured model unless `--model` overrides it. `--model` and
+`--effort` also override the saved values on resume. The switch is saved for
+subsequent resumes. Credentials are read from the saved environment
+variable name each time, so rotating a key still works. DeepSeek sessions saved
+before backend settings were recorded use the built-in endpoint.
+Python starts a new environment when the previous run ends.
+
+`--fork` and `--fork-from ID` start a new saved session from an existing one,
+copying its history and transcript archive while leaving the parent untouched —
+the parent may still be running. The fork moves `current` to the child and
+implies saving, so it cannot be combined with `--last` or `--persist`.
+`--provider`, `--model`, and `--effort` override the inherited values with the
+same reasoning-boundary rules as resume.
 
 On a provider override, previous reasoning stays in original task history but
 is excluded from requests to the new backend. User messages, assistant answers,

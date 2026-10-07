@@ -36,7 +36,7 @@ Tools
 - rm: literal paths only; substitution, globs, or cd need approval.
 
 Delegation
-- Delegate only when authorized by the user or repository instructions. For stateless mai subprocesses, use --no-input, explicit scope, and no further delegation. Wait for completion and inspect effects.
+- Delegate only when authorized by the user or repository instructions. For stateless mai subprocesses, use --no-input and explicit scope; nesting depth is limited. Wait for completion and inspect effects.
 
 Recovery
 - A repaired interrupted tool result has an unknown outcome. It does not show that the tool failed or completed.
@@ -51,9 +51,6 @@ Finish when verified or blocked. Follow the requested response format. Lead with
 		if strings.TrimSpace(addition) != "" {
 			base += "\n\n" + strings.TrimSpace(addition)
 		}
-	}
-	if sess.Model == "pro" {
-		base += "\n\nPro director\n- When delegation is authorized, use sidekick for bounded legwork when useful. Give explicit context, scope and success criteria; use worker_id for follow-ups. Keep planning, integration and final verification. Sidekick is always Flash/high, even when you use max. Worker history expires when this run ends. Inspect effects after failure before reassigning work."
 	}
 	return base
 }

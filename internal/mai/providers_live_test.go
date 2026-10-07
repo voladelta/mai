@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestLiveProviderFlash(t *testing.T) {
+func TestLiveProviderConformance(t *testing.T) {
 	provider := os.Getenv("MAI_LIVE_PROVIDER")
 	if provider == "" {
 		t.Skip("set MAI_LIVE_PROVIDER=openrouter or enclave")
@@ -21,6 +21,11 @@ func TestLiveProviderFlash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	decoded, err := decodeProviderConfig(strings.NewReader(string(config)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantModel := decoded.Providers[provider].Model
 	t.Chdir(t.TempDir())
 	if err := os.WriteFile(".mai.config", config, 0o600); err != nil {
 		t.Fatal(err)
@@ -30,7 +35,7 @@ func TestLiveProviderFlash(t *testing.T) {
 	const marker = "MAI_PROVIDER_FLASH_OK"
 	prompt := "Call bash exactly once with command `printf " + marker + "`, then reply exactly " + marker + ". Do not edit files, inspect environment variables, or call other tools."
 	var stdout, stderr bytes.Buffer
-	if code := Main([]string{prompt, "--provider", provider, "--f", "--jsonl", "--no-input", "--skip-skills", "--max-turns", "4", "--timeout", "90s"}, &stdout, &stderr); code != 0 {
+	if code := Main([]string{prompt, "--provider", provider, "--jsonl", "--no-input", "--skip-skills", "--max-turns", "4", "--timeout", "90s"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("%s Flash exited %d: %s", provider, code, stderr.String())
 	}
 
@@ -52,7 +57,7 @@ func TestLiveProviderFlash(t *testing.T) {
 		}
 		switch event.Type {
 		case "task.started":
-			started = event.Provider == provider && event.Model == "flash" && event.Effort == "h"
+			started = event.Provider == provider && event.Model == wantModel && event.Effort == "h"
 		case "tool.completed":
 			tool = tool || event.Name == "bash" && strings.Contains(event.Output, marker)
 		case "model.delta":
@@ -66,5 +71,5 @@ func TestLiveProviderFlash(t *testing.T) {
 	if !started || !tool || !strings.Contains(answer.String(), marker) || !completed || requests < 2 {
 		t.Fatalf("%s Flash conformance: started=%v tool=%v answer=%q completed=%v requests=%d", provider, started, tool, answer.String(), completed, requests)
 	}
-	t.Logf("PROVIDER_FLASH_CONFORMANCE provider=%s model=flash effort=high tool_replay=true requests=%d", provider, requests)
+	t.Logf("PROVIDER_CONFORMANCE provider=%s model=%s effort=high tool_replay=true requests=%d", provider, wantModel, requests)
 }

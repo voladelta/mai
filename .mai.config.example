@@ -1,32 +1,23 @@
 {
-  "default_provider": "deepseek",
+  "default_provider": "enclave",
   "providers": {
+    "enclave": {
+      "profile": "responses",
+      "base_url": "https://router.enclave.ai/v1",
+      "api_key_env": "ENCLAVE_API_KEY",
+      "model": "cyberouter/deepseek-v4.1-flash"
+    },
     "deepseek": {
       "profile": "deepseek",
       "base_url": "https://api.deepseek.com",
       "api_key_env": "DEEPSEEK_API_KEY",
-      "models": {
-        "flash": "deepseek-flash",
-        "pro": "deepseek-v4-pro"
-      }
+      "model": "deepseek-v4-pro"
     },
     "openrouter": {
       "profile": "openrouter",
       "base_url": "https://openrouter.ai/api/v1",
       "api_key_env": "OPENROUTER_API_KEY",
-      "models": {
-        "flash": "deepseek/deepseek-v4-flash",
-        "pro": "deepseek/deepseek-v4-pro"
-      }
-    },
-    "enclave": {
-      "profile": "responses",
-      "base_url": "https://router.enclave.ai/v1",
-      "api_key_env": "ENCLAVE_API_KEY",
-      "models": {
-        "flash": "cyberouter/deepseek-v4.1-flash",
-        "pro": "cyberouter/deepseek-v4-pro"
-      }
+      "model": "deepseek/deepseek-v4-pro"
     }
   }
 }

@@ -22,6 +22,7 @@ var pythonRunner string
 
 // pythonKernel belongs to one agent. The agent dispatcher serializes its calls.
 type pythonKernel struct {
+	depth      int
 	cmd        *exec.Cmd
 	request    *os.File
 	response   *os.File
@@ -123,6 +124,7 @@ func (k *pythonKernel) start(cwd string) error {
 	}
 	cmd := exec.Command(path, "-u", "-c", pythonRunner, strconv.Itoa(k.generation+1))
 	cmd.Dir = cwd
+	cmd.Env = childEnvironment(cmd.Environ(), k.depth)
 	cmd.ExtraFiles = []*os.File{requestR, responseW, lifetimeR}
 	cmd.Stdout, cmd.Stderr = stdoutW, stderrW
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -293,6 +295,7 @@ func (a *agent) executePython(ctx context.Context, sess *session, arguments stri
 	if err != nil {
 		return textToolOutput(toolError("invalid python arguments", err))
 	}
+	a.python.depth = a.depth
 	fmt.Fprintln(a.stderr, "→ python")
 	start := len(sess.PythonActivities)
 	result := a.python.execute(ctx, sess.CWD, code, reset, a.cellTimeout, a.pythonOperations(sess, outerCall))

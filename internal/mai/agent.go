@@ -38,13 +38,12 @@ type agent struct {
 	cellTimeout      time.Duration
 	python           pythonKernel
 	events           io.Writer
-	workerID         string
-	sidekick         *sidekickWorker
 	modelTurns       int
 	usage            tokenUsage
 	usageReports     int
-	roleInstructions string
 	filesOnce        sync.Once
+	roleInstructions string
+	depth            int
 	files            *fileTools
 }
 
@@ -88,9 +87,6 @@ func (a *agent) run(ctx context.Context, sess *session, userPrompt string) error
 
 func (a *agent) close() {
 	a.python.close()
-	if a.sidekick != nil {
-		a.sidekick.agent.close()
-	}
 }
 
 func (a *agent) runLoop(ctx context.Context, sess *session, userPrompt string) ([]json.RawMessage, error) {
@@ -228,7 +224,7 @@ func (a *agent) compactIfNeeded(ctx context.Context, sess *session, instructions
 		return nil
 	}
 	started := time.Now()
-	history, usage, err := portableHistory(ctx, sess, a.backend)
+	history, usage, report, err := portableHistory(ctx, sess, a.backend)
 	a.recordUsage(usage)
 	if err != nil {
 		return fmt.Errorf("compact conversation: %w", err)
@@ -240,7 +236,18 @@ func (a *agent) compactIfNeeded(ctx context.Context, sess *session, instructions
 	if err := archiveTranscript(a.sessionPath, sess, &next); err != nil {
 		return err
 	}
-	next.ContextTokens = estimateHistoryTokens(history) + estimateInstructionTokens(instructions)
+	// Tell the model what the checkpoint replaced and how to retrieve the
+	// originals; keep the notice out of the transcript archive, and drop any
+	// older notice so it is never duplicated.
+	kept := next.History[:0]
+	for _, item := range next.History {
+		if !isCompactionNotice(item) {
+			kept = append(kept, item)
+		}
+	}
+	next.History = append(kept, compactionNotice(report))
+	next.TranscriptSkip = len(next.History)
+	next.ContextTokens = estimateHistoryTokens(next.History) + estimateInstructionTokens(instructions)
 	if a.sessionPath != "" {
 		if err := saveJSON(a.sessionPath, &next); err != nil {
 			return fmt.Errorf("save compacted conversation: %w", err)
@@ -251,6 +258,7 @@ func (a *agent) compactIfNeeded(ctx context.Context, sess *session, instructions
 	if usage != nil {
 		completed["usage"] = usage
 	}
+	completed["changes"] = []map[string]any{compactionChange(report)}
 	return a.emit(completed)
 }
 
@@ -344,8 +352,6 @@ func extractFunctionCalls(items []json.RawMessage) ([]functionCall, error) {
 
 func (a *agent) executeTool(ctx context.Context, sess *session, call functionCall) json.RawMessage {
 	switch call.Name {
-	case "sidekick":
-		return a.executeSidekick(ctx, sess, call.Arguments)
 	case "edit_context":
 		return a.executeContextEdit(sess, call.Arguments)
 	case "read_skill":
@@ -361,6 +367,14 @@ func (a *agent) executeTool(ctx context.Context, sess *session, call functionCal
 	default:
 		return textToolOutput(toolError("unknown tool", fmt.Errorf("%s is not available", call.Name)))
 	}
+}
+
+func (a *agent) recordUsage(usage *tokenUsage) {
+	if usage == nil {
+		return
+	}
+	a.usageReports++
+	addUsage(&a.usage, usage)
 }
 
 func (a *agent) executeReadSkill(ctx context.Context, sess *session, arguments string) json.RawMessage {
@@ -391,9 +405,6 @@ func (a *agent) executeReadSkill(ctx context.Context, sess *session, arguments s
 	if err != nil {
 		return textToolOutput(toolError("read_skill failed", err))
 	}
-	if sess.Model == "pro" && result.imageURL != "" {
-		return a.describeImageOutput(ctx, sess, marshalToolResult(result), result.imageURL)
-	}
 	return skillFileToolOutput(result)
 }
 
@@ -408,9 +419,6 @@ func (a *agent) executeViewImage(ctx context.Context, sess *session, arguments s
 	result, err := viewImage(sess.RepoRoot, sess.CWD, args.Path)
 	if err != nil {
 		return textToolOutput(toolError("view_image failed", err))
-	}
-	if sess.Model == "pro" {
-		return a.describeImageOutput(ctx, sess, marshalToolResult(result), result.imageURL)
 	}
 	return imageContentToolOutput(marshalToolResult(result), result.imageURL)
 }
@@ -430,6 +438,7 @@ func (a *agent) executeBash(ctx context.Context, sess *session, arguments string
 	return textToolOutput(runBash(ctx, bashRequest{
 		Command: args.Command, TimeoutMS: args.TimeoutMS, CWD: sess.CWD,
 		RepoRoot: sess.RepoRoot, Approve: a.approve,
+		Depth: a.depth,
 	}))
 }
 

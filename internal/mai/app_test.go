@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -31,7 +32,7 @@ func TestMainWithoutPromptShowsBuiltInDefault(t *testing.T) {
 	if code := Main(nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "Built-in default: DeepSeek Pro/high.") {
+	if !strings.Contains(stdout.String(), "Built-in default: DeepSeek deepseek-v4-pro/high.") {
 		t.Fatalf("stdout does not show the built-in default:\n%s", stdout.String())
 	}
 }
@@ -76,7 +77,7 @@ func TestMainSkipSkillsOnNewAndResumedTasks(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("MAI_DEEPSEEK_URL", server.URL)
-	for _, args := range [][]string{{"Use $demo", "--persist", "--f", "-s"}, {"Use $demo again", "--last", "--skip-skills"}} {
+	for _, args := range [][]string{{"Use $demo", "--persist", "-m", "deepseek-flash", "-s"}, {"Use $demo again", "--last", "--skip-skills"}} {
 		var stdout, stderr bytes.Buffer
 		if code := Main(args, &stdout, &stderr); code != 0 {
 			t.Fatalf("exit=%d stderr=%s", code, stderr.String())
@@ -120,7 +121,7 @@ func TestMainEnablesSkillsByDefaultOnNewAndResumedTasks(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("MAI_DEEPSEEK_URL", server.URL)
-	for _, args := range [][]string{{"Use $demo", "--persist", "--f"}, {"Use $demo", "--last"}} {
+	for _, args := range [][]string{{"Use $demo", "--persist"}, {"Use $demo", "--last"}} {
 		var stdout, stderr bytes.Buffer
 		if code := Main(args, &stdout, &stderr); code != 0 {
 			t.Fatalf("exit=%d stderr=%s", code, stderr.String())
@@ -396,7 +397,7 @@ func TestToolCompletedEventFailureKeepsSavedResult(t *testing.T) {
 		ID:       "01234567-89ab-cdef-0123-456789abcdef",
 		CWD:      root,
 		RepoRoot: root,
-		Model:    "flash",
+		Model:    "deepseek-v4-pro",
 		Effort:   "h",
 		History: []json.RawMessage{
 			json.RawMessage(`{"type":"function_call","call_id":"call-1","name":"bash","arguments":"{\"command\":\"printf complete > effect.txt\"}"}`),
@@ -485,7 +486,7 @@ func TestPersistCreatesProjectSessionAndCurrentPointer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sess.ID != id || sess.Model != "pro" || sess.Effort != "h" || len(sess.History) != 1 {
+	if sess.ID != id || sess.Model != "deepseek-v4-pro" || sess.Effort != "h" || len(sess.History) != 1 {
 		t.Fatalf("saved session = %#v", sess)
 	}
 }
@@ -493,7 +494,7 @@ func TestPersistCreatesProjectSessionAndCurrentPointer(t *testing.T) {
 func TestConcurrentPersistedTasksKeepSeparateHistory(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
-	cfg := taskConfig{Model: defaultModel, Effort: "h"}
+	cfg := taskConfig{Model: "deepseek-v4-pro", Effort: "h"}
 
 	first, err := startSession(cfg, options{persist: true})
 	if err != nil {
@@ -544,7 +545,7 @@ func TestConcurrentPersistedTasksKeepSeparateHistory(t *testing.T) {
 func TestLastRejectsSessionThatIsAlreadyRunning(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
-	active, err := startSession(taskConfig{Model: defaultModel, Effort: "h"}, options{persist: true})
+	active, err := startSession(taskConfig{Model: "deepseek-v4-pro", Effort: "h"}, options{persist: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -580,13 +581,15 @@ func TestMainHelpDocumentsPersistenceOptions(t *testing.T) {
 	if code := Main([]string{"--unknown", "--help"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
-	for _, text := range []string{"--f", "--max", "--provider", "--persist", "--last", "--max-turns", "--timeout", "--cell-timeout", "--no-input", "Documentation and support"} {
+	for _, text := range []string{"--model", "-m", "--effort", "--provider", "--persist", "--last", "--max-turns", "--timeout", "--cell-timeout", "--no-input", "Documentation and support"} {
 		if !strings.Contains(stdout.String(), text) {
 			t.Fatalf("help is missing %q:\n%s", text, stdout.String())
 		}
 	}
-	if strings.Contains(stdout.String(), "--save-defaults") || strings.Contains(stdout.String(), "--effort") || strings.Contains(stdout.String(), "--model") {
-		t.Fatalf("help still contains removed global settings option:\n%s", stdout.String())
+	for _, removed := range []string{"--f ", "--max ", "--save-defaults", "sidekick"} {
+		if strings.Contains(stdout.String(), removed) {
+			t.Fatalf("help still contains removed option %q:\n%s", removed, stdout.String())
+		}
 	}
 }
 
@@ -606,7 +609,7 @@ func TestResumePreservesHistoryModelAndEffort(t *testing.T) {
 	defer server.Close()
 	t.Setenv("MAI_DEEPSEEK_URL", server.URL)
 	for _, args := range [][]string{
-		{"first", "--persist", "--max"},
+		{"first", "--persist", "--effort", "max"},
 		{"second", "--last"},
 		{"third", "--last"},
 		{"fourth", "--last"},
@@ -642,25 +645,88 @@ func TestResumePreservesHistoryModelAndEffort(t *testing.T) {
 	}
 }
 
-func TestLastRejectsRemovedSubscriptionModel(t *testing.T) {
+func TestLastOverridesModelAndEffort(t *testing.T) {
 	t.Chdir(t.TempDir())
-	active, err := startSession(taskConfig{Model: defaultModel, Effort: "h"}, options{persist: true})
+	active, err := startSession(taskConfig{Model: "deepseek-v4-pro", Effort: "h"}, options{persist: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	active.session.Model = "luna"
 	if err := active.saveInitial(); err != nil {
+		active.close()
 		t.Fatal(err)
 	}
 	active.close()
-	if _, err := startSession(configForTask(options{}), options{last: true}); err == nil {
-		t.Fatal("removed model silently migrated")
+
+	for _, test := range []struct {
+		name      string
+		opts      options
+		wantModel string
+		wantEff   string
+	}{
+		{name: "plain last keeps saved", opts: options{last: true}, wantModel: "deepseek-v4-pro", wantEff: "h"},
+		{name: "model override", opts: options{last: true, model: "deepseek-flash"}, wantModel: "deepseek-flash", wantEff: "h"},
+		{name: "effort override", opts: options{last: true, effort: "l"}, wantModel: "deepseek-v4-pro", wantEff: "l"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			resumed, err := startSession(configForTask(test.opts), test.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resumed.close()
+			if resumed.session.Model != test.wantModel || resumed.session.Effort != test.wantEff {
+				t.Fatalf("resumed settings = %s/%s, want %s/%s", resumed.session.Model, resumed.session.Effort, test.wantModel, test.wantEff)
+			}
+		})
+	}
+}
+
+func TestLastModelOverrideDropsSavedReasoning(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeTestDeepSeekConfig(t)
+	var requests []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+			return
+		}
+		requests = append(requests, body)
+		writeSSEItem(t, w, `{"type":"reasoning","content":[{"type":"reasoning_text","text":"model-specific chain"}]}`, 50)
+		writeSSEItem(t, w, `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}`, 100)
+	}))
+	defer server.Close()
+	t.Setenv("MAI_DEEPSEEK_URL", server.URL)
+	for _, args := range [][]string{
+		{"first", "--persist"},
+		{"second", "--last", "--model", "deepseek-flash"},
+	} {
+		var stdout, stderr bytes.Buffer
+		if code := Main(args, &stdout, &stderr); code != 0 {
+			t.Fatalf("%v: %s", args, stderr.String())
+		}
+	}
+	if len(requests) != 2 || requests[1]["model"] != "deepseek-flash" {
+		t.Fatalf("requests = %d, models = %v", len(requests), requests[1]["model"])
+	}
+	input := requests[1]["input"].([]any)
+	var reasoning, userText int
+	for _, raw := range input {
+		item := raw.(map[string]any)
+		if item["type"] == "reasoning" {
+			reasoning++
+		}
+		if item["role"] == "user" {
+			userText++
+		}
+	}
+	if reasoning != 0 || userText != 2 {
+		t.Fatalf("resumed input: reasoning=%d user=%d, input=%v", reasoning, userText, input)
 	}
 }
 
 func TestLastPreservesLegacyLowEffort(t *testing.T) {
 	t.Chdir(t.TempDir())
-	active, err := startSession(taskConfig{Model: "flash", Effort: "l"}, options{persist: true})
+	active, err := startSession(taskConfig{Model: "deepseek-flash", Effort: "l"}, options{persist: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -679,7 +745,245 @@ func TestLastPreservesLegacyLowEffort(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer resumed.close()
-	if resumed.session.Model != "flash" || resumed.session.Effort != "l" {
-		t.Fatalf("legacy settings overwritten: %#v", resumed.session)
+	if resumed.session.Model != "deepseek-flash" || resumed.session.Effort != "l" {
+		t.Fatalf("saved settings overwritten: %#v", resumed.session)
+	}
+}
+
+func forkParentFixture(t *testing.T, root string) *activeTask {
+	t.Helper()
+	parent, err := startSession(taskConfig{Model: "deepseek-v4-pro", Effort: "h"}, options{persist: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := appendUserPrompt(parent.session, "parent task context"); err != nil {
+		t.Fatal(err)
+	}
+	var archive bytes.Buffer
+	if err := json.NewEncoder(&archive).Encode(transcriptEntry{Kind: "user_prompt", Text: "PREFORK-MARKER evidence"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(transcriptPath(parent.path), archive.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	parent.session.TranscriptEnd = int64(archive.Len())
+	parent.session.transcriptPath = transcriptPath(parent.path)
+	if err := parent.saveInitial(); err != nil {
+		t.Fatal(err)
+	}
+	return parent
+}
+
+func TestForkCreatesIndependentChildSession(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	parent := forkParentFixture(t, root)
+	defer parent.close()
+	parentBytes, err := os.ReadFile(parent.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archiveBytes, err := os.ReadFile(transcriptPath(parent.path))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	child, err := startSession(taskConfig{Model: "deepseek-v4-pro", Effort: "h"}, options{fork: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer child.close()
+	if err := child.saveInitial(); err != nil {
+		t.Fatal(err)
+	}
+
+	childSess := child.session
+	if childSess.ID == parent.session.ID || childSess.ParentID != parent.session.ID {
+		t.Fatalf("fork identity = %#v", childSess)
+	}
+	if childSess.ForkedAtTurn != len(parent.session.History) {
+		t.Fatalf("ForkedAtTurn = %d, want %d", childSess.ForkedAtTurn, len(parent.session.History))
+	}
+	if len(childSess.History) != len(parent.session.History) ||
+		!bytes.Contains(childSess.History[0], []byte("parent task context")) ||
+		childSess.Model != "deepseek-v4-pro" || childSess.Effort != "h" {
+		t.Fatalf("forked session = %#v", childSess)
+	}
+	got, err := os.ReadFile(transcriptPath(child.path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, archiveBytes[:parent.session.TranscriptEnd]) {
+		t.Fatal("child transcript archive is not the parent's committed prefix")
+	}
+	result := searchTranscript(childSess, json.RawMessage(`{"query":"PREFORK-MARKER","limit":5}`), "")
+	var found struct {
+		Total int `json:"total"`
+	}
+	if err := json.Unmarshal(result, &found); err != nil || found.Total != 1 {
+		t.Fatalf("mai.history did not find the pre-fork entry: %s", result)
+	}
+	paths := projectSessionPaths(root)
+	current, err := loadCurrentSessionID(paths)
+	if err != nil || current != childSess.ID {
+		t.Fatalf("current = %q, %v; want %q", current, err, childSess.ID)
+	}
+	// The parent file is untouched and its lock was never needed.
+	after, err := os.ReadFile(parent.path)
+	if err != nil || !bytes.Equal(after, parentBytes) {
+		t.Fatal("parent session file changed")
+	}
+	if _, err := acquireSessionLock(paths, parent.session.ID); err == nil || !strings.Contains(err.Error(), "already running") {
+		t.Fatalf("parent lock check = %v", err)
+	}
+}
+
+func TestForkFromOverridesProviderModelAndEffort(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	parent := forkParentFixture(t, root)
+	defer parent.close()
+	child, err := startSession(
+		taskConfig{Provider: "enclave", Model: "enclave-model", Effort: "h"},
+		options{forkFrom: parent.session.ID, provider: "enclave", model: "custom-model", effort: "l"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer child.close()
+	sess := child.session
+	if sess.Provider != "enclave" || sess.Model != "custom-model" || sess.Effort != "l" ||
+		sess.Backend != nil || sess.ReasoningStart != len(sess.History) || sess.ContextTokens != 0 {
+		t.Fatalf("forked overrides = %#v", sess)
+	}
+}
+
+func TestForkModelChangeResetsReasoningBoundary(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	parent := forkParentFixture(t, root)
+	defer parent.close()
+	child, err := startSession(
+		taskConfig{Model: "deepseek-v4-pro", Effort: "h"},
+		options{fork: true, model: "other-model"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer child.close()
+	if child.session.Model != "other-model" || child.session.ReasoningStart != len(child.session.History) || child.session.ContextTokens != 0 {
+		t.Fatalf("model override on fork = %#v", child.session)
+	}
+}
+
+func TestForkRejectsBadCombinationsAndUnknownIDs(t *testing.T) {
+	for _, args := range [][]string{
+		{"task", "--fork", "--last"},
+		{"task", "--fork", "--persist"},
+		{"task", "--fork-from", "01234567-89ab-cdef-0123-456789abcdef", "--last"},
+	} {
+		if _, err := parseOptions(args); err == nil {
+			t.Fatalf("%v accepted", args)
+		}
+	}
+	if _, err := parseOptions([]string{"task", "--fork-from", "not-an-id"}); err == nil || !strings.Contains(err.Error(), "not-an-id") {
+		t.Fatalf("malformed --fork-from error = %v", err)
+	}
+
+	root := t.TempDir()
+	t.Chdir(root)
+	if _, err := startSession(taskConfig{Model: "deepseek-v4-pro", Effort: "h"}, options{fork: true}); err == nil ||
+		!strings.Contains(err.Error(), "no saved task in this project") {
+		t.Fatalf("--fork without a saved task = %v", err)
+	}
+	if _, err := startSession(taskConfig{Model: "deepseek-v4-pro", Effort: "h"}, options{forkFrom: "01234567-89ab-cdef-0123-456789abcdef"}); err == nil ||
+		!strings.Contains(err.Error(), "01234567-89ab-cdef-0123-456789abcdef") {
+		t.Fatalf("unknown --fork-from error = %v", err)
+	}
+}
+
+func TestForkFromParsesExplicitID(t *testing.T) {
+	opts, err := parseOptions([]string{"task", "--fork-from", "01234567-89ab-cdef-0123-456789abcdef"})
+	if err != nil || opts.forkFrom != "01234567-89ab-cdef-0123-456789abcdef" {
+		t.Fatalf("--fork-from parse = %+v, %v", opts, err)
+	}
+}
+
+func TestForkRestoresParentWorkingDirectory(t *testing.T) {
+	repo := t.TempDir()
+	cmd := exec.Command("git", "init", repo)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
+	}
+	sub := filepath.Join(repo, "sub")
+	if err := os.Mkdir(sub, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(sub)
+	parent, err := startSession(taskConfig{Model: "deepseek-v4-pro", Effort: "h"}, options{persist: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer parent.close()
+	if err := appendUserPrompt(parent.session, "task from a subdirectory"); err != nil {
+		t.Fatal(err)
+	}
+	if err := parent.saveInitial(); err != nil {
+		t.Fatal(err)
+	}
+	canonicalRepo, err := canonicalPath(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parent.session.CWD == "" || parent.session.RepoRoot != canonicalRepo {
+		t.Fatalf("parent session dirs = %q, %q", parent.session.CWD, parent.session.RepoRoot)
+	}
+
+	// Launch the fork from the repository root, not the parent's directory.
+	t.Chdir(repo)
+	child, err := startSession(taskConfig{Model: "deepseek-v4-pro", Effort: "h"}, options{fork: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer child.close()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wd != parent.session.CWD {
+		t.Fatalf("fork left the process in %q, want %q", wd, parent.session.CWD)
+	}
+	roots, err := discoverSkillRoots()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if roots[0] != filepath.Join(canonicalRepo, "agents", "skills") {
+		t.Fatalf("repository skills root = %q, want %q", roots[0], filepath.Join(canonicalRepo, "agents", "skills"))
+	}
+}
+
+func TestForkTaskStartedReportsProvenance(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	parent := forkParentFixture(t, root)
+	defer parent.close()
+	writeTestDeepSeekFailureServer(t)
+	var stdout, stderr bytes.Buffer
+	if code := Main([]string{"child task", "--fork", "--jsonl"}, &stdout, &stderr); code != 1 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "mai: forked "+parent.session.ID) {
+		t.Fatalf("stderr missing fork notice: %s", stderr.String())
+	}
+	var started map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(stdout.String()), "\n") {
+		var event map[string]any
+		if err := json.Unmarshal([]byte(line), &event); err == nil && event["type"] == "task.started" {
+			started = event
+		}
+	}
+	if started == nil || started["parent_id"] != parent.session.ID ||
+		started["forked_at_turn"] != float64(len(parent.session.History)) {
+		t.Fatalf("task.started = %v", started)
 	}
 }

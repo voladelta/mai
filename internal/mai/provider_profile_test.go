@@ -85,7 +85,7 @@ func TestProviderProfileControlsWireBehaviorAcrossAliasesAndResume(t *testing.T)
 						name: {
 							BaseURL:   server.URL,
 							APIKeyEnv: "MAI_PROFILE_KEY",
-							Models:    modelMappings{Pro: "Exact/Pro-ID", Flash: "Exact/Flash-ID"},
+							Model:     "Exact/Pro-ID",
 							Profile:   test.profile,
 						},
 					},
@@ -96,7 +96,7 @@ func TestProviderProfileControlsWireBehaviorAcrossAliasesAndResume(t *testing.T)
 				}
 
 				for i, args := range [][]string{
-					{"start", "--max", "--persist"},
+					{"start", "--effort", "max", "--persist"},
 					{"continue", "--last"},
 				} {
 					if i == 1 {
@@ -175,7 +175,6 @@ func TestProviderProfileDefaultsPreserveLegacySettings(t *testing.T) {
 			sess.Backend = &sessionBackend{
 				Endpoint:  "https://provider.example/responses",
 				APIKeyEnv: "MAI_PROFILE_KEY",
-				Models:    provider.Models,
 			}
 			path := filepath.Join(t.TempDir(), "session.json")
 			if err := saveJSON(path, sess); err != nil {
@@ -200,9 +199,10 @@ func TestProviderSettingsRejectedAtConfigSessionAndBackendBoundaries(t *testing.
 	t.Setenv("MAI_CONTEXT_WINDOW", "")
 
 	for _, test := range []struct {
-		name   string
-		mutate func(*providerConfig)
-		want   string
+		name       string
+		mutate     func(*providerConfig)
+		want       string
+		configOnly bool
 	}{
 		{
 			name:   "unsafe URL",
@@ -215,14 +215,10 @@ func TestProviderSettingsRejectedAtConfigSessionAndBackendBoundaries(t *testing.
 			want:   "api_key_env",
 		},
 		{
-			name:   "blank pro",
-			mutate: func(p *providerConfig) { p.Models.Pro = " \t" },
-			want:   "model mappings",
-		},
-		{
-			name:   "blank flash",
-			mutate: func(p *providerConfig) { p.Models.Flash = " \t" },
-			want:   "model mappings",
+			name:       "blank model",
+			mutate:     func(p *providerConfig) { p.Model = " \t" },
+			want:       "requires a model",
+			configOnly: true,
 		},
 		{
 			name:   "invalid profile",
@@ -246,8 +242,10 @@ func TestProviderSettingsRejectedAtConfigSessionAndBackendBoundaries(t *testing.
 			sess.Backend = &sessionBackend{
 				Endpoint:  provider.BaseURL + "/responses",
 				APIKeyEnv: provider.APIKeyEnv,
-				Models:    provider.Models,
 				Profile:   provider.Profile,
+			}
+			if test.configOnly {
+				return
 			}
 			path := filepath.Join(t.TempDir(), "session.json")
 			if err := saveJSON(path, sess); err != nil {

@@ -155,7 +155,7 @@ func TestEvalRunnerResumesCorrectionAndReportsItsFailure(t *testing.T) {
 			t.Setenv("TMPDIR", dir)
 			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 			t.Setenv("MAI_EVAL_BIN", mai)
-			t.Setenv("MAI_EVAL_MODE", "flash")
+			t.Setenv("MAI_EVAL_MODEL", "cyberouter/glm-5.3-flash")
 			t.Setenv("MAI_EVAL_PROVIDER", "enclave")
 			t.Setenv("MAI_EVAL_CONFIG", "")
 			argsPath := filepath.Join(dir, "args.txt")
@@ -183,7 +183,7 @@ func TestEvalRunnerResumesCorrectionAndReportsItsFailure(t *testing.T) {
 			// assuming each invocation is one line in this diagnostic file.
 			first, last := false, false
 			for _, line := range lines {
-				first = first || strings.HasSuffix(line, "--provider enclave --f --persist --jsonl --no-input --skip-skills")
+				first = first || strings.HasSuffix(line, "--provider enclave --model cyberouter/glm-5.3-flash --persist --jsonl --no-input --skip-skills")
 				last = last || strings.HasSuffix(line, "--last --provider enclave --jsonl --no-input --skip-skills")
 			}
 			if !first || !last {

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -28,6 +29,7 @@ type bashRequest struct {
 	TimeoutMS int
 	CWD       string
 	RepoRoot  string
+	Depth     int
 	Approve   approvalFunc
 }
 
@@ -84,7 +86,9 @@ func runBash(parent context.Context, req bashRequest) string {
 	}
 	defer cleanup()
 	cmd.Dir = req.CWD
-	cmd.Env = cleanShellEnv(cmd.Environ())
+	// cmd.Environ() injects PWD=<cmd.Dir>; build on it rather than os.Environ(),
+	// which would carry this process's stale PWD.
+	cmd.Env = childEnvironment(cmd.Environ(), req.Depth)
 	captureDir, err := os.MkdirTemp("", "mai-bash-")
 	if err != nil {
 		return toolError("prepare bash capture", err)
@@ -262,6 +266,20 @@ func cleanShellEnv(env []string) []string {
 		out = append(out, item)
 	}
 	return out
+}
+
+// childEnvironment strips the inherited MAI_DEPTH — it records this run's own
+// depth, not the child's — and reports the child depth for nested mai runs.
+func childEnvironment(env []string, depth int) []string {
+	out := cleanShellEnv(env)
+	kept := out[:0]
+	for _, item := range out {
+		if strings.HasPrefix(item, "MAI_DEPTH=") {
+			continue
+		}
+		kept = append(kept, item)
+	}
+	return append(kept, "MAI_DEPTH="+strconv.Itoa(depth+1))
 }
 
 func (a *agent) terminalApproval(ctx context.Context, command, reason string) (bool, error) {

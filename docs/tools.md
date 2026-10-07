@@ -2,7 +2,7 @@
 
 [Back to README](../README.md) · [CLI reference](cli.md) · [Sessions and context](sessions.md)
 
-Mai exposes eight general tools. Pro also has a synchronous Flash/high sidekick.
+Mai exposes eight general tools.
 Tools are selected by the model; Python examples below are cells sent to Mai's
 `python` tool, not commands for a standalone Python interpreter.
 
@@ -18,7 +18,6 @@ Tools are selected by the model; Python examples below are cells sent to Mai's
 | `read_skill` | `path`, optional `file` | Read a discovered skill by directory id; `file` defaults to `SKILL.md`. Disabled by `-s` or `--skip-skills`. |
 | `view_image` | `path` | Read a repository image using an absolute path or a path relative to the working directory. |
 | `edit_context` | `action: "inspect"` or `action: "shrink"`, with `edits` for shrinking | Inspect eligible Bash outputs and shorten their future request representation. |
-| `sidekick` | `task`, optional `context` and `worker_id` | Pro assigns bounded work to one Flash/high worker, or follows up with it. |
 
 For example, a Bash tool call uses:
 
@@ -27,7 +26,7 @@ For example, a Bash tool call uses:
 ```
 
 See [Context editing](sessions.md#context-editing) for edit eligibility and
-validation. Bash output, Python state, skill discovery, and worker lifetimes
+validation. Bash output, Python state, and skill discovery
 are described below.
 
 ## Reading and editing files
@@ -47,8 +46,8 @@ Even a partial read observes the complete file version.
 
 Before replacing or editing an existing file, use `read`. Bash reads do not
 record an observation. A successful `write` or `edit` observes its result,
-allowing another mutation without rereading. Observations are separate for
-the parent and sidekick and reset on resume; saved history does not authorize
+allowing another mutation without rereading. Observations are scoped to the
+task and reset on resume; saved history does not authorize
 new mutations. A file changed since observation returns `FS_STALE_VERSION`;
 reread it and reconcile the intended change before retrying. New files need
 no prior read. Creation refuses to overwrite a file that appears concurrently.
@@ -67,7 +66,7 @@ For example, after reading `config.go`:
 ```
 
 Mutations preserve existing permission bits and publish complete contents
-atomically. Parent and sidekick mutations share locks for each target.
+atomically. Mutations take a lock for each target.
 Freshness is rechecked immediately before publication; external programs do
 not participate in these locks and can still race a replacement after that
 check. Each call commits one file. Use Bash for moves and deletes.
@@ -94,8 +93,7 @@ Omitting the field or setting it to `false` allows automatic selection unless
 `policy.allow_implicit_invocation` is `false` in `agents/openai.yaml`.
 Use `-s` or `--skip-skills` to skip skill discovery for one run, including
 resolution of explicit `$skill-name` mentions. The flag also works with
-`--last` and must be passed again on each resumed run. Sidekicks inherit the
-parent run's skill setting. When disabled, the
+`--last` and must be passed again on each resumed run. When disabled, the
 `read_skill` tool is omitted from requests and rejects unexpected calls.
 Images use typed image output; other binary files are rejected.
 
@@ -258,39 +256,6 @@ subprocess work before returning; output from work left running cannot be
 attributed reliably. Native libraries must flush their own buffered output before
 the cell returns.
 
-## Pro sidekick
-
-Pro can call `sidekick` with a bounded `task` and optional `context`. The
-harness runs a Flash/high agent through the same model/tool loop and returns
-its final answer. Pro keeps responsibility for planning, integration and final
-verification. Delegation is optional; no worker starts until Pro calls the tool.
-The answer comes from the terminal response of the current assignment, including
-all its assistant messages. A response without an assistant answer fails instead
-of returning an earlier assignment's answer.
-
-Each run supports one worker. The result includes `worker_id`; supply it with
-the next `task` to follow up in the same worker conversation. The worker shares
-the parent's working directory, repository boundary and approval rules, but
-has separate history and a separate Python namespace. Only explicit task
-context is sent; the parent's full conversation is not copied. Execution is
-synchronous, so the director and worker do not execute tools concurrently.
-
-The worker has 32 model turns total across assignments and a 10-minute
-wall-clock deadline per call. Parent interruption cancels worker execution.
-Results include cumulative turn and available usage counts, the number of usage
-reports, call duration and answer truncation when needed. Usage includes model
-turns and checkpoint reports; unavailable usage is not counted. JSONL worker
-model/tool events carry `worker_id`, including streamed text. Progress logs
-are labeled on stderr. A failed worker cannot be continued; its file and
-command effects may remain, so inspect them before assigning replacement work.
-
-Worker history and its Python namespace last only for the current parent run.
-The worker does not persist a task or change `.mai/current`; a persisted parent
-saves the returned tool result. Worker IDs expire after restart, and interrupted
-assignments are never replayed automatically. The worker has no sidekick tool
-and is instructed not to delegate. Bash remains unsandboxed, so this policy
-does not prevent arbitrary subprocess launches.
-
 ## Delegation through the CLI
 
 When delegation is authorized, the model can launch another ordinary Mai run
@@ -298,14 +263,15 @@ through `bash` or Python's `subprocess`. Install `mai` on `PATH`, or use the
 binary's absolute path. For example:
 
 ```bash
-mai --f --no-input --max-turns 32 -- "Act as a reviewer. Inspect the current diff, report actionable findings, and do not change files or delegate further."
+mai --no-input --max-turns 32 --model cyberouter/glm-5.3-flash -- "Act as a reviewer. Inspect the current diff, report actionable findings, and do not change files."
 ```
 
 Supply a complete task, role, and file scope in the prompt. Each run starts
 with fresh conversation history and discovers skills normally. It inherits
 the working directory and environment, including API credentials. Model,
 effort, and turn limits use CLI defaults unless passed explicitly. Choose
-`--f`, `--max` or `-m` explicitly to avoid relying on the default model.
+`-m`/`--model` and `--effort` explicitly to avoid relying on the configured
+defaults.
 
 Use stateless runs for delegation so they do not change `.mai/current` or
 contend for the parent's saved task. Wait for completion, capture stdout and
@@ -317,7 +283,10 @@ and allows up to ten minutes through `timeout_ms`; Python uses `--cell-timeout`.
 The nested run's `--timeout` controls its model requests and does not extend
 the enclosing tool's deadline. Python subprocesses must finish before the cell
 returns. Mai provides no dedicated role configurations, background handles,
-child journals, or enforced recursion limit for these ordinary CLI runs.
+or child journals for these ordinary CLI runs. Nested runs are depth-limited
+by the harness: `MAI_DEPTH` counts the nesting level (0 for a top-level run)
+and `MAI_MAX_DEPTH` (default 2) is the limit; a run deeper than the limit
+refuses to start.
 
 ## Safety
 

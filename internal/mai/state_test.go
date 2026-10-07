@@ -67,7 +67,7 @@ func TestLoadSessionEstimatesTokensForOlderState(t *testing.T) {
 	path := filepath.Join(root, "session.json")
 	sess := session{
 		Version: stateVersion, ID: "01234567-89ab-cdef-0123-456789abcdef",
-		CWD: root, RepoRoot: root, Model: "flash", Effort: "h",
+		CWD: root, RepoRoot: root, Model: "deepseek-flash", Effort: "h",
 		History: []json.RawMessage{json.RawMessage(`{"role":"user","content":"existing history"}`)},
 	}
 	if err := saveJSON(path, sess); err != nil {
@@ -95,7 +95,8 @@ func TestLoadSessionRejectsInvalidState(t *testing.T) {
 		"negative skip":       {mutate: func(s *session) { s.TranscriptSkip = -1 }, wantErr: "invalid transcript position"},
 		"skip beyond history": {mutate: func(s *session) { s.TranscriptSkip = 1 }, wantErr: "invalid transcript position"},
 		"negative transcript": {mutate: func(s *session) { s.TranscriptEnd = -1 }, wantErr: "invalid transcript position"},
-		"invalid model":       {mutate: func(s *session) { s.Model = "bogus" }, wantErr: `invalid model "bogus"`},
+		"invalid model":       {mutate: func(s *session) { s.Model = "two words" }, wantErr: `invalid model "two words"`},
+		"empty model":         {mutate: func(s *session) { s.Model = "" }, wantErr: `invalid model ""`},
 		"invalid effort":      {mutate: func(s *session) { s.Effort = "bogus" }, wantErr: `invalid effort "bogus"`},
 		"missing transcript":  {mutate: func(s *session) { s.TranscriptEnd = 10 }, wantErr: "open saved transcript"},
 	} {
@@ -103,7 +104,7 @@ func TestLoadSessionRejectsInvalidState(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "session.json")
 			sess := session{
 				Version: stateVersion, ID: "01234567-89ab-cdef-0123-456789abcdef",
-				CWD: root, RepoRoot: root, Model: "flash", Effort: "h",
+				CWD: root, RepoRoot: root, Model: "deepseek-flash", Effort: "h",
 			}
 			test.mutate(&sess)
 			if err := saveJSON(path, sess); err != nil {
@@ -121,7 +122,7 @@ func TestLoadSessionChecksSavedTranscriptPosition(t *testing.T) {
 	path := filepath.Join(root, "session.json")
 	sess := session{
 		Version: stateVersion, ID: "01234567-89ab-cdef-0123-456789abcdef",
-		CWD: root, RepoRoot: root, Model: "flash", Effort: "h", TranscriptEnd: 100,
+		CWD: root, RepoRoot: root, Model: "deepseek-flash", Effort: "h", TranscriptEnd: 100,
 	}
 	if err := saveJSON(path, sess); err != nil {
 		t.Fatal(err)
@@ -269,9 +270,9 @@ func TestRepairInterruptedToolCalls(t *testing.T) {
 	}
 }
 
-func TestRepairInterruptedSidekickRequiresReconciliation(t *testing.T) {
+func TestRepairInterruptedUnknownToolRequiresInspection(t *testing.T) {
 	sess := &session{History: []json.RawMessage{
-		json.RawMessage(`{"type":"function_call","call_id":"pending","name":"sidekick","arguments":"{\"task\":\"apply fix\"}"}`),
+		json.RawMessage(`{"type":"function_call","call_id":"pending","name":"retired_tool","arguments":"{\"task\":\"apply fix\"}"}`),
 	}}
 	if err := repairInterruptedToolCalls(sess); err != nil {
 		t.Fatal(err)
@@ -282,8 +283,8 @@ func TestRepairInterruptedSidekickRequiresReconciliation(t *testing.T) {
 	if err := json.Unmarshal(sess.History[1], &output); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.Output, `"outcome":"unknown"`) || !strings.Contains(output.Output, "expired") || !strings.Contains(output.Output, "do not automatically replay") {
-		t.Fatalf("unsafe worker recovery: %s", output.Output)
+	if !strings.Contains(output.Output, `"outcome":"unknown"`) || !strings.Contains(output.Output, "Inspect the relevant state") {
+		t.Fatalf("unsafe tool recovery: %s", output.Output)
 	}
 }
 
@@ -310,7 +311,7 @@ func TestInterruptedToolRecoveryPersists(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.json")
 	sess := &session{
 		Version: stateVersion, ID: "01234567-89ab-cdef-0123-456789abcdef", CWD: t.TempDir(), RepoRoot: t.TempDir(),
-		Model: "flash", Effort: "max",
+		Model: "deepseek-flash", Effort: "max",
 		History: []json.RawMessage{
 			json.RawMessage(`{"type":"function_call","call_id":"pending","name":"apply_patch","arguments":"{}"}`),
 		},

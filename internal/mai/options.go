@@ -12,9 +12,11 @@ type options struct {
 	prompt      string
 	last        bool
 	persist     bool
+	fork        bool
+	forkFrom    string
 	provider    string
-	fast        bool
-	maxEffort   bool
+	model       string
+	effort      string
 	help        bool
 	version     bool
 	noInput     bool
@@ -32,12 +34,14 @@ const (
 	optionVersion
 	optionLast
 	optionPersist
+	optionFork
+	optionForkFrom
 	optionNoInput
 	optionSkipSkills
 	optionJSONL
-	optionFast
-	optionMaxEffort
 	optionProvider
+	optionModel
+	optionEffort
 	optionTimeout
 	optionCellTimeout
 	optionMaxTurns
@@ -45,15 +49,17 @@ const (
 
 var optionKinds = map[string]optionKind{
 	"-h": optionHelp, "--help": optionHelp,
-	"--version":  optionVersion,
-	"--last":     optionLast,
-	"--persist":  optionPersist,
-	"--no-input": optionNoInput,
-	"-s":         optionSkipSkills, "--skip-skills": optionSkipSkills,
-	"--jsonl":        optionJSONL,
-	"--f":            optionFast,
-	"--max":          optionMaxEffort,
-	"--provider":     optionProvider,
+	"--version":   optionVersion,
+	"--last":      optionLast,
+	"--persist":   optionPersist,
+	"--fork":      optionFork,
+	"--fork-from": optionForkFrom,
+	"--no-input":  optionNoInput,
+	"-s":          optionSkipSkills, "--skip-skills": optionSkipSkills,
+	"--jsonl":    optionJSONL,
+	"--provider": optionProvider,
+	"-m":         optionModel, "--model": optionModel,
+	"--effort":       optionEffort,
 	"--timeout":      optionTimeout,
 	"--cell-timeout": optionCellTimeout,
 	"--max-turns":    optionMaxTurns,
@@ -76,9 +82,6 @@ func parseOptions(args []string) (options, error) {
 	out.prompt = strings.TrimSpace(strings.Join(promptParts, " "))
 	if out.version {
 		return out, nil
-	}
-	if err := out.normalizeSelections(); err != nil {
-		return out, err
 	}
 	if err := out.validateMode(len(args)); err != nil {
 		return out, err
@@ -138,7 +141,7 @@ func parseOptionTokens(args []string, out *options) ([]string, error) {
 }
 
 func (kind optionKind) takesValue() bool {
-	return kind == optionProvider || kind == optionTimeout || kind == optionCellTimeout || kind == optionMaxTurns
+	return kind == optionProvider || kind == optionModel || kind == optionEffort || kind == optionTimeout || kind == optionCellTimeout || kind == optionMaxTurns || kind == optionForkFrom
 }
 
 func (out *options) setOption(kind optionKind, value string) error {
@@ -149,16 +152,29 @@ func (out *options) setOption(kind optionKind, value string) error {
 		out.last = true
 	case optionPersist:
 		out.persist = true
+	case optionFork:
+		out.fork = true
+	case optionForkFrom:
+		if !validSessionID(value) {
+			return fmt.Errorf("invalid --fork-from %q (use a saved session ID)", value)
+		}
+		out.forkFrom = value
 	case optionNoInput:
 		out.noInput = true
 	case optionSkipSkills:
 		out.skipSkills = true
 	case optionJSONL:
 		out.jsonl = true
-	case optionFast:
-		out.fast = true
-	case optionMaxEffort:
-		out.maxEffort = true
+	case optionModel:
+		if !validModelID(value) {
+			return fmt.Errorf("invalid --model %q (use a nonempty model ID without whitespace or control characters)", value)
+		}
+		out.model = value
+	case optionEffort:
+		if _, ok := effortIDs[value]; !ok {
+			return fmt.Errorf("invalid --effort %q (use l, h or max)", value)
+		}
+		out.effort = value
 	case optionProvider:
 		if !validProviderName(value) {
 			return fmt.Errorf("invalid provider %q (use lowercase letters, digits, hyphens or underscores)", value)
@@ -186,19 +202,17 @@ func (out *options) setOption(kind optionKind, value string) error {
 	return nil
 }
 
-func (out *options) normalizeSelections() error {
-	if out.fast && out.maxEffort {
-		return errors.New("--f and --max cannot be used together")
-	}
-	return nil
-}
-
 func (out options) validateMode(argCount int) error {
 	if out.last && out.persist {
 		return errors.New("--last and --persist cannot be used together")
 	}
-	if out.last && (out.fast || out.maxEffort) {
-		return errors.New("--last keeps the saved model and reasoning effort; --f and --max cannot be used with --last")
+	if out.fork || out.forkFrom != "" {
+		if out.last {
+			return errors.New("--fork/--fork-from and --last cannot be used together")
+		}
+		if out.persist {
+			return errors.New("--fork/--fork-from already saves the task; do not combine with --persist")
+		}
 	}
 	if out.prompt == "" && argCount > 0 {
 		return errors.New("prompt is required")
@@ -214,10 +228,20 @@ func parseTimeout(value string) (time.Duration, error) {
 	return timeout, nil
 }
 
-const defaultModel = "pro"
+const maxModelIDBytes = 256
 
-func supportedModel(model string) bool {
-	return model == "flash" || model == "pro"
+// Model IDs are sent upstream exactly as written; reject only values that
+// cannot be a nonempty portable identifier.
+func validModelID(model string) bool {
+	if model == "" || len(model) > maxModelIDBytes || strings.TrimSpace(model) != model || strings.HasPrefix(model, "-") {
+		return false
+	}
+	for _, char := range model {
+		if char <= ' ' || char == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func supportedEffort(effort string) bool {

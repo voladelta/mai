@@ -380,13 +380,12 @@ func TestReadSkillRejectsEscapesAndUnscopedFiles(t *testing.T) {
 	}
 }
 
-func TestProSkillImageFailureKeepsHistoryUsable(t *testing.T) {
+func TestSkillImageContentKeepsHistoryUsable(t *testing.T) {
 	root := testSkillRoot(t)
 	writeTestSkill(t, root, "demo", "demo", "A demonstration skill.")
 	mustWrite(t, filepath.Join(root, "demo", "assets", "icon.png"), string([]byte{0x89, 'P', 'N', 'G', 0, 1}))
 	a := &agent{stdout: io.Discard, stderr: io.Discard, skillsRoots: []string{root}}
 	sess := deepseekTestSession(t)
-	sess.Model = "pro"
 	call := functionCall{
 		Type:      "function_call",
 		CallID:    "skill-image",
@@ -399,24 +398,23 @@ func TestProSkillImageFailureKeepsHistoryUsable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := validateResponsesHistory(sess.History, sess.Model, profileDeepSeek); err != nil {
-		t.Fatalf("skill output made Pro history unusable: %v", err)
+	if err := validateResponsesHistory(sess.History, profileDeepSeek); err != nil {
+		t.Fatalf("skill output made history unusable: %v", err)
 	}
 	var output struct {
-		Output string `json:"output"`
+		Output []struct {
+			Type string `json:"type"`
+		} `json:"output"`
 	}
 	if err := json.Unmarshal(sess.History[len(sess.History)-1], &output); err != nil {
 		t.Fatal(err)
 	}
-	var result struct {
-		OK    bool   `json:"ok"`
-		Error string `json:"error"`
+	image := false
+	for _, part := range output.Output {
+		image = image || part.Type == "input_image"
 	}
-	if err := json.Unmarshal([]byte(output.Output), &result); err != nil {
-		t.Fatal(err)
-	}
-	if result.OK || !strings.Contains(result.Error, "Flash backend is unavailable") {
-		t.Fatalf("unsupported image was not explained: %s", output.Output)
+	if !image {
+		t.Fatalf("skill image did not produce image content: %s", sess.History[len(sess.History)-1])
 	}
 
 	text := a.executeTool(context.Background(), sess, functionCall{Name: "read_skill", Arguments: `{"path":"demo"}`})
@@ -426,7 +424,7 @@ func TestProSkillImageFailureKeepsHistoryUsable(t *testing.T) {
 	}
 	var skill skillFileResult
 	if err := json.Unmarshal([]byte(encoded), &skill); err != nil || !skill.OK || skill.Content == "" {
-		t.Fatalf("Pro text skill read failed: %s", text)
+		t.Fatalf("text skill read failed: %s", text)
 	}
 }
 
