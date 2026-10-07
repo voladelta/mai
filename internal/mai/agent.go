@@ -22,27 +22,26 @@ const (
 )
 
 type agent struct {
-	backend          modelBackend
-	contextWindow    int64
-	maxTurns         int
-	modelOutput      io.Writer
-	stdout           io.Writer
-	stderr           io.Writer
-	sessionPath      string
-	approve          approvalFunc
-	skillsRoots      []string
-	skillRootsByID   map[string]string
-	skillsError      error
-	skipSkills       bool
-	requestTimeout   time.Duration
-	cellTimeout      time.Duration
-	python           pythonKernel
-	events           io.Writer
-	modelTurns       int
-	filesOnce        sync.Once
-	roleInstructions string
-	depth            int
-	files            *fileTools
+	backend        modelBackend
+	contextWindow  int64
+	maxTurns       int
+	modelOutput    io.Writer
+	stdout         io.Writer
+	stderr         io.Writer
+	sessionPath    string
+	approve        approvalFunc
+	skillsRoots    []string
+	skillRootsByID map[string]string
+	skillsError    error
+	skipSkills     bool
+	requestTimeout time.Duration
+	cellTimeout    time.Duration
+	python         pythonKernel
+	events         io.Writer
+	modelTurns     int
+	filesOnce      sync.Once
+	depth          int
+	files          *fileTools
 }
 
 type functionCall struct {
@@ -92,9 +91,27 @@ func (a *agent) runLoop(ctx context.Context, sess *session, userPrompt string) (
 	if interactive {
 		fmt.Fprintln(a.stderr, "→ thinking")
 	}
-	instructions := systemInstructions(sess, a.loadSkillInstructions(userPrompt), a.roleInstructions)
+	skillInstructions, explicitSkills := a.loadSkillInstructions(userPrompt)
+	instructions := systemInstructions(sess, skillInstructions)
 	if a.skipSkills {
 		instructions += "\n\nSkills are disabled. Do not load skills or follow skill mentions. Read repository AGENTS.md instructions directly when relevant."
+	}
+	// Instructions precede history in every request, so keep them identical
+	// across turns and resumes; explicit skills join the history instead.
+	// Compaction keeps developer items, so add each distinct text only once.
+	if explicitSkills != "" && !hasDeveloperText(sess.History, explicitSkills) {
+		message, err := json.Marshal(map[string]any{
+			"role": "developer", "content": []map[string]string{{"type": "input_text", "text": explicitSkills}},
+		})
+		if err != nil {
+			return nil, err
+		}
+		sess.appendEstimatedHistory(message)
+		if a.sessionPath != "" {
+			if err := saveJSON(a.sessionPath, sess); err != nil {
+				return nil, fmt.Errorf("save explicit skills: %w", err)
+			}
+		}
 	}
 	if sess.ContextTokens == 0 {
 		history, err := sess.requestHistory()
@@ -121,21 +138,38 @@ func (a *agent) runLoop(ctx context.Context, sess *session, userPrompt string) (
 	return nil, fmt.Errorf("agent stopped after %d model turns", a.maxTurns)
 }
 
-func (a *agent) loadSkillInstructions(userPrompt string) string {
+func hasDeveloperText(history []json.RawMessage, text string) bool {
+	for _, raw := range history {
+		var item struct {
+			Role    string `json:"role"`
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		}
+		if json.Unmarshal(raw, &item) == nil && item.Role == "developer" && len(item.Content) == 1 && item.Content[0].Text == text {
+			return true
+		}
+	}
+	return false
+}
+
+// loadSkillInstructions returns the skill catalog for the instructions and
+// the complete text of skills the prompt mentions explicitly.
+func (a *agent) loadSkillInstructions(userPrompt string) (string, string) {
 	a.skillRootsByID = nil
 	if a.skipSkills {
-		return ""
+		return "", ""
 	}
 	if a.skillsError != nil {
 		fmt.Fprintf(a.stderr, "mai: skills unavailable: %v\n", a.skillsError)
-		return ""
+		return "", ""
 	}
 	skillContext := buildSkillContext(a.skillsRoots, userPrompt)
 	a.skillRootsByID = skillContext.rootsByID
 	for _, warning := range skillContext.Warnings {
 		fmt.Fprintf(a.stderr, "mai: skill warning: %s\n", warning)
 	}
-	return skillContext.Instructions
+	return skillContext.Instructions, skillContext.Explicit
 }
 
 func (a *agent) emit(event map[string]any) error {

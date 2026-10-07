@@ -40,7 +40,8 @@ func TestAgentLoadsRepositorySkillsBeforeGlobalSkills(t *testing.T) {
 	t.Chdir(subdir)
 	a := newAgent(io.Discard, io.Discard, "", time.Second, false)
 	a.skillsRoots, a.skillsError = discoverSkillRoots()
-	instructions := a.loadSkillInstructions("Use $same-name and $shared.")
+	catalog, explicit := a.loadSkillInstructions("Use $same-name and $shared.")
+	instructions := catalog + explicit
 	for _, want := range []string{"Repository version.", "Repository named skill.", "Global fallback.", "# local-name instructions", "# same-name instructions"} {
 		if !strings.Contains(instructions, want) {
 			t.Fatalf("missing %q in instructions:\n%s", want, instructions)
@@ -90,15 +91,15 @@ func TestAgentReadsDiscoveredGlobalSkillPastInvalidLocalCopy(t *testing.T) {
 			}
 
 			a := &agent{stderr: io.Discard, skillsRoots: []string{local, global}}
-			instructions := a.loadSkillInstructions("Inspect files.")
+			instructions, _ := a.loadSkillInstructions("Inspect files.")
 			if strings.Contains(instructions, "Global skill.") == test.explicitOnly {
 				t.Fatalf("unexpected catalog visibility:\n%s", instructions)
 			}
 
 			for _, prompt := range []string{"Inspect files.", "Use $global-demo."} {
-				instructions = a.loadSkillInstructions(prompt)
-				if strings.Contains(prompt, "$global-demo") && !strings.Contains(instructions, "# global-demo instructions") {
-					t.Fatalf("global explicit instructions missing:\n%s", instructions)
+				_, explicit := a.loadSkillInstructions(prompt)
+				if strings.Contains(prompt, "$global-demo") && !strings.Contains(explicit, "# global-demo instructions") {
+					t.Fatalf("global explicit instructions missing:\n%s", explicit)
 				}
 
 				for _, read := range []struct {
@@ -139,7 +140,7 @@ func TestSkillDiscoveryWithMissingRootsAndBrokenRoot(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			result := buildSkillContext(test.roots, "Use $demo.")
 
-			if strings.Contains(result.Instructions, "# demo instructions") != test.wantSkill || len(result.Warnings) != test.wantWarnings {
+			if strings.Contains(result.Explicit, "# demo instructions") != test.wantSkill || len(result.Warnings) != test.wantWarnings {
 				t.Fatalf("unexpected context: %#v", result)
 			}
 		})
@@ -157,12 +158,12 @@ func TestAgentLoadsLocalOptOutWithoutGlobalSkillsOutsideGit(t *testing.T) {
 	a := newAgent(io.Discard, &warnings, "", time.Second, false)
 	a.skillsRoots, a.skillsError = discoverSkillRoots()
 
-	if instructions := a.loadSkillInstructions("inspect files"); strings.Contains(instructions, "Explicit use only.") {
+	if instructions, _ := a.loadSkillInstructions("inspect files"); strings.Contains(instructions, "Explicit use only.") {
 		t.Fatalf("opt-out local skill appeared in the catalog:\n%s", instructions)
 	}
 
-	if instructions := a.loadSkillInstructions("Use $manual."); !strings.Contains(instructions, "# manual instructions") {
-		t.Fatalf("local explicit skill was not loaded without global skills:\n%s", instructions)
+	if _, explicit := a.loadSkillInstructions("Use $manual."); !strings.Contains(explicit, "# manual instructions") {
+		t.Fatalf("local explicit skill was not loaded without global skills:\n%s", explicit)
 	}
 
 	if warnings.Len() != 0 {
@@ -178,9 +179,9 @@ func TestBuildSkillContextListsImplicitSkillsAndLoadsExplicitOptOut(t *testing.T
 
 	result := buildSkillContext([]string{root}, "Use $manual-only for this request. Mention $manual-only only once.")
 
-	available, explicit, ok := strings.Cut(result.Instructions, "### Explicit skill")
-	if !ok {
-		t.Fatalf("explicit skill was not loaded:\n%s", result.Instructions)
+	available, explicit := result.Instructions, result.Explicit
+	if !strings.HasPrefix(explicit, "### Explicit skill") || strings.Contains(available, "### Explicit skill") {
+		t.Fatalf("explicit skill was not separated from the catalog:\n%s\n---\n%s", available, explicit)
 	}
 	if !strings.Contains(available, "layout-helper: Build responsive page layouts. (id: layout-dir)") {
 		t.Fatalf("implicit skill is missing from catalog:\n%s", available)
@@ -213,8 +214,8 @@ func TestSkipSkillsBypassesDiscoveryAndExplicitLoading(t *testing.T) {
 		skipSkills:  true,
 	}
 
-	if instructions := a.loadSkillInstructions("Use $demo for this request"); instructions != "" {
-		t.Fatalf("skill instructions = %q, want none", instructions)
+	if instructions, explicit := a.loadSkillInstructions("Use $demo for this request"); instructions != "" || explicit != "" {
+		t.Fatalf("skill instructions = %q, explicit = %q, want none", instructions, explicit)
 	}
 	if warnings.Len() != 0 {
 		t.Fatalf("skill discovery produced warnings: %s", warnings.String())
@@ -261,9 +262,9 @@ func TestSkillFrontMatterControlsAutomaticSelection(t *testing.T) {
 			for _, mention := range []string{"manual-only", "manual-dir"} {
 				explicit := buildSkillContext([]string{root}, "Use $"+mention+".")
 
-				if !strings.Contains(explicit.Instructions, "### Explicit skill: $manual-only (id: manual-dir)") ||
-					!strings.Contains(explicit.Instructions, "# Manual instructions") {
-					t.Fatalf("explicit invocation did not load complete instructions:\n%s", explicit.Instructions)
+				if !strings.Contains(explicit.Explicit, "### Explicit skill: $manual-only (id: manual-dir)") ||
+					!strings.Contains(explicit.Explicit, "# Manual instructions") {
+					t.Fatalf("explicit invocation did not load complete instructions:\n%s", explicit.Explicit)
 				}
 				if len(explicit.Warnings) != 0 {
 					t.Fatalf("unexpected explicit invocation warnings: %v", explicit.Warnings)
@@ -324,8 +325,8 @@ func TestUnknownDollarNameIsNotTreatedAsMissingSkill(t *testing.T) {
 	writeTestSkill(t, root, "demo", "demo", "A demonstration skill.")
 	result := buildSkillContext([]string{root}, "Print the value of $path, but do not use a skill.")
 
-	if len(result.Warnings) != 0 || strings.Contains(result.Instructions, "### Explicit skill") {
-		t.Fatalf("unknown dollar name affected skill loading: %#v\n%s", result.Warnings, result.Instructions)
+	if len(result.Warnings) != 0 || result.Explicit != "" {
+		t.Fatalf("unknown dollar name affected skill loading: %#v\n%s", result.Warnings, result.Explicit)
 	}
 }
 

@@ -95,6 +95,7 @@ func TestMainEnablesSkillsByDefaultOnNewAndResumedTasks(t *testing.T) {
 	writeTestSkill(t, root, "demo", "demo", "Demo skill")
 	mustWrite(t, filepath.Join(root, "demo", "SKILL.md"), "---\nname: demo\ndescription: Demo skill\n---\nDEFAULT_SKILL_BODY\n")
 	requests := 0
+	var instructions []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		var payload struct {
@@ -102,13 +103,31 @@ func TestMainEnablesSkillsByDefaultOnNewAndResumedTasks(t *testing.T) {
 			Tools        []struct {
 				Name string `json:"name"`
 			} `json:"tools"`
+			Input []struct {
+				Role    string `json:"role"`
+				Content []struct {
+					Text string `json:"text"`
+				} `json:"content"`
+			} `json:"input"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			t.Error(err)
 			return
 		}
-		if !strings.Contains(payload.Instructions, "DEFAULT_SKILL_BODY") || strings.Contains(payload.Instructions, "Skills are disabled") {
-			t.Error("default run did not load the mentioned skill")
+		instructions = append(instructions, payload.Instructions)
+		if strings.Contains(payload.Instructions, "DEFAULT_SKILL_BODY") || strings.Contains(payload.Instructions, "Skills are disabled") {
+			t.Error("explicit skill body leaked into the instructions")
+		}
+		// The mentioned skill follows its request as one developer item and
+		// stays in the history when a later run resumes without the mention.
+		var skillItems []int
+		for index, item := range payload.Input {
+			if item.Role == "developer" && len(item.Content) == 1 && strings.Contains(item.Content[0].Text, "DEFAULT_SKILL_BODY") {
+				skillItems = append(skillItems, index)
+			}
+		}
+		if len(skillItems) != 1 || skillItems[0] != 1 || payload.Input[0].Role != "user" {
+			t.Errorf("request %d skill items at %v, want one developer item after the first prompt", requests, skillItems)
 		}
 		hasReadSkill := false
 		for _, tool := range payload.Tools {
@@ -121,14 +140,19 @@ func TestMainEnablesSkillsByDefaultOnNewAndResumedTasks(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("MAI_BASE_URL", server.URL)
-	for _, args := range [][]string{{"Use $demo", "--persist"}, {"Use $demo", "--last"}} {
+	for _, args := range [][]string{{"Use $demo", "--persist"}, {"continue", "--last"}, {"Use $demo again", "--last"}} {
 		var stdout, stderr bytes.Buffer
 		if code := Main(args, &stdout, &stderr); code != 0 {
 			t.Fatalf("exit=%d stderr=%s", code, stderr.String())
 		}
 	}
-	if requests != 2 {
-		t.Fatalf("requests=%d, want 2", requests)
+	if requests != 3 {
+		t.Fatalf("requests=%d, want 3", requests)
+	}
+	// Instructions precede the history, so any difference here would make the
+	// provider miss its prompt cache for the whole resumed conversation.
+	if instructions[0] != instructions[1] || instructions[0] != instructions[2] {
+		t.Fatalf("instructions changed on resume:\n%s\n---\n%s", instructions[0], instructions[1])
 	}
 }
 
@@ -873,6 +897,14 @@ func TestForkModelChangeResetsReasoningBoundary(t *testing.T) {
 	defer child.close()
 	if child.session.Model != "other-model" || child.session.ReasoningStart != len(child.session.History) || child.session.ContextTokens != 0 {
 		t.Fatalf("model override on fork = %#v", child.session)
+	}
+	// The new prompt must not replace the unknown estimate with its own size;
+	// the run recounts the whole inherited history instead.
+	if err := appendUserPrompt(child.session, "continue"); err != nil {
+		t.Fatal(err)
+	}
+	if child.session.ContextTokens != 0 {
+		t.Fatalf("estimate after prompt = %d, want 0 until the full recount", child.session.ContextTokens)
 	}
 }
 

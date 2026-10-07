@@ -113,6 +113,10 @@ includes all eligible skill names and descriptions, then loads a complete
 `SKILL.md` only when needed. Each skill description must be 1,024 characters or fewer.
 Set `disable-model-invocation: true` in `SKILL.md` YAML front matter to hide
 a skill from automatic selection; an explicit `$skill-name` still loads it.
+An explicit mention adds the complete `SKILL.md` to the conversation right after
+that request, so it stays in effect when the task is resumed with `--last`, and
+the instructions, which precede the conversation, stay identical across runs
+and keep the provider's prompt cache.
 Omitting the field or setting it to `false` allows automatic selection unless
 `policy.allow_implicit_invocation` is `false` in `agents/openai.yaml`.
 Use `-s` or `--skip-skills` to skip skill discovery for one run, including

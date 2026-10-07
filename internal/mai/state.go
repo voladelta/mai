@@ -368,6 +368,11 @@ func repairInterruptedToolCalls(sess *session) error {
 
 func (sess *session) appendEstimatedHistory(items ...json.RawMessage) {
 	sess.History = append(sess.History, items...)
+	// Zero marks an unknown estimate, such as after a provider or model
+	// switch; keep it so the next run recounts the whole history.
+	if sess.ContextTokens == 0 {
+		return
+	}
 	for _, item := range items {
 		sess.ContextTokens += estimateHistoryItemTokens(item)
 	}

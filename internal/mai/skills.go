@@ -34,8 +34,11 @@ type skillSummary struct {
 
 type skillContext struct {
 	Instructions string
-	Warnings     []string
-	rootsByID    map[string]string
+	// Explicit holds the complete SKILL.md of each $name mention. It belongs
+	// with the request that named it, not in the reusable instructions.
+	Explicit  string
+	Warnings  []string
+	rootsByID map[string]string
 }
 
 type skillFileResult struct {
@@ -98,7 +101,7 @@ func buildSkillContext(roots []string, userPrompt string) skillContext {
 - If the request clearly matches an available skill description, call read_skill({"path":"<id>"}) and follow the complete SKILL.md before acting.
 - Catalog metadata is only for selection. Never use it as a substitute for reading a matching SKILL.md.
 - To read a supporting file required by the selected SKILL.md, call read_skill({"path":"<id>","file":"<relative file path>"}) with the same skill id.
-- A $name mention is explicit. Its complete instructions appear below when it resolves uniquely; do not call read_skill again for that explicit skill.
+- A $name mention is explicit. Its complete instructions follow the request that named it when it resolves uniquely; do not call read_skill again for that explicit skill.
 `)
 	if catalog == "" {
 		instructions.WriteString("\nAvailable skills: none.\n")
@@ -107,9 +110,9 @@ func buildSkillContext(roots []string, userPrompt string) skillContext {
 		instructions.WriteString(catalog)
 		instructions.WriteByte('\n')
 	}
-	instructions.WriteString(explicit.String())
 	return skillContext{
 		Instructions: instructions.String(),
+		Explicit:     strings.TrimSpace(explicit.String()),
 		Warnings:     warnings,
 		rootsByID:    rootsByID,
 	}
