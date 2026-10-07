@@ -292,12 +292,13 @@ func toolDefinitions() []map[string]any {
 		},
 		{
 			"type": "function", "name": "bash",
-			"description": "Run Bash in the task working directory. Returns bounded head-and-tail output, exit code, timeout, duration, byte counts, and truncation state. Truncated streams also return private capture file paths; each capture has a 32 MiB limit.",
+			"description": "Run a command with bash -c in the task working directory. Every call is a fresh non-login shell: cd, exports, and variables do not persist, and stdin is unavailable, so avoid interactive commands. A nonzero exit is a result to interpret, not a tool error. Default timeout 2 minutes, maximum 10. Returns bounded head-and-tail output, exit code, timeout, duration, byte counts, and truncation state; truncated streams also return private capture file paths (32 MiB limit each). Before deleting or moving, resolve and verify the absolute target path, and guard variables in such paths with ${VAR:?}. Use read, write, and edit for text files, not cat, heredocs, or sed.",
 			"parameters": map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
-					"command":    map[string]string{"type": "string", "description": "The Bash command to run."},
-					"timeout_ms": map[string]any{"type": "integer", "minimum": 1, "maximum": 600000},
+					"description": map[string]string{"type": "string", "description": "Optional active-voice label of 5-10 words for this call. Provide before command."},
+					"command":     map[string]string{"type": "string", "description": "The Bash command to run."},
+					"timeout_ms":  map[string]any{"type": "integer", "minimum": 1, "maximum": 600000},
 				},
 				"required": []string{"command"},
 			},
@@ -319,7 +320,7 @@ func toolDefinitions() []map[string]any {
 		},
 		{
 			"type": "function", "name": "read",
-			"description": "Read a repository UTF-8 text file and observe its current version for write/edit. Paths are relative to the repository root. Returns numbered lines, total_lines, truncated and next_offset. At most 2000 lines and 64 KiB per call; files at most 16 MiB. A line longer than the output cap is clipped; use Bash to inspect its remainder.",
+			"description": "Read a repository UTF-8 text file and observe its current version for write/edit. Paths are relative to the repository root. Returns numbered lines (`N: text`) and a footer giving the shown range and the offset to continue from. At most 2000 lines and 50 KiB per call; lines longer than 2000 characters are truncated (use Bash to inspect the rest); files at most 16 MiB.",
 			"parameters": map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{

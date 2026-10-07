@@ -293,3 +293,12 @@ func TestRunBashTimesOutProcessGroup(t *testing.T) {
 		t.Fatalf("unexpected timeout result: %#v", result)
 	}
 }
+
+func TestBashSetsTerminalEnvironment(t *testing.T) {
+	t.Setenv("PAGER", "less")
+	root := t.TempDir()
+	raw := runBash(context.Background(), bashRequest{Command: `printf '%s %s %s %s' "$NO_COLOR" "$TERM" "$PAGER" "$GIT_PAGER"`, CWD: root, RepoRoot: root})
+	if !strings.Contains(raw, `"stdout":"1 dumb cat cat"`) {
+		t.Fatal(raw)
+	}
+}

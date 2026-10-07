@@ -103,7 +103,12 @@ func (a *agent) pythonHost(sess *session, outerCall string) pythonHostHandler {
 			raw = textToolOutput(toolError("Python host call cancelled before dispatch", err))
 			status = "not_started"
 		} else {
-			raw = a.executeTool(ctx, sess, functionCall{Name: name, Arguments: string(arguments)})
+			switch name {
+			case "read", "write", "edit":
+				raw = textToolOutput(marshalToolResult(a.runFileTool(ctx, sess, name, string(arguments))))
+			default:
+				raw = a.executeTool(ctx, sess, functionCall{Name: name, Arguments: string(arguments)})
+			}
 		}
 		var text string
 		if err := json.Unmarshal(raw, &text); err != nil {

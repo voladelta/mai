@@ -49,6 +49,10 @@ func fileCall(t *testing.T, a *agent, sess *session, name string, args any) map[
 
 func fileCallContext(t *testing.T, ctx context.Context, a *agent, sess *session, name string, args any) map[string]any {
 	t.Helper()
+	switch name {
+	case "read", "write", "edit":
+		return a.runFileTool(ctx, sess, name, string(mustJSON(t, args)))
+	}
 	raw := a.executeTool(ctx, sess, functionCall{Name: name, Arguments: string(mustJSON(t, args))})
 	var text string
 	if err := json.Unmarshal(raw, &text); err != nil {
@@ -198,21 +202,32 @@ func TestFileToolsReadWindowsCapsAndEmptyFiles(t *testing.T) {
 		{"", 1, 1, "", 0, false},
 		{"\n", 1, 1, "1: \n", 1, false},
 		{"a\r\nb\r\n", 1, 2, "1: a\n2: b\n", 2, false},
-		{"a", 100, 1, "", 1, false},
 	} {
 		mustWrite(t, path, tc.text)
 		result := fileCall(t, a, sess, "read", map[string]any{"file_path": "file", "offset": tc.offset, "limit": tc.limit})
 		requireFileOK(t, result)
-		if result["content"] != tc.want || result["total_lines"] != float64(tc.total) || result["truncated"] != tc.truncated {
+		if result["content"] != tc.want || result["total_lines"] != tc.total || result["truncated"] != tc.truncated {
 			t.Fatal(result)
 		}
 	}
 	mustWrite(t, path, strings.Repeat("猫", maxReadOutputBytes))
 	result := fileCall(t, a, sess, "read", map[string]any{"file_path": "file"})
 	requireFileOK(t, result)
-	if len(result["content"].(string)) > maxReadOutputBytes || result["truncated"] != true || result["next_offset"] != float64(1) {
-		t.Fatal("unbounded or invalid long-line result", result["truncated"])
+	if content := result["content"].(string); !strings.HasSuffix(content, "... (line truncated to 2000 chars)\n") ||
+		strings.Count(content, "猫") != maxReadLineChars || result["truncated"] != false {
+		t.Fatal("long line was not clipped", result["truncated"])
 	}
+	// Many short lines hit the byte cap and continue at the next line.
+	mustWrite(t, path, strings.Repeat(strings.Repeat("x", 99)+"\n", 2000))
+	result = fileCall(t, a, sess, "read", map[string]any{"file_path": "file"})
+	if result["capped"] != true || result["truncated"] != true || len(result["content"].(string)) > maxReadOutputBytes ||
+		result["next_offset"] != result["last_line"].(int)+1 {
+		t.Fatal("byte cap not applied", result)
+	}
+	requireFileOK(t, fileCall(t, a, sess, "read", map[string]any{"file_path": "file", "limit": 1}))
+	requireFileCode(t, fileCall(t, a, sess, "read", map[string]any{"file_path": "file", "offset": 2001}), "FS_OFFSET_OUT_OF_RANGE")
+	mustWrite(t, path, "猫")
+	requireFileOK(t, fileCall(t, a, sess, "read", map[string]any{"file_path": "file"}))
 	// A bounded window still observes the complete file version.
 	requireFileOK(t, fileCall(t, a, sess, "edit", map[string]any{"file_path": "file", "old_string": "猫", "new_string": "犬", "replace_all": true}))
 }
@@ -232,7 +247,7 @@ func TestFileToolsRejectMalformedArgumentsWithoutEffects(t *testing.T) {
 		{"edit", `{"file_path":"file","old_string":"x","new_string":"y","replace_all":null}`},
 	} {
 		output := a.executeTool(context.Background(), sess, functionCall{Name: tc.tool, Arguments: tc.args})
-		if !strings.Contains(string(output), `\"ok\":false`) {
+		if !strings.HasPrefix(string(output), `"Error: `) {
 			t.Fatalf("accepted %s %s: %s", tc.tool, tc.args, output)
 		}
 	}
@@ -560,7 +575,7 @@ func TestFileToolsResponsesLoopRecoversStaleEdit(t *testing.T) {
 			name = "edit"
 			args["old_string"], args["new_string"] = "original", "ours"
 		case 3:
-			if !strings.Contains(string(body.Input), "FS_STALE_VERSION") {
+			if !strings.Contains(string(body.Input), "file changed since it was read") {
 				t.Error("model did not receive stale refusal")
 			}
 		case 4:
@@ -593,4 +608,50 @@ func TestFileToolsResponsesLoopRecoversStaleEdit(t *testing.T) {
 	}
 	assertContent(t, filepath.Join(sess.RepoRoot, "file"), "ours\n")
 	assertContent(t, filepath.Join(sess.RepoRoot, "result"), "verified\n")
+}
+
+func fileText(t *testing.T, a *agent, sess *session, name string, args any) string {
+	t.Helper()
+	var text string
+	if err := json.Unmarshal(a.executeTool(context.Background(), sess, functionCall{Name: name, Arguments: string(mustJSON(t, args))}), &text); err != nil {
+		t.Fatal(err)
+	}
+	return text
+}
+
+func TestFileToolsRenderPlainTextEnvelopes(t *testing.T) {
+	a, sess := fileTestAgent(t)
+	for _, tc := range []struct {
+		tool string
+		args map[string]any
+		want string
+	}{
+		{"write", map[string]any{"file_path": "f", "content": "a\nb\nc\n"}, "<path>f</path>\n<type>file</type>\n<content>\nCreated file\n</content>"},
+		{"read", map[string]any{"file_path": "f", "limit": 2}, "<path>f</path>\n<type>file</type>\n<content>\n1: a\n2: b\n\n(Showing lines 1-2 of 3. Use offset=3 to continue.)\n</content>"},
+		{"read", map[string]any{"file_path": "f", "offset": 3}, "<path>f</path>\n<type>file</type>\n<content>\n3: c\n\n(End of file - total 3 lines)\n</content>"},
+		{"edit", map[string]any{"file_path": "f", "old_string": "a", "new_string": "x"}, "The file f has been updated successfully."},
+		{"edit", map[string]any{"file_path": "f", "old_string": "x", "new_string": "y", "replace_all": true}, "The file f has been updated. All occurrences were successfully replaced."},
+		{"write", map[string]any{"file_path": "f", "content": "z"}, "<path>f</path>\n<type>file</type>\n<content>\nUpdated file\n</content>"},
+		{"read", map[string]any{"file_path": "f", "offset": 9}, `Error: offset 9 is out of range for "f" (1 lines)`},
+		{"read", map[string]any{"file_path": "missing"}, `Error: cannot read "missing": not found`},
+		{"read", map[string]any{"file_path": "f", "limit": 5000}, "Error: limit must be less than or equal to 2000"},
+	} {
+		if got := fileText(t, a, sess, tc.tool, tc.args); got != tc.want {
+			t.Fatalf("%s %v:\ngot  %q\nwant %q", tc.tool, tc.args, got, tc.want)
+		}
+	}
+	mustWrite(t, filepath.Join(sess.RepoRoot, "g"), "x")
+	if got := fileText(t, a, sess, "edit", map[string]any{"file_path": "g", "old_string": "x", "new_string": "y"}); got != `Error: cannot modify "g": file has not been read — read the file, then retry` {
+		t.Fatal(got)
+	}
+}
+
+func TestFileToolsRecordConfirmedAbsence(t *testing.T) {
+	a, sess := fileTestAgent(t)
+	requireFileCode(t, fileCall(t, a, sess, "read", map[string]any{"file_path": "gone"}), "FS_NOT_FOUND")
+	// Edit of a path observed absent reports not found, even if it appears later.
+	requireFileCode(t, fileCall(t, a, sess, "edit", map[string]any{"file_path": "gone", "old_string": "a", "new_string": "b"}), "FS_NOT_FOUND")
+	mustWrite(t, filepath.Join(sess.RepoRoot, "gone"), "external")
+	requireFileCode(t, fileCall(t, a, sess, "write", map[string]any{"file_path": "gone", "content": "x"}), "FS_NOT_OBSERVED")
+	assertContent(t, filepath.Join(sess.RepoRoot, "gone"), "external")
 }

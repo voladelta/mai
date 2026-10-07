@@ -10,7 +10,7 @@ Tools are selected by the model; Python examples below are cells sent to Mai's
 
 | Tool | Input | Behavior |
 | --- | --- | --- |
-| `bash` | `command`, optional `timeout_ms` | Run Bash in the task working directory. |
+| `bash` | `command`, optional `description`, `timeout_ms` | Run a fresh `bash -c` in the task working directory. `description` is an optional label shown in the progress line. |
 | `read` | `file_path`, optional `offset`, `limit` | Read numbered UTF-8 text lines and observe the file version. Paths are relative to the repository root. |
 | `write` | `file_path`, `content` | Create or fully replace a repository UTF-8 text file. Existing files require a fresh observation. |
 | `edit` | `file_path`, `old_string`, `new_string`, optional `replace_all` | Replace literal text in an observed repository file. |
@@ -38,11 +38,28 @@ files are rejected. Directory aliases inside the repository share a target
 identity; aliases leading outside it are rejected.
 
 `read` uses a 1-based `offset` (default 1) and a `limit` of 1–2,000 lines
-(default 2,000). Results include numbered `content`, `total_lines`, and
-`truncated`; `next_offset` identifies the next line when output remains.
-Output is capped at 64 KiB. A single long line can be clipped, in which case
-`next_offset` points to that same line; inspect the remainder through Bash.
-Even a partial read observes the complete file version.
+(default 2,000). A successful read is plain text:
+
+```text
+<path>src/main.go</path>
+<type>file</type>
+<content>
+1: package main
+2: ...
+
+(Showing lines 1-2 of 40. Use offset=3 to continue.)
+</content>
+```
+
+The footer is one of `(Showing lines a-b of N. Use offset=M to continue.)`,
+`(Output capped. Showing lines a-b. Use offset=M to continue.)` when the 50 KiB
+(51,200-byte) output cap ends the window, or `(End of file - total N lines)`.
+Lines longer than 2,000 characters end with `... (line truncated to 2000 chars)`;
+inspect the remainder through Bash. An offset beyond the file fails with
+`offset N is out of range for "path" (T lines)`. Even a partial read observes the
+complete file version. Reading a missing file fails with
+`cannot read "path": not found` and records that the path is absent: a later
+`write` creates it, while `edit` reports not found.
 
 Before replacing or editing an existing file, use `read`. Bash reads do not
 record an observation. A successful `write` or `edit` observes its result,
@@ -58,6 +75,16 @@ replacement deletes the match. Zero matches return `FS_EDIT_NOT_FOUND`.
 Multiple matches return `FS_AMBIGUOUS_EDIT` unless `replace_all` is true.
 Whitespace matches exactly. Edits normalize CRLF/LF for matching and restore
 the original line-ending style. Full writes store the supplied contents.
+
+Results are plain text. `write` returns the envelope above with `Created file`
+or `Updated file` as its content; `edit` returns
+`The file <path> has been updated successfully.` or, with `replace_all`,
+`The file <path> has been updated. All occurrences were successfully replaced.`
+Failures are `Error: <message>`, for example
+`cannot modify "path": file has not been read — read the file, then retry` or
+`cannot modify "path": file changed since it was read — re-read the file, then retry`.
+Python's `mai.read`, `mai.write`, and `mai.edit` return structured dictionaries
+(`ok`, `code`, `error`, `content`, `total_lines`, …) instead of this text.
 
 For example, after reading `config.go`:
 
@@ -126,7 +153,9 @@ skill's `agents/openai.yaml` policy disables it.
 
 ## Bash and images
 
-Bash runs through `/bin/bash` in the task working directory. Its default
+Bash runs through `/bin/bash` in the task working directory with
+`NO_COLOR=1 TERM=dumb PAGER=cat GIT_PAGER=cat` set so pagers and colors do not
+garble captured output. Its default
 wall-clock timeout is two minutes; `timeout_ms` can raise it to ten minutes.
 
 Each `bash` result reports its duration and original output byte counts. Mai

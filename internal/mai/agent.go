@@ -425,8 +425,9 @@ func (a *agent) executeViewImage(ctx context.Context, sess *session, arguments s
 
 func (a *agent) executeBash(ctx context.Context, sess *session, arguments string) json.RawMessage {
 	var args struct {
-		Command   string `json:"command"`
-		TimeoutMS int    `json:"timeout_ms"`
+		Command     string `json:"command"`
+		TimeoutMS   int    `json:"timeout_ms"`
+		Description string `json:"description"`
 	}
 	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
 		return textToolOutput(toolError("invalid bash arguments", err))
@@ -434,7 +435,11 @@ func (a *agent) executeBash(ctx context.Context, sess *session, arguments string
 	if strings.TrimSpace(args.Command) == "" {
 		return textToolOutput(toolError("invalid bash arguments", errors.New("command is empty")))
 	}
-	fmt.Fprintf(a.stderr, "→ bash: %s\n", oneLine(args.Command, 180))
+	label := args.Command
+	if strings.TrimSpace(args.Description) != "" {
+		label = args.Description
+	}
+	fmt.Fprintf(a.stderr, "→ bash: %s\n", oneLine(label, 180))
 	return textToolOutput(runBash(ctx, bashRequest{
 		Command: args.Command, TimeoutMS: args.TimeoutMS, CWD: sess.CWD,
 		RepoRoot: sess.RepoRoot, Approve: a.approve,

@@ -88,7 +88,7 @@ func runBash(parent context.Context, req bashRequest) string {
 	cmd.Dir = req.CWD
 	// cmd.Environ() injects PWD=<cmd.Dir>; build on it rather than os.Environ(),
 	// which would carry this process's stale PWD.
-	cmd.Env = childEnvironment(cmd.Environ(), req.Depth)
+	cmd.Env = withTerminalEnvironment(childEnvironment(cmd.Environ(), req.Depth))
 	captureDir, err := os.MkdirTemp("", "mai-bash-")
 	if err != nil {
 		return toolError("prepare bash capture", err)
@@ -280,6 +280,21 @@ func childEnvironment(env []string, depth int) []string {
 		kept = append(kept, item)
 	}
 	return append(kept, "MAI_DEPTH="+strconv.Itoa(depth+1))
+}
+
+// terminalEnvironment keeps pagers and ANSI colors out of captured output.
+var terminalEnvironment = []string{"NO_COLOR=1", "TERM=dumb", "PAGER=cat", "GIT_PAGER=cat"}
+
+func withTerminalEnvironment(env []string) []string {
+	out := make([]string, 0, len(env)+len(terminalEnvironment))
+	for _, item := range env {
+		name, _, _ := strings.Cut(item, "=")
+		if name == "NO_COLOR" || name == "TERM" || name == "PAGER" || name == "GIT_PAGER" {
+			continue
+		}
+		out = append(out, item)
+	}
+	return append(out, terminalEnvironment...)
 }
 
 func (a *agent) terminalApproval(ctx context.Context, command, reason string) (bool, error) {

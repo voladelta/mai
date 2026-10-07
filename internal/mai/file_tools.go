@@ -17,7 +17,8 @@ import (
 
 const (
 	maxTextFileBytes   = 16 << 20
-	maxReadOutputBytes = 64 << 10
+	maxReadOutputBytes = 51200
+	maxReadLineChars   = 2000
 	defaultReadLines   = 2000
 )
 
@@ -32,9 +33,13 @@ type fileTools struct {
 type fileVersion struct {
 	info   os.FileInfo
 	digest [32]byte
+	absent bool // a read confirmed the path does not exist
 }
 
 func (v fileVersion) equal(other fileVersion) bool {
+	if v.absent || other.absent {
+		return v.absent == other.absent
+	}
 	return os.SameFile(v.info, other.info) && v.info.ModTime().Equal(other.info.ModTime()) &&
 		v.info.Mode() == other.info.Mode() && v.info.Size() == other.info.Size() && v.digest == other.digest
 }
@@ -141,8 +146,14 @@ func parseFileRequest(name, arguments string) (fileRequest, error) {
 		if args.Limit != nil {
 			r.limit = *args.Limit
 		}
-		if r.offset < 1 || r.limit < 1 || r.limit > defaultReadLines {
-			return r, errors.New("offset must be positive; limit must be between 1 and 2000")
+		if r.offset < 1 {
+			return r, errors.New("offset must be a positive integer")
+		}
+		if r.limit < 1 {
+			return r, errors.New("limit must be a positive integer")
+		}
+		if r.limit > defaultReadLines {
+			return r, fmt.Errorf("limit must be less than or equal to %d", defaultReadLines)
 		}
 	case "write":
 		var args struct {
@@ -153,7 +164,7 @@ func parseFileRequest(name, arguments string) (fileRequest, error) {
 			return r, err
 		}
 		if args.Content == nil {
-			return r, errors.New("content is required and must be a string")
+			return r, errors.New("content must be a string")
 		}
 		r.path, r.content = args.Path, *args.Content
 		if !textContent(r.content) {
@@ -172,8 +183,11 @@ func parseFileRequest(name, arguments string) (fileRequest, error) {
 		if err := decodeFileArgs(arguments, &args); err != nil {
 			return r, err
 		}
-		if args.Old == nil || *args.Old == "" || args.New == nil {
-			return r, errors.New("nonempty old_string and string new_string are required")
+		if args.Old == nil || *args.Old == "" {
+			return r, errors.New("old_string must be a non-empty string")
+		}
+		if args.New == nil {
+			return r, errors.New("new_string must be a string")
 		}
 		r.path, r.old, r.replacement, r.replaceAll = args.Path, *args.Old, *args.New, args.All
 		if !textContent(r.old) || !textContent(r.replacement) {
@@ -189,7 +203,7 @@ func parseFileRequest(name, arguments string) (fileRequest, error) {
 		return r, errors.New("unknown file tool")
 	}
 	if strings.TrimSpace(r.path) == "" {
-		return r, errors.New("file_path is required and must be nonempty")
+		return r, errors.New("file_path must be a non-empty string")
 	}
 	return r, nil
 }
@@ -240,44 +254,87 @@ func readFileSnapshot(root *os.Root, path string) ([]byte, fileVersion, error) {
 	if !textContent(string(data)) {
 		return nil, version, fsError("FS_NOT_TEXT", "file is not UTF-8 text without NUL bytes")
 	}
-	return data, fileVersion{current, sha256.Sum256(data)}, nil
+	return data, fileVersion{info: current, digest: sha256.Sum256(data)}, nil
 }
 
-func renderFileRead(path string, data []byte, offset, limit int) map[string]any {
+func renderFileRead(path string, data []byte, offset, limit int) (map[string]any, error) {
 	text := normalizeText(string(data))
 	lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
 	if text == "" {
 		lines = nil
 	}
+	if offset > len(lines) && !(len(lines) == 0 && offset == 1) {
+		return nil, fsError("FS_OFFSET_OUT_OF_RANGE", fmt.Sprintf("offset %d is out of range for %q (%d lines)", offset, path, len(lines)))
+	}
 	var out strings.Builder
-	next := offset
+	next, capped := offset, false
 	for next <= len(lines) && next-offset < limit {
-		line := fmt.Sprintf("%d: %s\n", next, lines[next-1])
-		remaining := maxReadOutputBytes - out.Len()
-		if len(line) > remaining {
-			// Return a bounded prefix even when one line exceeds the output cap.
-			end := remaining
-			for end > 0 && !utf8.ValidString(line[:end]) {
-				end--
-			}
-			out.WriteString(line[:end])
+		line := lines[next-1]
+		if runes := []rune(line); len(runes) > maxReadLineChars {
+			line = string(runes[:maxReadLineChars]) + fmt.Sprintf("... (line truncated to %d chars)", maxReadLineChars)
+		}
+		entry := fmt.Sprintf("%d: %s\n", next, line)
+		if out.Len()+len(entry) > maxReadOutputBytes {
+			capped = true
 			break
 		}
-		out.WriteString(line)
+		out.WriteString(entry)
 		next++
 	}
-	result := map[string]any{"ok": true, "path": path, "content": out.String(), "total_lines": len(lines), "offset": offset, "truncated": next <= len(lines)}
+	result := map[string]any{
+		"ok": true, "path": path, "content": out.String(), "total_lines": len(lines),
+		"offset": offset, "last_line": next - 1, "truncated": next <= len(lines), "capped": capped,
+	}
 	if next <= len(lines) {
 		result["next_offset"] = next
 	}
-	return result
+	return result, nil
+}
+
+// renderFileText formats a structured file tool result as the plain-text
+// envelope the model sees. Failures are "Error: <message>".
+func renderFileText(name string, result map[string]any) string {
+	if result["ok"] != true {
+		return fmt.Sprintf("Error: %v", result["error"])
+	}
+	path := fmt.Sprint(result["path"])
+	envelope := func(body string) string {
+		return fmt.Sprintf("<path>%s</path>\n<type>file</type>\n<content>\n%s\n</content>", path, body)
+	}
+	switch name {
+	case "read":
+		total, offset, last := result["total_lines"].(int), result["offset"].(int), result["last_line"].(int)
+		var footer string
+		switch {
+		case result["capped"] == true:
+			footer = fmt.Sprintf("(Output capped. Showing lines %d-%d. Use offset=%d to continue.)", offset, last, last+1)
+		case result["truncated"] == true:
+			footer = fmt.Sprintf("(Showing lines %d-%d of %d. Use offset=%d to continue.)", offset, last, total, last+1)
+		default:
+			footer = fmt.Sprintf("(End of file - total %d lines)", total)
+		}
+		if content := strings.TrimSuffix(result["content"].(string), "\n"); content != "" {
+			footer = content + "\n\n" + footer
+		}
+		return envelope(footer)
+	case "write":
+		if result["operation"] == "create" {
+			return envelope("Created file")
+		}
+		return envelope("Updated file")
+	default:
+		if result["replace_all"] == true {
+			return fmt.Sprintf("The file %s has been updated. All occurrences were successfully replaced.", path)
+		}
+		return fmt.Sprintf("The file %s has been updated successfully.", path)
+	}
 }
 
 func literalEdit(data []byte, request fileRequest) ([]byte, error) {
 	text, old, replacement := normalizeText(string(data)), normalizeText(request.old), normalizeText(request.replacement)
 	count := strings.Count(text, old)
 	if count == 0 {
-		return nil, fsError("FS_EDIT_NOT_FOUND", "old_string was not found; re-read the file and provide literal text")
+		return nil, fsError("FS_EDIT_NOT_FOUND", "old_string was not found in the file; re-read the file and provide literal text")
 	}
 	if count > 1 && !request.replaceAll {
 		return nil, fsError("FS_AMBIGUOUS_EDIT", fmt.Sprintf("old_string matched %d times; include more context or set replace_all to true", count))
@@ -301,28 +358,34 @@ func literalEdit(data []byte, request fileRequest) ([]byte, error) {
 }
 
 func (a *agent) executeFileTool(ctx context.Context, sess *session, name, arguments string) json.RawMessage {
+	return textToolOutput(renderFileText(name, a.runFileTool(ctx, sess, name, arguments)))
+}
+
+// runFileTool returns the structured result. Python host calls consume it
+// directly; the model sees renderFileText.
+func (a *agent) runFileTool(ctx context.Context, sess *session, name, arguments string) map[string]any {
 	request, err := parseFileRequest(name, arguments)
 	if err != nil {
 		var typed *fileToolError
 		if !errors.As(err, &typed) {
 			err = fsError("FS_INVALID_ARGUMENTS", err.Error())
 		}
-		return fileToolFailure(name, err)
+		return fileToolFailure(name, "", err)
 	}
 	if err := ctx.Err(); err != nil {
-		return fileToolFailure(name, err)
+		return fileToolFailure(name, "", err)
 	}
 	repo, err := canonicalPath(sess.RepoRoot)
 	if err != nil {
-		return fileToolFailure(name, err)
+		return fileToolFailure(name, request.path, err)
 	}
 	path, err := secureFilePath(repo, request.path)
 	if err != nil {
-		return fileToolFailure(name, fsError("FS_INVALID_PATH", err.Error()))
+		return fileToolFailure(name, request.path, fsError("FS_INVALID_PATH", err.Error()))
 	}
 	root, err := os.OpenRoot(repo)
 	if err != nil {
-		return fileToolFailure(name, err)
+		return fileToolFailure(name, request.path, err)
 	}
 	defer root.Close()
 	f := a.fileTools()
@@ -330,35 +393,46 @@ func (a *agent) executeFileTool(ctx context.Context, sess *session, name, argume
 	unlock := f.lock(key)
 	defer unlock()
 	if err := ctx.Err(); err != nil {
-		return fileToolFailure(name, err)
+		return fileToolFailure(name, request.path, err)
 	}
 	fmt.Fprintf(a.stderr, "→ %s: %s\n", name, oneLine(path, 180))
 	data, current, err := readFileSnapshot(root, path)
 	if name == "read" {
 		if err != nil {
 			f.forget(sess, key)
-			return fileToolFailure(name, err)
+			if errors.Is(err, os.ErrNotExist) {
+				f.observe(sess, key, fileVersion{absent: true})
+			}
+			return fileToolFailure(name, request.path, err)
 		}
 		if err := ctx.Err(); err != nil {
-			return fileToolFailure(name, err)
+			return fileToolFailure(name, request.path, err)
 		}
 		f.observe(sess, key, current)
-		return textToolOutput(marshalToolResult(renderFileRead(path, data, request.offset, request.limit)))
+		result, err := renderFileRead(path, data, request.offset, request.limit)
+		if err != nil {
+			return fileToolFailure(name, request.path, err)
+		}
+		return result
 	}
 	create := errors.Is(err, os.ErrNotExist)
 	observed, seen := f.observation(sess, key)
+	absent := seen && observed.absent
+	if absent {
+		seen = false // confirmed absence authorizes creation, not editing
+	}
 	if create && seen {
-		return fileToolFailure(name, fsError("FS_STALE_VERSION", "file was deleted; re-read the file, then retry"))
+		return fileToolFailure(name, request.path, fsError("FS_STALE_VERSION", "file was deleted"))
 	}
 	if err != nil && !(create && name == "write") {
-		return fileToolFailure(name, err)
+		return fileToolFailure(name, request.path, err)
 	}
 	if !create {
 		if !seen {
-			return fileToolFailure(name, fsError("FS_NOT_OBSERVED", "file has not been read; read the file, then retry"))
+			return fileToolFailure(name, request.path, fsError("FS_NOT_OBSERVED", "file has not been read"))
 		}
 		if !observed.equal(current) {
-			return fileToolFailure(name, fsError("FS_STALE_VERSION", "file changed since it was read; re-read the file, then retry"))
+			return fileToolFailure(name, request.path, fsError("FS_STALE_VERSION", "file changed since it was read"))
 		}
 	}
 	content := []byte(request.content)
@@ -369,7 +443,7 @@ func (a *agent) executeFileTool(ctx context.Context, sess *session, name, argume
 	if name == "edit" {
 		content, err = literalEdit(data, request)
 		if err != nil {
-			return fileToolFailure(name, err)
+			return fileToolFailure(name, request.path, err)
 		}
 	}
 	beforePublish := func() error {
@@ -379,22 +453,22 @@ func (a *agent) executeFileTool(ctx context.Context, sess *session, name, argume
 		// Refuse parent aliases retargeted after initial resolution.
 		resolved, err := secureFilePath(repo, request.path)
 		if err != nil || resolved != path {
-			return fsError("FS_STALE_VERSION", "file path changed; re-read the file, then retry")
+			return fsError("FS_STALE_VERSION", "file path changed")
 		}
 		if create {
 			return nil
 		}
 		_, latest, err := readFileSnapshot(root, path)
 		if err != nil || !current.equal(latest) {
-			return fsError("FS_STALE_VERSION", "file changed before publication; re-read the file, then retry")
+			return fsError("FS_STALE_VERSION", "file changed before publication")
 		}
 		return nil
 	}
 	if err := publishRootFile(root, path, content, mode, create, beforePublish); err != nil {
 		if create && errors.Is(err, os.ErrExist) {
-			err = fsError("FS_NOT_OBSERVED", "file appeared during creation; read the file, then retry")
+			err = fsError("FS_NOT_OBSERVED", "file appeared during creation")
 		}
-		return fileToolFailure(name, err)
+		return fileToolFailure(name, request.path, err)
 	}
 	// Publication has committed. A failed post-write observation must not report
 	// a failed mutation or authorize editing a version written by someone else.
@@ -406,10 +480,10 @@ func (a *agent) executeFileTool(ctx context.Context, sess *session, name, argume
 	if create {
 		operation = "create"
 	}
-	return textToolOutput(marshalToolResult(map[string]any{"ok": true, "path": path, "operation": operation}))
+	return map[string]any{"ok": true, "path": path, "operation": operation, "replace_all": request.replaceAll}
 }
 
-func fileToolFailure(name string, err error) json.RawMessage {
+func fileToolFailure(name, path string, err error) map[string]any {
 	code := "FS_IO_ERROR"
 	var typed *fileToolError
 	if errors.As(err, &typed) {
@@ -421,5 +495,26 @@ func fileToolFailure(name string, err error) json.RawMessage {
 	} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		code = "FS_CANCELLED"
 	}
-	return textToolOutput(marshalToolResult(map[string]any{"ok": false, "code": code, "error": name + " failed: " + err.Error()}))
+	message := err.Error()
+	if path != "" {
+		verb := "modify"
+		if name == "read" {
+			verb = "read"
+		}
+		target := fmt.Sprintf("cannot %s %q: ", verb, path)
+		switch code {
+		case "FS_NOT_OBSERVED":
+			message = target + "file has not been read — read the file, then retry"
+		case "FS_STALE_VERSION":
+			message = target + message + " — re-read the file, then retry"
+		case "FS_NOT_FOUND":
+			message = target + "not found"
+		case "FS_NOT_REGULAR_FILE":
+			message = target + "not a regular file"
+		case "FS_OFFSET_OUT_OF_RANGE":
+		default:
+			message = target + message
+		}
+	}
+	return map[string]any{"ok": false, "code": code, "error": message}
 }
