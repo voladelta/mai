@@ -116,7 +116,7 @@ same reasoning-boundary rules as resume.
 
 On a provider override, previous reasoning stays in original task history but
 is excluded from requests to the new backend. User messages, assistant answers,
-tool calls/results, and context edits remain intact. This avoids replaying
+and tool calls/results remain intact. This avoids replaying
 provider-specific encrypted reasoning to a different server.
 
 Turn limits, request and cell timeouts, skip-skills, input, and output options

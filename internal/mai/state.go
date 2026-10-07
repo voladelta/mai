@@ -42,7 +42,6 @@ type session struct {
 	ReasoningStart   int               `json:"reasoning_start,omitempty"`
 	ContextTokens    int64             `json:"context_tokens,omitempty"`
 	History          []json.RawMessage `json:"history"`
-	ContextEdits     []contextEdit     `json:"context_edits,omitempty"`
 	Transcript       []transcriptEntry `json:"transcript,omitempty"`
 	TranscriptSkip   int               `json:"transcript_skip,omitempty"`
 	TranscriptEnd    int64             `json:"transcript_end,omitempty"`
@@ -177,9 +176,6 @@ func loadSession(path string) (*session, error) {
 		}
 	}
 	if err := normalizeSessionSettings(&out); err != nil {
-		return nil, err
-	}
-	if err := validateContextEdits(&out); err != nil {
 		return nil, err
 	}
 	if out.ContextTokens == 0 && len(out.History) > 0 {
@@ -462,4 +458,30 @@ func newSessionID() (string, error) {
 		hex.EncodeToString(b[6:8]),
 		hex.EncodeToString(b[8:10]),
 		hex.EncodeToString(b[10:16])), nil
+}
+
+func (sess *session) requestHistory() ([]json.RawMessage, error) {
+	history := append([]json.RawMessage(nil), sess.History...)
+	if sess.ReasoningStart == 0 {
+		return history, nil
+	}
+
+	// Reasoning can be tied to its provider. Exclude old reasoning when
+	// replaying to an overridden backend; stored history is unchanged.
+	filtered := make([]json.RawMessage, 0, len(history))
+	for index, raw := range history {
+		if index < sess.ReasoningStart {
+			var item struct {
+				Type string `json:"type"`
+			}
+			if err := json.Unmarshal(raw, &item); err != nil {
+				return nil, err
+			}
+			if item.Type == "reasoning" {
+				continue
+			}
+		}
+		filtered = append(filtered, raw)
+	}
+	return filtered, nil
 }

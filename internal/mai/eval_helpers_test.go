@@ -9,6 +9,41 @@ import (
 	"testing"
 )
 
+func sessionFixture(t *testing.T) *session {
+	t.Helper()
+	dir := t.TempDir()
+	call, _ := json.Marshal(functionCall{Type: "function_call", CallID: "logs", Name: "bash", Arguments: `{"command":"printf logs"}`})
+	output, _ := json.Marshal(map[string]any{
+		"type": "function_call_output", "call_id": "logs", "future_envelope": "keep envelope",
+		"output": string(mustJSONValue(t, map[string]any{
+			"ok": true, "exit_code": 0, "timed_out": false,
+			"stdout": "ORIGINAL-RECALL-FACT " + strings.Repeat("completed build log\n", 1000),
+			"stderr": "warning to keep", "stdout_capture_path": "/private/example-capture",
+			"future_output": map[string]any{"enabled": false, "count": 0},
+		})),
+	})
+	sess := &session{
+		Version: stateVersion, ID: "01234567-89ab-cdef-0123-456789abcdef",
+		CWD: dir, RepoRoot: dir, Model: "deepseek-flash", Effort: "h",
+		History: []json.RawMessage{
+			json.RawMessage(`{"role":"user","content":"Preserve user requirements"}`),
+			json.RawMessage(`{"type":"reasoning","content":[{"type":"reasoning_text","text":"private reasoning"}]}`),
+			call, output,
+		},
+	}
+	sess.ContextTokens = estimateHistoryTokens(sess.History)
+	return sess
+}
+
+func mustJSONValue(t *testing.T, value any) json.RawMessage {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
 func appendBudgetLog(t *testing.T, sess *session, prefix, stdout string) string {
 	t.Helper()
 	factCallID := ""

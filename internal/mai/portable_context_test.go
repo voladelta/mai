@@ -31,7 +31,7 @@ func (s *checkpointStub) summarize(_ context.Context, _ *session, source string)
 
 func portableFixture(t *testing.T) *session {
 	t.Helper()
-	sess := contextEditFixture(t)
+	sess := sessionFixture(t)
 	_ = appendUserPrompt(sess, "Correction: batch is 128; preserve UNKNOWN.")
 	sess.ContextTokens = modelContextWindow
 	return sess
@@ -48,7 +48,7 @@ func TestPortableCheckpointArchivesOriginalAndRetainsActiveTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The last item is the compaction notice; the active turn precedes it.
-	if len(backend.sources) != 1 || !bytes.Equal(last, sess.History[len(sess.History)-2]) || len(sess.ContextEdits) != 0 {
+	if len(backend.sources) != 1 || !bytes.Equal(last, sess.History[len(sess.History)-2]) {
 		t.Fatal("active turn changed or summary not applied")
 	}
 	for _, item := range sess.History {
@@ -186,7 +186,7 @@ func TestPortableCheckpointTriggersAtEightyPercent(t *testing.T) {
 }
 
 func TestPortableCheckpointCompactsLargeTextHistory(t *testing.T) {
-	sess := contextEditFixture(t)
+	sess := sessionFixture(t)
 	var log strings.Builder
 	padding := strings.Repeat("x", 28)
 	for i := 0; i < 90000; i++ {

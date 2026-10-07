@@ -227,7 +227,6 @@ func (a *agent) compactIfNeeded(ctx context.Context, sess *session, instructions
 	}
 	next := *sess
 	next.History = history
-	next.ContextEdits = nil
 	next.ReasoningStart = 0
 	if err := archiveTranscript(a.sessionPath, sess, &next); err != nil {
 		return err
@@ -348,8 +347,6 @@ func extractFunctionCalls(items []json.RawMessage) ([]functionCall, error) {
 
 func (a *agent) executeTool(ctx context.Context, sess *session, call functionCall) json.RawMessage {
 	switch call.Name {
-	case "edit_context":
-		return a.executeContextEdit(sess, call.Arguments)
 	case "read_skill":
 		return a.executeReadSkill(call.Arguments)
 	case "view_image":

@@ -160,8 +160,8 @@ func TestMainEnforcesMaxTurns(t *testing.T) {
 				call := functionCall{
 					Type:      "function_call",
 					CallID:    fmt.Sprintf("call-%d", requests),
-					Name:      "edit_context",
-					Arguments: `{"action":"inspect"}`,
+					Name:      "bash",
+					Arguments: `{"command":"true"}`,
 				}
 				deepseekTestResponse(w, string(mustJSON(t, []functionCall{call})))
 			}))

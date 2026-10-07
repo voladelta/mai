@@ -245,29 +245,6 @@ func compactJSON(raw json.RawMessage) string {
 func toolDefinitions() []map[string]any {
 	return []map[string]any{
 		{
-			"type": "function", "name": "edit_context",
-			"description": "Shorten completed successful Bash stdout in future model requests, preserving originals for history search. Shrink directly with current call IDs and digests supplied in context hints, or inspect to obtain them. Keep exact facts, corrections and decisions still needed for the task. Summaries are model-authored context, not fresh evidence. Other output fields and request items stay intact. This changes context only, never command effects. Each summary must reduce estimated size. Prefer large obsolete outputs when savings justify another request. Continue the task after editing.",
-			"parameters": map[string]any{
-				"type": "object", "additionalProperties": false,
-				"properties": map[string]any{
-					"action": map[string]any{"type": "string", "enum": []string{"inspect", "shrink"}},
-					"edits": map[string]any{
-						"type": "array", "maxItems": 8,
-						"items": map[string]any{
-							"type": "object", "additionalProperties": false,
-							"properties": map[string]any{
-								"call_id":        map[string]string{"type": "string"},
-								"digest":         map[string]string{"type": "string"},
-								"stdout_summary": map[string]string{"type": "string"},
-							},
-							"required": []string{"call_id", "digest", "stdout_summary"},
-						},
-					},
-				},
-				"required": []string{"action"},
-			},
-		},
-		{
 			"type": "function", "name": "read_skill",
 			"description": "Read one file from an installed skill. Omit file to read SKILL.md; read it before using the skill or loading supporting files. Images are returned as image content; unsupported binary files fail.",
 			"parameters": map[string]any{

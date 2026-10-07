@@ -265,10 +265,9 @@ func TestVersion2SessionIsRejected(t *testing.T) {
 	}
 }
 
-func TestProviderSwitchKeepsContextEditIndexesAndResetsBoundaryAfterCompaction(t *testing.T) {
-	sess := contextEditFixture(t)
+func TestProviderSwitchKeepsHistoryAndResetsBoundaryAfterCompaction(t *testing.T) {
+	sess := sessionFixture(t)
 	original := mustJSON(t, sess.History)
-	sess.ContextEdits = []contextEdit{{Index: 3, Digest: contextDigest(sess.History[3]), Summary: "Preserve ORIGINAL-RECALL-FACT; build completed."}}
 	sess.ReasoningStart = len(sess.History)
 	sess.History = append(sess.History, json.RawMessage(`{"type":"reasoning","content":[{"type":"reasoning_text","text":"new provider reasoning"}]}`))
 
@@ -277,11 +276,11 @@ func TestProviderSwitchKeepsContextEditIndexesAndResetsBoundaryAfterCompaction(t
 		t.Fatal(err)
 	}
 	encoded := mustJSON(t, history)
-	if bytes.Contains(encoded, []byte("private reasoning")) || !bytes.Contains(encoded, []byte("new provider reasoning")) || !bytes.Contains(encoded, []byte("stdout_context_summary")) {
-		t.Fatalf("reasoning boundary or context projection failed: %s", encoded)
+	if bytes.Contains(encoded, []byte("private reasoning")) || !bytes.Contains(encoded, []byte("new provider reasoning")) {
+		t.Fatalf("reasoning boundary failed: %s", encoded)
 	}
-	if !bytes.Equal(original, mustJSON(t, sess.History[:4])) || sess.ContextEdits[0].Index != 3 {
-		t.Fatal("provider switch mutated original history or context edit indexes")
+	if !bytes.Equal(original, mustJSON(t, sess.History[:4])) {
+		t.Fatal("provider switch mutated original history")
 	}
 	if err := validateResponsesHistory(history, profileDeepSeek); err != nil {
 		t.Fatal(err)
@@ -296,8 +295,8 @@ func TestProviderSwitchKeepsContextEditIndexesAndResetsBoundaryAfterCompaction(t
 	if err := a.compactIfNeeded(context.Background(), sess, "instructions"); err != nil {
 		t.Fatal(err)
 	}
-	if sess.ReasoningStart != 0 || len(sess.ContextEdits) != 0 {
-		t.Fatal("compaction left a stale provider reasoning boundary or edit indexes")
+	if sess.ReasoningStart != 0 {
+		t.Fatal("compaction left a stale provider reasoning boundary")
 	}
 	if err := validateSessionHeader(sess); err != nil {
 		t.Fatal(err)

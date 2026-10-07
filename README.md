@@ -37,7 +37,7 @@ change the code, then save the conversation when you need to return to it.
 | Saved tasks | Resume the original directory, provider settings, model, and conversation. | `mai "continue the fix" --last` |
 | Model selection | The provider's configured model at high effort by default; override either for one run. | `mai "review this refactor" --effort max` |
 | Provider selection | Route the task to a different endpoint and credential. | `mai "quick review" --provider openrouter --model deepseek/deepseek-v4-pro` |
-| Searchable history | Recall original visible text after context editing and compaction. | [Python history search](docs/tools.md#persistent-python) |
+| Searchable history | Recall original visible text after compaction. | [Python history search](docs/tools.md#persistent-python) |
 | Repository skills | Load project instructions before global skills, with explicit skill selection. | `mai 'Use $my-skill to review this package'` |
 | Script output | Stream task, model, and tool events as JSON Lines. | `mai "review this package" --jsonl --no-input > run.jsonl` |
 
@@ -231,8 +231,8 @@ Mai follows four principles:
   state; optional Python supports exploration.
 - **Save only when asked.** A normal run leaves no saved conversation.
   `--persist` and `--last` use project-local state.
-- **Keep original evidence accessible.** Context editing shortens successful
-  Bash stdout for requests; history search still reads the original text.
+- **Keep original evidence accessible.** Compaction archives the original
+  visible history; history search still reads the original text.
 - **Make recovery explicit.** Failed requests and interrupted tool calls are
   never replayed automatically.
 
@@ -242,7 +242,7 @@ Prompt + CLI options + provider config
          v
 Go agent loop <----> Selected provider's Responses API (streaming)
          |
-         +--> Bash / file reads and edits / skills / images / context editing
+         +--> Bash / file reads and edits / skills / images
          +--> Optional persistent Python --> Go tool bridge
          +--> Nested `mai` subprocesses via Bash (depth-limited)
          |

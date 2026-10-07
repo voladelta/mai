@@ -17,7 +17,6 @@ Tools are selected by the model; Python examples below are cells sent to Mai's
 | `python` | `code` or `reset: true` | Execute a cell in the persistent namespace, or discard that namespace. |
 | `read_skill` | `path`, optional `file` | Read a discovered skill by directory id; `file` defaults to `SKILL.md`. Disabled by `-s` or `--skip-skills`. |
 | `view_image` | `path` | Read a repository image using an absolute path or a path relative to the working directory. |
-| `edit_context` | `action: "inspect"` or `action: "shrink"`, with `edits` for shrinking | Inspect eligible Bash outputs and shorten their future request representation. |
 
 For example, a Bash tool call uses:
 
@@ -25,9 +24,7 @@ For example, a Bash tool call uses:
 {"command":"git diff --check","timeout_ms":10000}
 ```
 
-See [Context editing](sessions.md#context-editing) for edit eligibility and
-validation. Bash output, Python state, and skill discovery
-are described below.
+Bash output, Python state, and skill discovery are described below.
 
 ## Reading and editing files
 

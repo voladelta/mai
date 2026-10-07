@@ -60,36 +60,6 @@ request. Saved tasks commit replacement history before continuing. Original
 visible text is archived separately for `mai.history` and `--last`; the archive
 grows with the task.
 
-## Context editing
-
-Mai provides a native Go `edit_context` tool. The model can inspect eligible
-outputs, then propose a shorter stdout summary using the returned call ID and
-digest. Each batch accepts at most eight edits. Summaries must contain 1 to
-16,384 bytes and reduce estimated request size. Digests reject stale edits, and
-Mai saves an accepted batch before using it. At 50% of the context budget, a
-request-tail reminder supplies current handles for up to eight outputs since
-the last assistant answer, with at least 16 KiB of stdout. The model can shrink
-these directly, then continue the task. The reminder leaves the system
-instructions and preceding history intact; actual cache reuse still depends on
-which output is edited.
-
-The tool edits only successful Bash stdout. It preserves stderr,
-exit status, capture paths, call IDs, item order, user instructions and
-reasoning items. Failed, timed-out, interrupted, and other tool
-outputs are not eligible. Summaries are explicitly marked as model-authored;
-they are not fresh tool evidence. Mai validates structure and size, not whether
-the model preserved every useful fact.
-
-The session stores original history plus a separate projection. `mai.history`
-continues to search original stdout, including after `--last` and
-compaction. Compaction uses the projected request, archives the original visible
-history, and clears the superseded projection. No command is undone or replayed.
-No Node runtime or bridge is involved.
-
-Context editing can change prompt-cache reuse and add model calls. Reduced
-request size alone does not establish faster or cheaper task completion.
-At the context threshold, Mai builds a portable checkpoint.
-
 ## Providers and model modes
 
 Enclave is the built-in default at `https://router.enclave.ai/v1/responses`.
@@ -127,7 +97,7 @@ the new provider's configured model, since a saved model ID is
 provider-specific; `--model` and `--effort` override the saved values on resume.
 The new provider settings are saved for later runs.
 Previous reasoning remains in original history but is excluded from requests to
-the new backend; visible messages, tool relationships, and context edits survive.
+the new backend; visible messages and tool relationships survive.
 API keys are read afresh from the saved environment-variable name.
 Sessions saved before backend settings were recorded use the
 built-in default provider's endpoint. Saved sessions from older state versions are rejected;

@@ -384,7 +384,6 @@ func startForkedSession(cfg taskConfig, opts options) (*activeTask, error) {
 	child.ForkedAtTurn = len(parent.History)
 	child.PythonActivities = nil // kernel state belongs to the parent's process
 	child.History = append([]json.RawMessage(nil), parent.History...)
-	child.ContextEdits = append([]contextEdit(nil), parent.ContextEdits...)
 	child.Transcript = append([]transcriptEntry(nil), parent.Transcript...)
 	if child.Backend != nil {
 		backend := *child.Backend

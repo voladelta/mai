@@ -204,7 +204,6 @@ func (c *responsesClient) stream(ctx context.Context, sess *session, instruction
 func (c *responsesClient) summarize(ctx context.Context, sess *session, source string) (string, *tokenUsage, error) {
 	copySession := *sess
 	copySession.History = nil
-	copySession.ContextEdits = nil
 	copySession.ReasoningStart = 0
 	if err := appendUserPrompt(&copySession, source); err != nil {
 		return "", nil, err
@@ -221,15 +220,6 @@ func (c *responsesClient) request(ctx context.Context, sess *session, instructio
 	history, err := sess.requestHistory()
 	if err != nil {
 		return streamResult{}, err
-	}
-	window := c.contextWindow
-	if window == 0 {
-		window = modelContextWindow
-	}
-	if toolsAllowed && sess.ContextTokens >= window/2 {
-		if hint := contextEditHint(history); hint != nil {
-			history = append(history, hint)
-		}
 	}
 	seen, err := validatedResponsesCallIDs(history, c.profile)
 	if err != nil {
