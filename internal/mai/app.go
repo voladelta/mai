@@ -49,7 +49,7 @@ Options:
   --jsonl                 Write task, model, and tool events as JSON Lines.
 
 Tasks are stateless unless you use --persist or --last.
-The built-in default is DeepSeek deepseek-v4-pro/high.
+The built-in default is Enclave cyberouter/deepseek-v4.1-flash/high.
 Provider settings: .mai.config in the current directory, then $HOME/.mai.config.
 --last keeps the saved model and effort; --provider adopts its configured model.
 

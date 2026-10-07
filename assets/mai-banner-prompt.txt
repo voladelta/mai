@@ -10,7 +10,7 @@ Typography: large lowercase geometric grotesk display, with smaller crisp monosp
 Exact text, in reading order:
 mai
 Little agents, giant circuits
-DeepSeek Responses API
+Enclave Responses API
 Single model, CLI delegation
 Native Go / persistent Python
 The three metadata lines should form a tidy compact group under the tagline. No counts or version numbers.
