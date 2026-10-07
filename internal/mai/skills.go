@@ -1,7 +1,6 @@
 package mai
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,7 +21,13 @@ const (
 	maxSkillDescriptionChars = 1_024
 )
 
-var explicitSkillPattern = regexp.MustCompile(`\$([a-z][a-z0-9-]*)`)
+// Skill names must match this syntax to be mentioned explicitly as $name.
+const skillNameSyntax = `[a-z][a-z0-9-]*`
+
+var (
+	explicitSkillPattern = regexp.MustCompile(`\$(` + skillNameSyntax + `)`)
+	skillNamePattern     = regexp.MustCompile(`^` + skillNameSyntax + `$`)
+)
 
 type skillSummary struct {
 	ID            string
@@ -84,7 +89,7 @@ func buildSkillContext(roots []string, userPrompt string) skillContext {
 		case 0:
 			continue
 		case 1:
-			file, readErr := readSkill([]string{matches[0].root}, matches[0].ID, "")
+			file, readErr := readSkill(matches[0].root, matches[0].ID, "")
 			if readErr != nil {
 				warnings = append(warnings, fmt.Sprintf("explicit skill $%s could not be read: %v", mention, readErr))
 				continue
@@ -137,6 +142,9 @@ func loadSkills(roots []string) ([]skillSummary, []string) {
 		for _, skill := range found {
 			if seenIDs[skill.ID] || seenNames[skill.Name] {
 				continue
+			}
+			if !skillNamePattern.MatchString(skill.Name) {
+				warnings = append(warnings, fmt.Sprintf("%s: skill name %q cannot be mentioned as $name; use lowercase letters, digits, and hyphens", skill.ID, skill.Name))
 			}
 
 			skills = append(skills, skill)
@@ -319,21 +327,10 @@ func renderSkillCatalog(skills []skillSummary) string {
 	return strings.Join(lines, "\n")
 }
 
-func readSkill(roots []string, id, file string) (skillFileResult, error) {
-	var dir string
-	for _, root := range roots {
-		var err error
-		dir, err = secureSkillDir(root, id)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return skillFileResult{}, err
-		}
-		break
-	}
-	if dir == "" {
-		return skillFileResult{}, fmt.Errorf("skill %q: %w", id, os.ErrNotExist)
+func readSkill(root, id, file string) (skillFileResult, error) {
+	dir, err := secureSkillDir(root, id)
+	if err != nil {
+		return skillFileResult{}, err
 	}
 	if file == "" {
 		file = "SKILL.md"
@@ -357,9 +354,10 @@ func readSkill(roots []string, id, file string) (skillFileResult, error) {
 	result := skillFileResult{
 		OK: true, Skill: id, Path: filepath.ToSlash(clean), MediaType: mediaType,
 	}
-	if strings.HasPrefix(strings.ToLower(mediaType), "image/") {
-		contentType, _, _ := strings.Cut(mediaType, ";")
-		result.imageURL = "data:" + contentType + ";base64," + base64.StdEncoding.EncodeToString(b)
+	// Only images view_image accepts become image content; SVG and other
+	// text files are returned as text, and other binary data fails.
+	if image, err := decodeImage(b); err == nil {
+		result.MediaType, result.imageURL = image.MediaType, image.imageURL
 		return result, nil
 	}
 	content := string(b)

@@ -2,7 +2,7 @@
 
 [Back to README](../README.md) · [CLI reference](cli.md) · [Sessions and context](sessions.md)
 
-Mai exposes eight general tools.
+Mai exposes seven general tools.
 Tools are selected by the model; Python examples below are cells sent to Mai's
 `python` tool, not commands for a standalone Python interpreter.
 
@@ -11,12 +11,12 @@ Tools are selected by the model; Python examples below are cells sent to Mai's
 | Tool | Input | Behavior |
 | --- | --- | --- |
 | `bash` | `command`, optional `description`, `timeout_ms` | Run a fresh `bash -c` in the task working directory. `description` is an optional label shown in the progress line. |
-| `read` | `file_path`, optional `offset`, `limit` | Read numbered UTF-8 text lines and observe the file version. Paths are relative to the repository root. |
+| `read` | `file_path`, optional `offset`, `limit` | Read numbered UTF-8 text lines and observe the file version. |
 | `write` | `file_path`, `content` | Create or fully replace a repository UTF-8 text file. Existing files require a fresh observation. |
 | `edit` | `file_path`, `old_string`, `new_string`, optional `replace_all` | Replace literal text in an observed repository file. |
 | `python` | `code` or `reset: true` | Execute a cell in the persistent namespace, or discard that namespace. |
-| `read_skill` | `path`, optional `file` | Read a discovered skill by directory id; `file` defaults to `SKILL.md`. Disabled by `-s` or `--skip-skills`. |
-| `view_image` | `path` | Read a repository image using an absolute path or a path relative to the working directory. |
+| `read_skill` | `path`, optional `file` | Read a file from a discovered skill by directory id; `file` defaults to `SKILL.md`. Disabled by `-s` or `--skip-skills`. |
+| `view_image` | `path` | Send a PNG, JPEG, or GIF from the repository to the model as image content. |
 
 For example, a Bash tool call uses:
 
@@ -24,12 +24,14 @@ For example, a Bash tool call uses:
 {"command":"git diff --check","timeout_ms":10000}
 ```
 
+`read`, `write`, `edit`, and `view_image` take paths relative to the
+repository root, even when Mai starts in a subdirectory; an absolute path inside
+the repository also works. `bash` runs in the task working directory.
 Bash output, Python state, and skill discovery are described below.
 
 ## Reading and editing files
 
-File tool paths are relative to the repository root, even when Mai starts in a
-subdirectory. Files and mutation content are limited to 16 MiB. Only regular
+Files and mutation content are limited to 16 MiB. Only regular
 UTF-8 text files without NUL bytes are supported; file symlinks and special
 files are rejected. Directory aliases inside the repository share a target
 identity; aliases leading outside it are rejected.
@@ -70,8 +72,10 @@ no prior read. Creation refuses to overwrite a file that appears concurrently.
 nonempty literal `old_string` and a different `new_string`; an empty
 replacement deletes the match. Zero matches return `FS_EDIT_NOT_FOUND`.
 Multiple matches return `FS_AMBIGUOUS_EDIT` unless `replace_all` is true.
-Whitespace matches exactly. Edits normalize CRLF/LF for matching and restore
-the original line-ending style. Full writes store the supplied contents.
+Whitespace matches exactly. Matching treats CRLF and LF as equal. The edit
+replaces only the matched bytes: other lines keep their endings, and newlines in
+`new_string` take the ending of the line where the match starts. Full writes
+store the supplied contents.
 
 Results are plain text. `write` returns the envelope above with `Created file`
 or `Updated file` as its content; `edit` returns
@@ -81,8 +85,11 @@ Failures are `Error: <message>`, for example
 `cannot modify "path": file has not been read — read the file, then retry` or
 `cannot modify "path": file changed since it was read — re-read the file, then retry`.
 Python's `mai.read`, `mai.write`, and `mai.edit` return structured dictionaries
-(`ok`, `code`, `error`, `content`, `total_lines`, …) instead of this text;
-a Python `mai.read` past the end of the file returns empty `content` rather than an error.
+(`ok`, `code`, `error`, `content`, `total_lines`, …) instead of this text.
+A `mai.read` result's `content` keeps the `N: ` line-number prefixes, and a read
+past the end of the file returns empty `content` rather than an error. For raw
+text to process in Python, use `open()`; use `mai.read` to observe a file before
+`mai.write` or `mai.edit`.
 
 For example, after reading `config.go`:
 
@@ -101,29 +108,42 @@ target with `read` before retrying rather than automatically replaying a call.
 
 ## Skills
 
-Skills are enabled by default and read from `agents/skills` in the current
-repository, then from
-`~/.agents/skills`. Valid repository skills take priority when a directory id or
-skill name matches. Invalid skills produce warnings and are skipped, allowing a
-valid global copy to be selected. Later `read_skill` calls for a discovered id
-use that selected root, including supporting files. When launched from a
-subdirectory, Mai uses the Git repository root; outside Git, it uses the current
-working directory. Missing skill directories are ignored. Each model request
-includes all eligible skill names and descriptions, then loads a complete
-`SKILL.md` only when needed. Each skill description must be 1,024 characters or fewer.
-Set `disable-model-invocation: true` in `SKILL.md` YAML front matter to hide
-a skill from automatic selection; an explicit `$skill-name` still loads it.
+Skills are enabled by default. Each model request lists the name and
+description of every skill available for automatic selection; the model loads
+a complete `SKILL.md` through `read_skill` only when needed.
+
+### Discovery
+
+Mai reads skills from `agents/skills` at the Git repository root (outside Git,
+the current working directory), then from `~/.agents/skills`. Missing
+directories are ignored. Each skill is a directory whose `SKILL.md` starts with
+YAML front matter containing `name` and a `description` of 1,024 characters or
+fewer.
+
+When a directory id or skill name matches in both places, the valid repository
+skill wins. Invalid skills produce warnings and are skipped, allowing a valid
+global copy to be selected. `read_skill` reads only discovered skills, from the
+directory that won discovery, including supporting files. PNG, JPEG, and GIF
+files are returned as image content, other text files (including SVG) as text,
+and other binary files are rejected.
+
+### Automatic and explicit use
+
+Set `disable-model-invocation: true` in the front matter to hide a skill from
+automatic selection; an explicit `$skill-name` mention still loads it. Omitting
+the field or setting it to `false` allows automatic selection unless
+`policy.allow_implicit_invocation` is `false` in the skill's
+`agents/openai.yaml`.
+
+A mention matches a skill name, or a directory id when no name matches. Names
+must start with a lowercase letter and contain only lowercase letters, digits,
+and hyphens; Mai warns about any other name, because a mention cannot match it
+by name.
+
 An explicit mention adds the complete `SKILL.md` to the conversation right after
-that request, so it stays in effect when the task is resumed with `--last`, and
-the instructions, which precede the conversation, stay identical across runs
-and keep the provider's prompt cache.
-Omitting the field or setting it to `false` allows automatic selection unless
-`policy.allow_implicit_invocation` is `false` in `agents/openai.yaml`.
-Use `-s` or `--skip-skills` to skip skill discovery for one run, including
-resolution of explicit `$skill-name` mentions. The flag also works with
-`--last` and must be passed again on each resumed run. When disabled, the
-`read_skill` tool is omitted from requests and rejects unexpected calls.
-Images use typed image output; other binary files are rejected.
+that request. Because it is part of the history rather than the instructions,
+it stays in effect when the task is resumed with `--last`, and the
+instructions stay identical across runs and keep the provider's prompt cache.
 
 Quote explicit skill mentions with single quotes so the shell does not expand
 the dollar sign:
@@ -132,6 +152,15 @@ the dollar sign:
 mai 'Use $my-skill to review this package'
 mai "review this package" --skip-skills
 ```
+
+### Disabling skills
+
+Use `-s` or `--skip-skills` to skip skill discovery for one run, including
+resolution of explicit `$skill-name` mentions. The flag also works with
+`--last` and must be passed again on each resumed run. When disabled, the
+`read_skill` tool is omitted from requests and rejects unexpected calls.
+
+### Defining a skill
 
 To define a repository skill, create `agents/skills/my-skill/SKILL.md`:
 
@@ -166,12 +195,16 @@ truncated, the result includes a `stdout_capture_path` or
 `stderr_capture_path` to a private temporary file containing the complete
 stream up to a 32 MiB per-stream capture limit. `capture_truncated` reports
 when that limit is reached, and `capture_error` reports a disk capture failure.
+Capture files are removed when Mai exits, so paths in a resumed task's history
+no longer exist. If Mai cannot create its capture directory, captures stay in
+the system temporary directory.
 
 Use `--no-input` in scripts and other non-interactive environments. If a command
 needs approval, `mai` rejects it instead of opening a terminal prompt.
 
 The `view_image` tool reads a PNG, JPEG, or GIF inside the repository and sends
-it as typed image content to the model. Files are limited to 8 MiB and 8,192
+it as typed image content to the model. Like the file tools, it resolves
+relative paths from the repository root. Files are limited to 8 MiB and 8,192
 pixels per side.
 
 For images up to one million pixels, `solid_color` reports an exact hex color
@@ -266,8 +299,9 @@ for durable work; Mai does not snapshot variables or replay cells.
 
 Results include the Python version, executable, and GIL status. Tracebacks use
 cell filenames such as `<mai:g2:c7>`; a bounded source cache retains recent cell
-text. In persisted tasks, Mai journals nested host calls before dispatch and
-saves their results. The outer Python result includes bounded activity summaries;
+text. In persisted tasks, Mai journals nested `bash`, `write`, and `edit` calls
+before dispatch and saves their results; reads have no effects to recover and
+are not journaled. The outer Python result includes bounded activity summaries;
 large arguments and results are abbreviated, with omitted activities counted.
 An interrupted pending operation has an unknown outcome on resume; it is never
 replayed automatically.

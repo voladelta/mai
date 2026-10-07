@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -331,8 +332,12 @@ func renderFileText(name string, result map[string]any) string {
 	}
 }
 
+// literalEdit matches line-ending-normalized text but splices the original
+// bytes, so lines outside each match keep their own endings. Newlines in the
+// replacement take the ending of the line where the match starts.
 func literalEdit(data []byte, request fileRequest) ([]byte, error) {
-	text, old, replacement := normalizeText(string(data)), normalizeText(request.old), normalizeText(request.replacement)
+	raw := string(data)
+	text, old, replacement := normalizeText(raw), normalizeText(request.old), normalizeText(request.replacement)
 	count := strings.Count(text, old)
 	if count == 0 {
 		return nil, fsError("FS_EDIT_NOT_FOUND", "old_string was not found in the file; re-read the file and provide literal text")
@@ -348,14 +353,46 @@ func literalEdit(data []byte, request fileRequest) ([]byte, error) {
 	if size > maxTextFileBytes {
 		return nil, fsError("FS_TOO_LARGE", "edited content exceeds the 16 MiB file limit")
 	}
-	text = strings.Replace(text, old, replacement, n)
-	if strings.Contains(string(data), "\r\n") {
-		text = strings.ReplaceAll(text, "\n", "\r\n")
+	// crlf holds the normalized offset of each newline that was CRLF, so a
+	// normalized offset maps to raw by adding the CRs removed before it.
+	var crlf []int
+	for i := 0; ; {
+		j := strings.Index(raw[i:], "\r\n")
+		if j < 0 {
+			break
+		}
+		crlf = append(crlf, i+j-len(crlf))
+		i += j + 2
 	}
-	if len(text) > maxTextFileBytes {
+	rawOffset := func(offset int) int { return offset + sort.SearchInts(crlf, offset) }
+	var out strings.Builder
+	copied, from := 0, 0
+	for range n {
+		at := from + strings.Index(text[from:], old)
+		start, end := rawOffset(at), rawOffset(at+len(old))
+		ending := "\n"
+		if lineEndsCRLF(raw, start) {
+			ending = "\r\n"
+		}
+		out.WriteString(raw[copied:start])
+		out.WriteString(strings.ReplaceAll(replacement, "\n", ending))
+		copied, from = end, at+len(old)
+	}
+	out.WriteString(raw[copied:])
+	if out.Len() > maxTextFileBytes {
 		return nil, fsError("FS_TOO_LARGE", "edited content exceeds the 16 MiB file limit")
 	}
-	return []byte(text), nil
+	return []byte(out.String()), nil
+}
+
+// lineEndsCRLF reports the ending of the line containing offset, or of the
+// last line ending before it when that line has none.
+func lineEndsCRLF(raw string, offset int) bool {
+	if k := strings.IndexByte(raw[offset:], '\n'); k >= 0 {
+		return k > 0 && raw[offset+k-1] == '\r'
+	}
+	k := strings.LastIndexByte(raw[:offset], '\n')
+	return k > 0 && raw[k-1] == '\r'
 }
 
 func (a *agent) executeFileTool(ctx context.Context, sess *session, name, arguments string) json.RawMessage {

@@ -302,3 +302,27 @@ func TestBashSetsTerminalEnvironment(t *testing.T) {
 		t.Fatal(raw)
 	}
 }
+
+func TestAgentRemovesBashCapturesOnClose(t *testing.T) {
+	root := t.TempDir()
+	a := newAgent(io.Discard, io.Discard, "", time.Second, false)
+	sess := &session{CWD: root, RepoRoot: root}
+	var encoded string
+	if err := json.Unmarshal(a.executeBash(context.Background(), sess, `{"command":"head -c 70000 /dev/zero"}`), &encoded); err != nil {
+		t.Fatal(err)
+	}
+	var result bashResult
+	if err := json.Unmarshal([]byte(encoded), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.StdoutCapturePath == "" {
+		t.Fatalf("missing capture: %s", encoded)
+	}
+	if _, err := os.Stat(result.StdoutCapturePath); err != nil {
+		t.Fatalf("capture missing before close: %v", err)
+	}
+	a.close()
+	if _, err := os.Stat(result.StdoutCapturePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("capture survived close: %v", err)
+	}
+}

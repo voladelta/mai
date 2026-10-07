@@ -167,6 +167,10 @@ func TestFileToolsLiteralMatchingAndLineEndings(t *testing.T) {
 		{"delete", "a\nb", "a\n", "", "b", "", false},
 		{"crlf", "a\r\nb\r\n", "a\nb", "c\nd", "c\r\nd\r\n", "", false},
 		{"lf", "a\nb", "a\r\nb", "c\r\nd", "c\nd", "", false},
+		{"crlf-insert", "a\r\nb\r\n", "a", "a\nz", "a\r\nz\r\nb\r\n", "", false},
+		{"mixed-keeps-other-lines", "a\r\nb\nc\r\n", "b", "B", "a\r\nB\nc\r\n", "", false},
+		{"mixed-span", "a\r\nb\nc\r\nd\n", "b\nc\n", "x\ny\n", "a\r\nx\ny\nd\n", "", false},
+		{"mixed-all", "a\r\na\n", "a", "b", "b\r\nb\n", "", true},
 		{"unicode", "café 猫", "猫", "犬", "café 犬", "", false},
 		{"no-final-newline", "a", "a", "b", "b", "", false},
 	}

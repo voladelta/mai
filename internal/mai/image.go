@@ -29,21 +29,23 @@ type imageFileResult struct {
 	imageURL   string
 }
 
-func viewImage(root, cwd, path string) (imageFileResult, error) {
+// viewImage resolves path like the file tools: relative to the repository
+// root, or absolute inside it.
+func viewImage(root, path string) (imageFileResult, error) {
 	if path == "" {
 		return imageFileResult{}, errors.New("image path is empty")
 	}
+	root, err := canonicalPath(root)
+	if err != nil {
+		return imageFileResult{}, fmt.Errorf("resolve repository path: %w", err)
+	}
 	requested := path
 	if !filepath.IsAbs(requested) {
-		requested = filepath.Join(cwd, requested)
+		requested = filepath.Join(root, requested)
 	}
 	resolved, err := canonicalPath(requested)
 	if err != nil {
 		return imageFileResult{}, fmt.Errorf("resolve image path: %w", err)
-	}
-	root, err = canonicalPath(root)
-	if err != nil {
-		return imageFileResult{}, fmt.Errorf("resolve repository path: %w", err)
 	}
 	if !pathWithin(root, resolved) {
 		return imageFileResult{}, errors.New("image path is outside the repository")
@@ -57,6 +59,17 @@ func viewImage(root, cwd, path string) (imageFileResult, error) {
 	if err != nil {
 		return imageFileResult{}, fmt.Errorf("read image: %w", err)
 	}
+	result, err := decodeImage(data)
+	if err != nil {
+		return imageFileResult{}, err
+	}
+	result.Path = resolved
+	return result, nil
+}
+
+// decodeImage accepts only PNG, JPEG, and GIF data within the dimension limit,
+// the formats every supported provider accepts as image input.
+func decodeImage(data []byte) (imageFileResult, error) {
 	config, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
 		return imageFileResult{}, fmt.Errorf("decode image: %w", err)
@@ -76,7 +89,7 @@ func viewImage(root, cwd, path string) (imageFileResult, error) {
 		solidColor = uniformImageColor(decoded)
 	}
 	return imageFileResult{
-		OK: true, Path: resolved, MediaType: mediaType,
+		OK: true, MediaType: mediaType,
 		Width: config.Width, Height: config.Height,
 		SolidColor: solidColor,
 		imageURL:   "data:" + mediaType + ";base64," + base64.StdEncoding.EncodeToString(data),

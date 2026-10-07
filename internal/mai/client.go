@@ -246,7 +246,7 @@ func toolDefinitions() []map[string]any {
 	return []map[string]any{
 		{
 			"type": "function", "name": "read_skill",
-			"description": "Read one file from an installed skill. Omit file to read SKILL.md; read it before using the skill or loading supporting files. Images are returned as image content; unsupported binary files fail.",
+			"description": "Read one file from an installed skill. Omit file to read SKILL.md; read it before using the skill or loading supporting files. PNG, JPEG, and GIF files are returned as image content; other text files, including SVG, as text; other binary files fail.",
 			"parameters": map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
@@ -262,7 +262,7 @@ func toolDefinitions() []map[string]any {
 			"parameters": map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
-					"path": map[string]string{"type": "string", "description": "Absolute path or path relative to the task working directory."},
+					"path": map[string]string{"type": "string", "description": "Path relative to the repository root, or an absolute path inside it."},
 				},
 				"required": []string{"path"},
 			},
@@ -322,7 +322,7 @@ func toolDefinitions() []map[string]any {
 		},
 		{
 			"type": "function", "name": "edit",
-			"description": "Edit a repository UTF-8 text file by exact literal replacement. Paths are relative to the repository root. Read first unless just created/edited in this session. Whitespace must match; CRLF/LF are normalized and original line endings preserved. Reread if stale. Each call commits one file.",
+			"description": "Edit a repository UTF-8 text file by exact literal replacement. Paths are relative to the repository root. Read first unless just created/edited in this session. Whitespace must match; CRLF and LF match each other, other lines keep their endings, and newlines in new_string take the ending of the line where the match starts. Reread if stale. Each call commits one file.",
 			"parameters": map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{

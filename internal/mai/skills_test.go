@@ -1,9 +1,12 @@
 package mai
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/png"
 	"io"
 	"os"
 	"os/exec"
@@ -361,7 +364,7 @@ func TestReadSkillRejectsEscapesAndUnscopedFiles(t *testing.T) {
 	mustWrite(t, filepath.Join(root, "secret.txt"), "secret")
 
 	for _, path := range []string{"../secret.txt", "/etc/passwd"} {
-		if _, err := readSkill([]string{root}, "demo", path); err == nil {
+		if _, err := readSkill(root, "demo", path); err == nil {
 			t.Fatalf("readSkill accepted %q", path)
 		}
 	}
@@ -372,11 +375,11 @@ func TestReadSkillRejectsEscapesAndUnscopedFiles(t *testing.T) {
 	if err := os.Symlink(filepath.Join(root, "secret.txt"), filepath.Join(root, "demo", "references", "escape.txt")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readSkill([]string{root}, "demo", "references/escape.txt"); err == nil {
+	if _, err := readSkill(root, "demo", "references/escape.txt"); err == nil {
 		t.Fatal("readSkill accepted a symlink escape")
 	}
 	mustWrite(t, filepath.Join(root, "demo", "assets", "data.bin"), string([]byte{0, 1, 2}))
-	if _, err := readSkill([]string{root}, "demo", "assets/data.bin"); err == nil || !strings.Contains(err.Error(), "unsupported media type") {
+	if _, err := readSkill(root, "demo", "assets/data.bin"); err == nil || !strings.Contains(err.Error(), "unsupported media type") {
 		t.Fatalf("unexpected binary file error: %v", err)
 	}
 }
@@ -384,8 +387,9 @@ func TestReadSkillRejectsEscapesAndUnscopedFiles(t *testing.T) {
 func TestSkillImageContentKeepsHistoryUsable(t *testing.T) {
 	root := testSkillRoot(t)
 	writeTestSkill(t, root, "demo", "demo", "A demonstration skill.")
-	mustWrite(t, filepath.Join(root, "demo", "assets", "icon.png"), string([]byte{0x89, 'P', 'N', 'G', 0, 1}))
+	mustWrite(t, filepath.Join(root, "demo", "assets", "icon.png"), testPNG(t))
 	a := &agent{stdout: io.Discard, stderr: io.Discard, skillsRoots: []string{root}}
+	a.loadSkillInstructions("Inspect files.")
 	sess := deepseekTestSession(t)
 	call := functionCall{
 		Type:      "function_call",
@@ -434,6 +438,7 @@ func TestAgentRoutesRegisteredSkillTools(t *testing.T) {
 	writeTestSkill(t, root, "demo", "demo", "A demonstration skill.")
 	mustWrite(t, filepath.Join(root, "demo", "references", "guide.md"), "Guide.\n")
 	a := &agent{stderr: io.Discard, skillsRoots: []string{root}}
+	a.loadSkillInstructions("Inspect files.")
 
 	calls := []struct {
 		arguments   string
@@ -466,7 +471,7 @@ func TestAgentRoutesRegisteredSkillTools(t *testing.T) {
 		}
 	}
 
-	mustWrite(t, filepath.Join(root, "demo", "assets", "icon.png"), string([]byte{0x89, 'P', 'N', 'G', 0, 1}))
+	mustWrite(t, filepath.Join(root, "demo", "assets", "icon.png"), testPNG(t))
 	raw := a.executeTool(context.Background(), &session{}, functionCall{
 		Name: "read_skill", Arguments: `{"path":"demo","file":"assets/icon.png"}`,
 	})
@@ -544,8 +549,65 @@ func testSkillRoot(t *testing.T) string {
 	return root
 }
 
+func testPNG(t *testing.T) string {
+	t.Helper()
+	var data bytes.Buffer
+	if err := png.Encode(&data, image.NewRGBA(image.Rect(0, 0, 1, 1))); err != nil {
+		t.Fatal(err)
+	}
+	return data.String()
+}
+
 func writeTestSkill(t *testing.T, root, id, name, description string) {
 	t.Helper()
 	content := "---\nname: " + name + "\ndescription: " + description + "\n---\n\n# " + name + " instructions\n"
 	mustWrite(t, filepath.Join(root, id, "SKILL.md"), content)
+}
+
+func TestReadSkillSendsOnlyDecodableImagesAsImages(t *testing.T) {
+	root := testSkillRoot(t)
+	writeTestSkill(t, root, "demo", "demo", "A demonstration skill.")
+	mustWrite(t, filepath.Join(root, "demo", "assets", "icon.png"), testPNG(t))
+	mustWrite(t, filepath.Join(root, "demo", "assets", "icon.svg"), `<svg xmlns="http://www.w3.org/2000/svg"/>`)
+	mustWrite(t, filepath.Join(root, "demo", "assets", "broken.png"), string([]byte{0x89, 'P', 'N', 'G', 0, 1}))
+
+	result, err := readSkill(root, "demo", "assets/icon.png")
+	if err != nil || !strings.HasPrefix(result.imageURL, "data:image/png;base64,") || result.MediaType != "image/png" {
+		t.Fatalf("decodable PNG was not image content: %#v, %v", result, err)
+	}
+	// Providers accept only raster formats as image input; SVG is text.
+	result, err = readSkill(root, "demo", "assets/icon.svg")
+	if err != nil || result.imageURL != "" || !strings.Contains(result.Content, "<svg") {
+		t.Fatalf("SVG was not returned as text: %#v, %v", result, err)
+	}
+	if _, err := readSkill(root, "demo", "assets/broken.png"); err == nil {
+		t.Fatal("undecodable image was accepted")
+	}
+}
+
+func TestReadSkillRejectsUndiscoveredSkill(t *testing.T) {
+	root := testSkillRoot(t)
+	mustWrite(t, filepath.Join(root, "demo", "SKILL.md"), "invalid front matter")
+	mustWrite(t, filepath.Join(root, "demo", "guide.md"), "Invalid skill guide.")
+	a := &agent{stderr: io.Discard, skillsRoots: []string{root}}
+	a.loadSkillInstructions("Inspect files.")
+
+	output := string(a.executeTool(context.Background(), &session{}, functionCall{Name: "read_skill", Arguments: `{"path":"demo","file":"guide.md"}`}))
+	if strings.Contains(output, "Invalid skill guide.") || !strings.Contains(output, `\"ok\":false`) {
+		t.Fatalf("read_skill read an invalid skill: %s", output)
+	}
+}
+
+func TestSkillNameOutsideMentionSyntaxWarns(t *testing.T) {
+	root := testSkillRoot(t)
+	writeTestSkill(t, root, "upper", "My_Skill", "A skill whose name cannot be mentioned.")
+	writeTestSkill(t, root, "plain", "plain-skill", "A mentionable skill.")
+
+	result := buildSkillContext([]string{root}, "Use $plain-skill.")
+	if len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], "My_Skill") {
+		t.Fatalf("unexpected warnings: %#v", result.Warnings)
+	}
+	if !strings.Contains(result.Instructions, "My_Skill") || !strings.Contains(result.Explicit, "# plain-skill instructions") {
+		t.Fatalf("skills were not loaded:\n%s\n%s", result.Instructions, result.Explicit)
+	}
 }

@@ -31,6 +31,9 @@ type bashRequest struct {
 	RepoRoot  string
 	Depth     int
 	Approve   approvalFunc
+	// CaptureRoot holds full-output capture directories; empty means the
+	// system temporary directory.
+	CaptureRoot string
 }
 
 type bashResult struct {
@@ -89,7 +92,7 @@ func runBash(parent context.Context, req bashRequest) string {
 	// cmd.Environ() injects PWD=<cmd.Dir>; build on it rather than os.Environ(),
 	// which would carry this process's stale PWD.
 	cmd.Env = withTerminalEnvironment(childEnvironment(cmd.Environ(), req.Depth))
-	captureDir, err := os.MkdirTemp("", "mai-bash-")
+	captureDir, err := os.MkdirTemp(req.CaptureRoot, "mai-bash-")
 	if err != nil {
 		return toolError("prepare bash capture", err)
 	}

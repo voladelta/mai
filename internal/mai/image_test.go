@@ -41,7 +41,7 @@ func TestViewImageExactSolidColorEvidence(t *testing.T) {
 			if err := os.WriteFile(path, data.Bytes(), 0600); err != nil {
 				t.Fatal(err)
 			}
-			got, err := viewImage(root, root, path)
+			got, err := viewImage(root, path)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -70,7 +70,9 @@ func TestViewImageReturnsTypedImageWithinRepository(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sess := &session{CWD: root, RepoRoot: root}
+	// Like the file tools, relative paths start at the repository root even
+	// when the task runs in a subdirectory.
+	sess := &session{CWD: filepath.Join(root, "src"), RepoRoot: root}
 	a := &agent{stderr: &bytes.Buffer{}}
 	output := a.executeViewImage(sess, `{"path":"screen.png"}`)
 	var parts []struct {
@@ -91,14 +93,14 @@ func TestViewImageRejectsOutsideAndOversizedFiles(t *testing.T) {
 	if err := os.WriteFile(outside, []byte("not an image"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := viewImage(root, root, outside); err == nil || !strings.Contains(err.Error(), "outside") {
+	if _, err := viewImage(root, outside); err == nil || !strings.Contains(err.Error(), "outside") {
 		t.Fatalf("outside file accepted: %v", err)
 	}
 	path := filepath.Join(root, "large.png")
 	if err := os.WriteFile(path, make([]byte, maxImageBytes+1), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := viewImage(root, root, path); err == nil || !strings.Contains(err.Error(), "size limit") {
+	if _, err := viewImage(root, path); err == nil || !strings.Contains(err.Error(), "size limit") {
 		t.Fatalf("oversized file accepted: %v", err)
 	}
 }
@@ -165,6 +167,7 @@ func TestImageToolsReturnImageContentAndHistoryRoundTrips(t *testing.T) {
 					requestTimeout: time.Second,
 				},
 			}
+			a.loadSkillInstructions("Inspect the screenshot.")
 
 			if terminalItems, err := a.runTurn(context.Background(), sess, "instructions"); err != nil || len(terminalItems) != 0 {
 				t.Fatalf("image tool turn: terminal=%v err=%v", terminalItems, err)

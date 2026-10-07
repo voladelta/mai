@@ -42,6 +42,8 @@ type agent struct {
 	filesOnce      sync.Once
 	depth          int
 	files          *fileTools
+	capturesOnce   sync.Once
+	captures       string // run-owned directory for Bash output captures
 }
 
 type functionCall struct {
@@ -84,6 +86,18 @@ func (a *agent) run(ctx context.Context, sess *session, userPrompt string) error
 
 func (a *agent) close() {
 	a.python.close()
+	if a.captures != "" {
+		_ = os.RemoveAll(a.captures)
+	}
+}
+
+// captureRoot creates the run's Bash capture directory on first use. If it
+// cannot be created, captures fall back to the system temporary directory.
+func (a *agent) captureRoot() string {
+	a.capturesOnce.Do(func() {
+		a.captures, _ = os.MkdirTemp("", "mai-captures-")
+	})
+	return a.captures
 }
 
 func (a *agent) runLoop(ctx context.Context, sess *session, userPrompt string) ([]json.RawMessage, error) {
@@ -415,12 +429,13 @@ func (a *agent) executeReadSkill(arguments string) json.RawMessage {
 		file = "SKILL.md"
 	}
 	fmt.Fprintf(a.stderr, "→ read_skill: %s/%s\n", args.Path, file)
-	roots := a.skillsRoots
-	if selected, ok := a.skillRootsByID[args.Path]; ok {
-		roots = []string{selected}
+	// Only discovered skills are readable, from the root that won discovery.
+	root, ok := a.skillRootsByID[args.Path]
+	if !ok {
+		return textToolOutput(toolError("read_skill failed", fmt.Errorf("skill %q is not an available skill", args.Path)))
 	}
 
-	result, err := readSkill(roots, args.Path, file)
+	result, err := readSkill(root, args.Path, file)
 	if err != nil {
 		return textToolOutput(toolError("read_skill failed", err))
 	}
@@ -435,7 +450,7 @@ func (a *agent) executeViewImage(sess *session, arguments string) json.RawMessag
 		return textToolOutput(toolError("invalid view_image arguments", err))
 	}
 	fmt.Fprintf(a.stderr, "→ view_image: %s\n", args.Path)
-	result, err := viewImage(sess.RepoRoot, sess.CWD, args.Path)
+	result, err := viewImage(sess.RepoRoot, args.Path)
 	if err != nil {
 		return textToolOutput(toolError("view_image failed", err))
 	}
@@ -462,7 +477,7 @@ func (a *agent) executeBash(ctx context.Context, sess *session, arguments string
 	return textToolOutput(runBash(ctx, bashRequest{
 		Command: args.Command, TimeoutMS: args.TimeoutMS, CWD: sess.CWD,
 		RepoRoot: sess.RepoRoot, Approve: a.approve,
-		Depth: a.depth,
+		Depth: a.depth, CaptureRoot: a.captureRoot(),
 	}))
 }
 

@@ -16,7 +16,7 @@ func TestRegularFileReadersRejectFIFOWithoutWriter(t *testing.T) {
 		read func(string) error
 	}{
 		{name: "image", read: func(path string) error {
-			_, err := viewImage(filepath.Dir(path), filepath.Dir(path), path)
+			_, err := viewImage(filepath.Dir(path), path)
 			return err
 		}},
 		{name: "saved_state", read: func(path string) error {
@@ -108,13 +108,13 @@ func TestReadSkillSizeBoundaryAndInternalSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := readSkill([]string{root}, "demo", "link.txt")
+	result, err := readSkill(root, "demo", "link.txt")
 	if err != nil || result.Content != content {
 		t.Fatalf("exact-limit symlink read: bytes=%d, error=%v", len(result.Content), err)
 	}
 
 	mustWrite(t, path, content+"a")
-	if _, err := readSkill([]string{root}, "demo", "link.txt"); err == nil || !strings.Contains(err.Error(), "skill file limit") {
+	if _, err := readSkill(root, "demo", "link.txt"); err == nil || !strings.Contains(err.Error(), "skill file limit") {
 		t.Fatalf("oversize skill error = %v", err)
 	}
 }

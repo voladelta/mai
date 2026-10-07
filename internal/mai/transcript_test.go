@@ -150,3 +150,21 @@ assert "final fact is 42" in seen[-1]["text"]`)
 		t.Fatalf("later match was not reachable: %#v", got)
 	}
 }
+
+func TestTranscriptExcerptKeepsMatchAfterCaseFoldingChangesByteLength(t *testing.T) {
+	// U+212A KELVIN SIGN is three bytes and lowercases to the one-byte "k".
+	sess := &session{History: []json.RawMessage{
+		json.RawMessage(`{"role":"user","content":"` + strings.Repeat("K", 3000) + `target"}`),
+	}}
+	var result struct {
+		Matches []struct {
+			Text string `json:"text"`
+		} `json:"matches"`
+	}
+	if err := json.Unmarshal(searchTranscript(sess, json.RawMessage(`{"query":"TARGET","limit":1}`), ""), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Matches) != 1 || !strings.Contains(result.Matches[0].Text, "target") {
+		t.Fatalf("excerpt lost the match: %#v", result)
+	}
+}

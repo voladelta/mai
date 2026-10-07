@@ -233,11 +233,14 @@ func searchTranscript(sess *session, arguments json.RawMessage, activeCallID str
 		if activeCallID != "" && entry.Kind == "tool_call" && entry.CallID == activeCallID {
 			return
 		}
-		position := strings.Index(strings.ToLower(entry.Text), needle)
+		lowered := strings.ToLower(entry.Text)
+		position := strings.Index(lowered, needle)
 		if position >= 0 {
 			result.Total++
 			if index >= args.Start && len(result.Matches) < args.Limit {
-				entry.Text = transcriptExcerpt(entry.Text, position)
+				// Lowercasing maps rune to rune but can change byte lengths, so
+				// locate the match by rune index rather than byte offset.
+				entry.Text = transcriptExcerpt(entry.Text, utf8.RuneCountInString(lowered[:position]))
 				result.Matches = append(result.Matches, match{Index: index, transcriptEntry: entry})
 				lastMatch = index
 			} else if index >= args.Start && result.Next == nil {
@@ -280,13 +283,11 @@ func searchTranscript(sess *session, arguments json.RawMessage, activeCallID str
 	return encoded
 }
 
-func transcriptExcerpt(text string, matchByte int) string {
+func transcriptExcerpt(text string, position int) string {
 	runes := []rune(text)
 	if len(runes) <= 2048 {
 		return text
 	}
-	matchByte = min(matchByte, len(text))
-	position := utf8.RuneCountInString(text[:matchByte])
 	start := max(0, position-512)
 	end := start + 2048
 	if end > len(runes) {
