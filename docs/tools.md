@@ -84,7 +84,8 @@ Failures are `Error: <message>`, for example
 `cannot modify "path": file has not been read — read the file, then retry` or
 `cannot modify "path": file changed since it was read — re-read the file, then retry`.
 Python's `mai.read`, `mai.write`, and `mai.edit` return structured dictionaries
-(`ok`, `code`, `error`, `content`, `total_lines`, …) instead of this text.
+(`ok`, `code`, `error`, `content`, `total_lines`, …) instead of this text;
+a Python `mai.read` past the end of the file returns empty `content` rather than an error.
 
 For example, after reading `config.go`:
 

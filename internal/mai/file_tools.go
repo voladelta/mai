@@ -249,7 +249,7 @@ func readFileSnapshot(root *os.Root, path string) ([]byte, fileVersion, error) {
 	if !os.SameFile(info, before) || !os.SameFile(after, current) || !current.Mode().IsRegular() ||
 		!before.ModTime().Equal(after.ModTime()) || before.Size() != after.Size() || before.Mode() != after.Mode() ||
 		!after.ModTime().Equal(current.ModTime()) || after.Size() != current.Size() || after.Mode() != current.Mode() {
-		return nil, version, fsError("FS_STALE_VERSION", "file changed during read; re-read the file, then retry")
+		return nil, version, fsError("FS_STALE_VERSION", "file changed during read")
 	}
 	if !textContent(string(data)) {
 		return nil, version, fsError("FS_NOT_TEXT", "file is not UTF-8 text without NUL bytes")
@@ -257,14 +257,11 @@ func readFileSnapshot(root *os.Root, path string) ([]byte, fileVersion, error) {
 	return data, fileVersion{info: current, digest: sha256.Sum256(data)}, nil
 }
 
-func renderFileRead(path string, data []byte, offset, limit int) (map[string]any, error) {
+func renderFileRead(path string, data []byte, offset, limit int) map[string]any {
 	text := normalizeText(string(data))
 	lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
 	if text == "" {
 		lines = nil
-	}
-	if offset > len(lines) && !(len(lines) == 0 && offset == 1) {
-		return nil, fsError("FS_OFFSET_OUT_OF_RANGE", fmt.Sprintf("offset %d is out of range for %q (%d lines)", offset, path, len(lines)))
 	}
 	var out strings.Builder
 	next, capped := offset, false
@@ -288,7 +285,7 @@ func renderFileRead(path string, data []byte, offset, limit int) (map[string]any
 	if next <= len(lines) {
 		result["next_offset"] = next
 	}
-	return result, nil
+	return result
 }
 
 // renderFileText formats a structured file tool result as the plain-text
@@ -304,6 +301,10 @@ func renderFileText(name string, result map[string]any) string {
 	switch name {
 	case "read":
 		total, offset, last := result["total_lines"].(int), result["offset"].(int), result["last_line"].(int)
+		// Python callers keep the lenient empty result; the model gets an error.
+		if offset > total && !(total == 0 && offset == 1) {
+			return fmt.Sprintf("Error: offset %d is out of range for %q (%d lines)", offset, path, total)
+		}
 		var footer string
 		switch {
 		case result["capped"] == true:
@@ -409,11 +410,7 @@ func (a *agent) runFileTool(ctx context.Context, sess *session, name, arguments 
 			return fileToolFailure(name, request.path, err)
 		}
 		f.observe(sess, key, current)
-		result, err := renderFileRead(path, data, request.offset, request.limit)
-		if err != nil {
-			return fileToolFailure(name, request.path, err)
-		}
-		return result
+		return renderFileRead(path, data, request.offset, request.limit)
 	}
 	create := errors.Is(err, os.ErrNotExist)
 	observed, seen := f.observation(sess, key)
@@ -511,7 +508,6 @@ func fileToolFailure(name, path string, err error) map[string]any {
 			message = target + "not found"
 		case "FS_NOT_REGULAR_FILE":
 			message = target + "not a regular file"
-		case "FS_OFFSET_OUT_OF_RANGE":
 		default:
 			message = target + message
 		}

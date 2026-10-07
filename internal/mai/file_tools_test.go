@@ -225,7 +225,12 @@ func TestFileToolsReadWindowsCapsAndEmptyFiles(t *testing.T) {
 		t.Fatal("byte cap not applied", result)
 	}
 	requireFileOK(t, fileCall(t, a, sess, "read", map[string]any{"file_path": "file", "limit": 1}))
-	requireFileCode(t, fileCall(t, a, sess, "read", map[string]any{"file_path": "file", "offset": 2001}), "FS_OFFSET_OUT_OF_RANGE")
+	// Structured (Python) reads stay lenient past the end; the model-facing text errors.
+	past := fileCall(t, a, sess, "read", map[string]any{"file_path": "file", "offset": 2001})
+	requireFileOK(t, past)
+	if past["content"] != "" {
+		t.Fatal(past)
+	}
 	mustWrite(t, path, "猫")
 	requireFileOK(t, fileCall(t, a, sess, "read", map[string]any{"file_path": "file"}))
 	// A bounded window still observes the complete file version.
@@ -654,4 +659,28 @@ func TestFileToolsRecordConfirmedAbsence(t *testing.T) {
 	mustWrite(t, filepath.Join(sess.RepoRoot, "gone"), "external")
 	requireFileCode(t, fileCall(t, a, sess, "write", map[string]any{"file_path": "gone", "content": "x"}), "FS_NOT_OBSERVED")
 	assertContent(t, filepath.Join(sess.RepoRoot, "gone"), "external")
+}
+
+func TestFileToolsFooterAndStaleMessages(t *testing.T) {
+	a, sess := fileTestAgent(t)
+	mustWrite(t, filepath.Join(sess.RepoRoot, "big"), strings.Repeat(strings.Repeat("x", 99)+"\n", 2000))
+	text := fileText(t, a, sess, "read", map[string]any{"file_path": "big"})
+	if !strings.Contains(text, "(Output capped. Showing lines 1-") || !strings.HasSuffix(text, " to continue.)\n</content>") {
+		t.Fatal(text[len(text)-120:])
+	}
+	mustWrite(t, filepath.Join(sess.RepoRoot, "empty"), "")
+	if got := fileText(t, a, sess, "read", map[string]any{"file_path": "empty"}); got != "<path>empty</path>\n<type>file</type>\n<content>\n(End of file - total 0 lines)\n</content>" {
+		t.Fatal(got)
+	}
+	err := fileToolFailure("read", "p", fsError("FS_STALE_VERSION", "file changed during read"))
+	if got := err["error"]; got != `cannot read "p": file changed during read — re-read the file, then retry` {
+		t.Fatal(got)
+	}
+}
+
+func TestFileToolsCreateAfterConfirmedAbsence(t *testing.T) {
+	a, sess := fileTestAgent(t)
+	requireFileCode(t, fileCall(t, a, sess, "read", map[string]any{"file_path": "later"}), "FS_NOT_FOUND")
+	requireFileOK(t, fileCall(t, a, sess, "write", map[string]any{"file_path": "later", "content": "x"}))
+	assertContent(t, filepath.Join(sess.RepoRoot, "later"), "x")
 }
