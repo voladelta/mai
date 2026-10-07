@@ -39,8 +39,6 @@ type agent struct {
 	python           pythonKernel
 	events           io.Writer
 	modelTurns       int
-	usage            tokenUsage
-	usageReports     int
 	filesOnce        sync.Once
 	roleInstructions string
 	depth            int
@@ -162,7 +160,6 @@ func (a *agent) runTurn(ctx context.Context, sess *session, instructions string)
 	modelStarted := time.Now()
 	a.modelTurns++
 	result, err := backend.stream(ctx, sess, instructions)
-	a.recordUsage(result.usage)
 	modelDuration := time.Since(modelStarted).Milliseconds()
 	if result.wrote && a.events == nil {
 		fmt.Fprintln(a.stdout)
@@ -225,7 +222,6 @@ func (a *agent) compactIfNeeded(ctx context.Context, sess *session, instructions
 	}
 	started := time.Now()
 	history, usage, report, err := portableHistory(ctx, sess, a.backend)
-	a.recordUsage(usage)
 	if err != nil {
 		return fmt.Errorf("compact conversation: %w", err)
 	}
@@ -355,9 +351,9 @@ func (a *agent) executeTool(ctx context.Context, sess *session, call functionCal
 	case "edit_context":
 		return a.executeContextEdit(sess, call.Arguments)
 	case "read_skill":
-		return a.executeReadSkill(ctx, sess, call.Arguments)
+		return a.executeReadSkill(call.Arguments)
 	case "view_image":
-		return a.executeViewImage(ctx, sess, call.Arguments)
+		return a.executeViewImage(sess, call.Arguments)
 	case "bash":
 		return a.executeBash(ctx, sess, call.Arguments)
 	case "python":
@@ -369,15 +365,7 @@ func (a *agent) executeTool(ctx context.Context, sess *session, call functionCal
 	}
 }
 
-func (a *agent) recordUsage(usage *tokenUsage) {
-	if usage == nil {
-		return
-	}
-	a.usageReports++
-	addUsage(&a.usage, usage)
-}
-
-func (a *agent) executeReadSkill(ctx context.Context, sess *session, arguments string) json.RawMessage {
+func (a *agent) executeReadSkill(arguments string) json.RawMessage {
 	if a.skipSkills {
 		return textToolOutput(toolError("skills disabled", errors.New("read_skill is not available in this run")))
 	}
@@ -408,7 +396,7 @@ func (a *agent) executeReadSkill(ctx context.Context, sess *session, arguments s
 	return skillFileToolOutput(result)
 }
 
-func (a *agent) executeViewImage(ctx context.Context, sess *session, arguments string) json.RawMessage {
+func (a *agent) executeViewImage(sess *session, arguments string) json.RawMessage {
 	var args struct {
 		Path string `json:"path"`
 	}

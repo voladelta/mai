@@ -88,7 +88,6 @@ a particular saved task at a time.
 - **Git** for repository-root discovery. Without it, the working directory is
   the repository boundary.
 - **Python 3.9 or later**, optional, for persistent Python cells.
-- **jq**, optional, for the coding eval runners and timing helper.
 
 No Node runtime, SDK, or third-party Go dependency is required.
 

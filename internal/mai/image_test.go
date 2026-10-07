@@ -72,7 +72,7 @@ func TestViewImageReturnsTypedImageWithinRepository(t *testing.T) {
 
 	sess := &session{CWD: root, RepoRoot: root}
 	a := &agent{stderr: &bytes.Buffer{}}
-	output := a.executeViewImage(context.Background(), sess, `{"path":"screen.png"}`)
+	output := a.executeViewImage(sess, `{"path":"screen.png"}`)
 	var parts []struct {
 		Type     string `json:"type"`
 		ImageURL string `json:"image_url"`

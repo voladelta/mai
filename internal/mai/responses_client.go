@@ -83,11 +83,11 @@ func (a *agent) configureBackend(sess *session, provider providerConfig) error {
 		sess.ContextTokens = estimateHistoryTokens(history)
 	}
 
-	window := int64(1_000_000)
+	window := modelContextWindow
 	if value := os.Getenv("MAI_CONTEXT_WINDOW"); value != "" {
 		var err error
 		window, err = strconv.ParseInt(value, 10, 64)
-		if err != nil || window < 32768 || window > 1_000_000 {
+		if err != nil || window < 32768 || window > modelContextWindow {
 			return errors.New("MAI_CONTEXT_WINDOW must be 32768..1000000")
 		}
 	}
@@ -234,9 +234,6 @@ func (c *responsesClient) request(ctx context.Context, sess *session, instructio
 	seen, err := validatedResponsesCallIDs(history, c.profile)
 	if err != nil {
 		return streamResult{}, err
-	}
-	if !validModelID(sess.Model) || !supportedEffort(sess.Effort) {
-		return streamResult{}, errors.New("Responses requires a model ID and effort l, h or max")
 	}
 	effort := effortIDs[sess.Effort]
 	if c.profile == profileOpenRouter && sess.Effort == "max" {
