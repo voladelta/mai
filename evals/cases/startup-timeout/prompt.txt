@@ -1,1 +1,0 @@
-Change StartupTimeout to return 45 seconds. RetryTimeout must stay at 30 seconds. Add a test for the intended values and run the Go tests.

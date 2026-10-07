@@ -1,9 +1,0 @@
-package timeouts
-
-import "testing"
-
-func TestEvalTimeouts(t *testing.T) {
-	if RetryTimeout() != 30 || StartupTimeout() != 45 {
-		t.Fatalf("timeouts: retry=%d startup=%d", RetryTimeout(), StartupTimeout())
-	}
-}

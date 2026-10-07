@@ -1,9 +1,0 @@
-task_id,status,updated_at
-1,completed,2026-10-01T10:00:00Z
-2,active,2026-10-01T10:00:00Z
-1,active,2026-10-02T10:00:00Z
-3,completed,2026-10-02T10:00:00Z
-3,completed,2026-10-02T11:00:00Z
-4,active,2026-10-02T10:00:00Z
-5,completed,2026-10-02T10:00:00Z
-2,completed,2026-09-30T10:00:00Z
