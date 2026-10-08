@@ -3,8 +3,7 @@
 [Back to README](../README.md) · [CLI reference](cli.md) · [Sessions and context](sessions.md)
 
 Mai exposes seven general tools.
-Tools are selected by the model; Python examples below are cells sent to Mai's
-`python` tool, not commands for a standalone Python interpreter.
+Tools are selected by the model.
 
 ## Tool reference
 
@@ -14,7 +13,7 @@ Tools are selected by the model; Python examples below are cells sent to Mai's
 | `read` | `file_path`, optional `offset`, `limit` | Read numbered UTF-8 text lines and observe the file version. |
 | `write` | `file_path`, `content` | Create or fully replace a repository UTF-8 text file. Existing files require a fresh observation. |
 | `edit` | `file_path`, `old_string`, `new_string`, optional `replace_all` | Replace literal text in an observed repository file. |
-| `python` | `code` or `reset: true` | Execute a cell in the persistent namespace, or discard that namespace. |
+| `lua` | `code` or `reset: true` | Run a Lua cell in the persistent state, or discard that state. |
 | `read_skill` | `path`, optional `file` | Read a file from a discovered skill by directory id; `file` defaults to `SKILL.md`. Disabled by `-s` or `--skip-skills`. |
 | `view_image` | `path` | Send a PNG, JPEG, or GIF from the repository to the model as image content. |
 
@@ -27,7 +26,7 @@ For example, a Bash tool call uses:
 `read`, `write`, `edit`, and `view_image` take paths relative to the
 repository root, even when Mai starts in a subdirectory; an absolute path inside
 the repository also works. `bash` runs in the task working directory.
-Bash output, Python state, and skill discovery are described below.
+Bash output, Lua state, and skill discovery are described below.
 
 ## Reading and editing files
 
@@ -84,13 +83,6 @@ or `Updated file` as its content; `edit` returns
 Failures are `Error: <message>`, for example
 `cannot modify "path": file has not been read — read the file, then retry` or
 `cannot modify "path": file changed since it was read — re-read the file, then retry`.
-Python's `mai.read`, `mai.write`, and `mai.edit` return structured dictionaries
-(`ok`, `code`, `error`, `content`, `total_lines`, …) instead of this text.
-A `mai.read` result's `content` keeps the `N: ` line-number prefixes, and a read
-past the end of the file returns empty `content` rather than an error. For raw
-text to process in Python, use `open()`; use `mai.read` to observe a file before
-`mai.write` or `mai.edit`.
-
 For example, after reading `config.go`:
 
 ```json
@@ -212,118 +204,114 @@ only when every pixel is the same fully opaque color. Mixed-color and
 transparent images omit it. This is decoded pixel evidence, independent of
 the model's visual interpretation.
 
-## Persistent Python
+## Persistent Lua
 
-The optional `python` tool starts a Python subprocess on its first cell. Install
-Python 3.9 or newer on `PATH`, or set `MAI_PYTHON` to a Python executable. An active
-virtual environment works through `PATH`. Mai does not install Python packages.
-For example, use `MAI_PYTHON=python3.14 mai "explore sales.csv"` to select Python 3.14.
-Use `MAI_PYTHON=python3.14t` to select an installed free-threaded build. The default
-remains `python3`.
+The `lua` tool runs cells of Lua 5.2 on an embedded interpreter
+([Shopify/go-lua](https://github.com/Shopify/go-lua), MIT). It needs no external
+runtime. Send `{"code":"..."}` to run a cell or `{"reset":true}` to discard the
+state. Globals, functions, and tables remain between cells. Top-level `local`
+declarations (starting in column 0) are kept too, like variables in a REPL
+session; indented locals inside blocks and functions stay local. State
+survives conversation compaction but ends when Mai exits; `--last` restores
+conversation history only. The first cell after start or reset reports
+`fresh: true`.
 
-Send `{"code":"..."}` to execute a cell or `{"reset":true}` to discard the
-environment. Imports, variables, functions, and SQLite connections remain between
-cells. The last expression is printed unless its value is `None`. Use standard
-library `csv` and `sqlite3`, or packages already installed in the chosen environment.
-For exploration, prefer read-only SQLite connections and selected summaries of
-large datasets. Each cell uses the `--cell-timeout` limit and the same 64 KiB per-stream
-head-and-tail output limits as Bash. Tracebacks are part of stderr.
+A cell's return values are shown as `result`, rendered as JSON (a table with
+consecutive keys 1..n is an array; an empty table is `[]`). A bare expression
+such as `total * 2` is returned the same way. `print` and `io.write` go to
+`stdout`, bounded by the same 64 KiB head-and-tail limit as Bash.
 
-Cells support top-level `await`, `async for`, and `async with`. Sync and async
-cells execute on the same Python thread, so SQLite connections remain usable.
-One event loop persists between async cells; synchronous `asyncio.run(...)`
-snippets still work. A returned awaitable is printed as a value unless the code
-explicitly awaits it.
-
-The preloaded `mai` module calls the existing Go tools:
-
-```python
-listing = await mai.bash("rg --files", timeout_ms=10_000)
-paths = listing["stdout"].splitlines()
-len(paths)
+```lua
+local csv = mai.read_text("sales.csv")
+local total = 0
+for line in csv:gmatch("[^\n]+") do
+  local qty = tonumber(line:match(",(%d+),"))
+  if qty then total = total + qty end
+end
+print(total)
+return mai.history("sales").total
 ```
 
-Search this task's visible conversation and tool history from Python:
+Available libraries are the base functions, `string` (including `s:upper()`
+and Lua patterns, ported from Lua 5.2 because go-lua omits them), `table`, `math`, `bit32`, and `os.time`, `os.date`, `os.clock`,
+and `os.difftime`, plus:
 
-```python
-found = await mai.history("release date", limit=5)
-for item in found["matches"]:
-    print(item["index"], item["kind"], item["text"])
-```
+- `json.decode(text)` and `json.encode(value, pretty)`. JSON `null` becomes
+  `nil`; an empty table encodes as `[]`.
+- `csv.decode(text, header)` parses CSV (quotes, embedded commas and newlines,
+  CRLF, a leading BOM) into an array of arrays, or, with `header` true, an
+  array of tables keyed by the first row's column names (the header row is not
+  included; the column order is in the result's `columns` field). Fields that
+  are canonical numerals (`12`, `0.5`) become numbers so that `row.qty >= 20`
+  works; everything else, including `007`, dates, and `1e5`, stays a string.
+  `csv.encode(rows, columns)` writes an array of arrays, or an array of
+  header-keyed tables under a header line. For tables, the column order is
+  `columns` if given, else `rows.columns`, else the last decoded header when it
+  covers every key, else the sorted keys.
+- `mai.bash(command, timeout_ms)` returns the Bash result table (`ok`, `stdout`,
+  `stderr`, `exit_code`, `timed_out`, …). `ok` is false for a nonzero exit.
+- `mai.read(file_path, offset, limit)`, `mai.write(file_path, content)`, and
+  `mai.edit(file_path, old_string, new_string, replace_all)` call the Go file
+  tools and return structured tables (`ok`, `error`, `content`, `total_lines`, …).
+  A `mai.read` result keeps the `N: ` line-number prefixes, and a read past the
+  end returns empty `content`; it records the observation `mai.write` and
+  `mai.edit` need. Failures are tables with `ok = false`, not Lua errors.
+- `mai.read_text(file_path)` returns the file's raw UTF-8 text as a string (no
+  line numbers, line endings unchanged), for parsing data in the script. If the
+  file cannot be read, the cell fails with the error. It applies the same
+  repository-only, symlink, 16 MiB, and text checks as `read`. The whole file is
+  returned, so it counts as the observation `mai.write` and `mai.edit` need; they
+  still refuse a file that changed after the read.
+- `mai.history(query, limit, start)` searches this task's visible conversation
+  and tool history (below).
 
-To continue when a query has more than one page of matches:
-
-```python
-page = await mai.history("release date")
-while True:
-    for item in page["matches"]:
-        print(item["index"], item["text"])
-    if page.get("next") is None:
-        break
-    page = await mai.history("release date", start=page["next"])
-```
+`io.open`, `io.lines` and `io.popen` are read-only conveniences over the same
+guarded calls: `io.open(path)` and `io.lines(path)` read repository files like
+`mai.read_text` (a failure returns `nil, message`), and `io.popen(command)` runs
+`mai.bash(command)` and exposes its stdout. File handles support `read`
+(`"*a"`, `"*l"`, `"*L"`, `"*n"`, byte counts), `lines`, and `close`. `tonumber`
+ignores an invalid base, so `tonumber(s:gsub(",", ""))` works. `package`/`require`,
+`dofile`, `loadfile`, `os.execute`, `os.remove`, `os.rename`, `os.exit`,
+`os.getenv`, writing through `io`, and coroutines are not available, and the
+unavailable functions fail with the `mai` alternative. Files are written and
+processes run through `mai`. Host calls use the same validation, approvals,
+and repository boundaries as direct tool calls.
 
 Search uses a case-insensitive literal substring. Start with short distinctive
 text, then refine. The query `recovery code` can find "recovery code for ticket
-H-1"; `recovery code ticket` cannot. Search returns up to 20 matches in task
-order, a `total` match count, an optional `next` index, and each entry's index
-in the current transcript. `start` is an inclusive,
-zero-based transcript index. Each text excerpt is at most 2,048 Unicode code
-points. Prompts, assistant text, tool calls, and tool results remain searchable
-after conversation compaction and `--last`. Opaque reasoning, compaction
-payloads, and image data are excluded. A saved task created before this feature
-can search its current history; content removed by an earlier compaction cannot
-be recovered. Search results are copies, so editing one does not change Mai's
-history.
+H-1"; `recovery code ticket` cannot. `mai.history` returns up to `limit` (default
+20, at most 20) matches in task order, a `total` count, an optional `next` index,
+and each entry's `index` in the current transcript; `start` is an inclusive,
+zero-based index. Each `text` excerpt is at most 2,048 Unicode code points.
 
-For saved tasks, compacted visible text is stored in a `.transcript.jsonl` file
-beside the session JSON. Older saved tasks migrate their inline transcript on
-the next compaction. Keep both files when moving or backing up a saved task.
+```lua
+local page = mai.history("release date")
+while true do
+  for _, m in ipairs(page.matches) do print(m.index, m.text) end
+  if not page.next then break end
+  page = mai.history("release date", 20, page.next)
+end
+```
 
-`await mai.read(file_path, offset=1, limit=2000)`,
-`await mai.write(file_path, content)`, and
-`await mai.edit(file_path, old_string, new_string, replace_all=False)` call the
-Go file tools; these do not write files through Python. Host calls use the
-same validation, approvals, and repository boundaries as direct tool calls.
-Host operations run in sequence, with at most eight pending requests and 64
-budgeted calls per cell, including file reads.
-Read-only history searches do not consume that budget.
-The bridge accepts calls only from the cell's Python thread. It does not expose
-recursive Python calls.
+Prompts, assistant text, tool calls, and tool results remain searchable after
+compaction and `--last`; the current cell's own code is excluded. Opaque
+reasoning, compaction payloads, and image data are excluded. Results are copies,
+so editing one does not change Mai's history. For saved tasks, compacted visible
+text is stored in a `.transcript.jsonl` file beside the session JSON; keep both
+files when moving or backing up a saved task.
 
-State survives conversation compaction, but ends when Mai exits. `--last` restores
-conversation history only; it starts a new Python environment. Results report the
-kernel generation (local to this run), whether it is fresh, and whether state was
-lost. Reset is lazy: the next cell starts the next generation. Save explicit files
-for durable work; Mai does not snapshot variables or replay cells.
-
-Results include the Python version, executable, and GIL status. Tracebacks use
-cell filenames such as `<mai:g2:c7>`; a bounded source cache retains recent cell
-text. In persisted tasks, Mai journals nested `bash`, `write`, and `edit` calls
-before dispatch and saves their results; reads have no effects to recover and
-are not journaled. The outer Python result includes bounded activity summaries;
-large arguments and results are abbreviated, with omitted activities counted.
-An interrupted pending operation has an unknown outcome on resume; it is never
-replayed automatically.
-
-An exception can leave partial changes in the namespace. A timeout, cancellation,
-or kernel failure discards it and stops owned processes. Owner-lifetime watchers
-also stop the Python and Bash process groups if Mai is forcibly
-killed. Descendants that deliberately leave those process groups are outside this
-cleanup. External effects can remain; failed cells are never retried automatically.
-Python is not sandboxed and has Mai's OS access. Interactive input is unsupported.
-
-Await all async work before returning. Mai cancels remaining cell tasks and waits
-for active host calls to finish; the cell timeout discards a kernel that cannot
-finish cleanup. Cells must finish scheduled callbacks, background threads, and
-subprocess work before returning; output from work left running cannot be
-attributed reliably. Native libraries must flush their own buffered output before
-the cell returns.
+Each cell has a two-minute wall-clock limit and a cap on heap growth; on timeout,
+cancellation, or the cap, Mai stops the script and keeps the state. A runtime
+error keeps changes made before it. Nested `bash`, `write`, and `edit` calls are
+not journaled: if Mai stops mid-cell, the resumed tool result says the outcome is
+unknown and nothing is replayed. There is no CSV, SQLite, or package support;
+use `mai.bash` for other tools. Scripts are not sandboxed beyond the missing
+libraries above and have Mai's OS access through `mai.bash`.
 
 ## Delegation through the CLI
 
 When delegation is authorized, the model can launch another ordinary Mai run
-through `bash` or Python's `subprocess`. Install `mai` on `PATH`, or use the
+through `bash` or `mai.bash`. Install `mai` on `PATH`, or use the
 binary's absolute path. For example:
 
 ```bash
@@ -343,10 +331,9 @@ stderr, and inspect effects before retrying an interrupted run. For concurrent
 work, give each run separate file ownership or a separate workspace.
 
 Nested runs share the enclosing tool's lifetime: Bash defaults to two minutes
-and allows up to ten minutes through `timeout_ms`; Python uses `--cell-timeout`.
+and allows up to ten minutes through `timeout_ms`.
 The nested run's `--timeout` controls its model requests and does not extend
-the enclosing tool's deadline. Python subprocesses must finish before the cell
-returns. Mai provides no dedicated role configurations, background handles,
+the enclosing tool's deadline. Mai provides no dedicated role configurations, background handles,
 or child journals for these ordinary CLI runs. Nested runs are depth-limited
 by the harness: `MAI_DEPTH` counts the nesting level (0 for a top-level run)
 and `MAI_MAX_DEPTH` (default 2) is the limit; a run deeper than the limit

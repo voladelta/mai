@@ -7,15 +7,15 @@ import (
 )
 
 func TestParseIndependentTimeouts(t *testing.T) {
-	got, err := parseOptions([]string{"work", "--timeout", "3s", "--cell-timeout=4m"})
+	got, err := parseOptions([]string{"work", "--timeout", "3s"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.timeout != 3*time.Second || got.cellTimeout != 4*time.Minute {
-		t.Fatalf("timeouts = request %s, cell %s", got.timeout, got.cellTimeout)
+	if got.timeout != 3*time.Second {
+		t.Fatalf("timeouts = request %s", got.timeout)
 	}
 
-	for _, flag := range []string{"--timeout", "--cell-timeout"} {
+	for _, flag := range []string{"--timeout"} {
 		if _, err := parseOptions([]string{"work", flag, "0s"}); err == nil {
 			t.Fatalf("%s accepted a zero duration", flag)
 		}
@@ -111,7 +111,6 @@ func TestParseOptionsInterspersed(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			test.want.cellTimeout = defaultCellTimeout
 			test.want.maxTurns = defaultMaxTurns
 			got, err := parseOptions(test.args)
 			if err != nil {

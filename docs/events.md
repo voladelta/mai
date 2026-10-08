@@ -34,5 +34,3 @@ requests. When the run forked a saved session (`--fork` or `--fork-from`), it
 also includes `parent_id` (the source session ID) and `forked_at_turn` (the
 number of history items copied at fork time).
 
-Nested Python host calls count toward the outer
-Python tool duration.

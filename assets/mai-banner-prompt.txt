@@ -12,7 +12,7 @@ mai
 Little agents, giant circuits
 Enclave Responses API
 Single model, CLI delegation
-Native Go / persistent Python
+Native Go / embedded Lua
 The three metadata lines should form a tidy compact group under the tagline. No counts or version numbers.
 Print quality: fine regular halftone dots and restrained ink edge grain, sharply drawn forms, exposed-paper cutouts separating layers. More economical and clean than the reference while preserving its charming mechanical world. Include at most one small printed registration mark.
 Avoid: gradients, glossy or 3D rendering, cinematic lighting, photorealism, UI panels, borders, stickers, QR codes, watermarks, extra colors, fake code blocks, extra copy, duplicated text, malformed letters.

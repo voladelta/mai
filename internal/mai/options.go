@@ -9,22 +9,21 @@ import (
 )
 
 type options struct {
-	prompt      string
-	last        bool
-	persist     bool
-	fork        bool
-	forkFrom    string
-	provider    string
-	model       string
-	effort      string
-	help        bool
-	version     bool
-	noInput     bool
-	skipSkills  bool
-	jsonl       bool
-	maxTurns    int
-	timeout     time.Duration
-	cellTimeout time.Duration
+	prompt     string
+	last       bool
+	persist    bool
+	fork       bool
+	forkFrom   string
+	provider   string
+	model      string
+	effort     string
+	help       bool
+	version    bool
+	noInput    bool
+	skipSkills bool
+	jsonl      bool
+	maxTurns   int
+	timeout    time.Duration
 }
 
 type optionKind int
@@ -43,7 +42,6 @@ const (
 	optionModel
 	optionEffort
 	optionTimeout
-	optionCellTimeout
 	optionMaxTurns
 )
 
@@ -59,17 +57,15 @@ var optionKinds = map[string]optionKind{
 	"--jsonl":    optionJSONL,
 	"--provider": optionProvider,
 	"-m":         optionModel, "--model": optionModel,
-	"--effort":       optionEffort,
-	"--timeout":      optionTimeout,
-	"--cell-timeout": optionCellTimeout,
-	"--max-turns":    optionMaxTurns,
+	"--effort":    optionEffort,
+	"--timeout":   optionTimeout,
+	"--max-turns": optionMaxTurns,
 }
 
 func parseOptions(args []string) (options, error) {
 	out := options{
-		timeout:     defaultHTTPTimeout,
-		cellTimeout: defaultCellTimeout,
-		maxTurns:    defaultMaxTurns,
+		timeout:  defaultHTTPTimeout,
+		maxTurns: defaultMaxTurns,
 	}
 	if helpRequested(args) {
 		out.help = true
@@ -141,7 +137,7 @@ func parseOptionTokens(args []string, out *options) ([]string, error) {
 }
 
 func (kind optionKind) takesValue() bool {
-	return kind == optionProvider || kind == optionModel || kind == optionEffort || kind == optionTimeout || kind == optionCellTimeout || kind == optionMaxTurns || kind == optionForkFrom
+	return kind == optionProvider || kind == optionModel || kind == optionEffort || kind == optionTimeout || kind == optionMaxTurns || kind == optionForkFrom
 }
 
 func (out *options) setOption(kind optionKind, value string) error {
@@ -192,12 +188,6 @@ func (out *options) setOption(kind optionKind, value string) error {
 			return err
 		}
 		out.timeout = timeout
-	case optionCellTimeout:
-		timeout, err := parseTimeout(value)
-		if err != nil {
-			return err
-		}
-		out.cellTimeout = timeout
 	}
 	return nil
 }

@@ -34,7 +34,6 @@ mai "investigate this failure" --timeout=20m
 | `--provider NAME` | Override `default_provider` from the selected config; built-in default is `enclave`. | `mai "quick review" --provider enclave` |
 | `--max-turns COUNT` | Limit model turns; default 64, or `-1` for unlimited. | `mai "finish the migration" --max-turns -1` |
 | `--timeout DURATION` | Model request first-byte/idle timeout; default `10m`. | `mai "investigate the failure" --timeout 20m` |
-| `--cell-timeout DURATION` | Python cell wall-clock limit; default `10m`. | `mai "explore sales.csv" --cell-timeout 5m` |
 | `--no-input` | Reject commands requiring approval instead of prompting. | `mai "review the diff" --no-input` |
 | `-s`, `--skip-skills` | Disable skill discovery and loading for this run. | `mai "explain this package" -s` |
 | `--jsonl` | Write JSON Lines events to stdout; progress goes to stderr. | `mai "review the diff" --jsonl > run.jsonl` |
@@ -105,7 +104,6 @@ provider's configured model unless `--model` overrides it. `--model` and
 subsequent resumes. Credentials are read from the saved environment
 variable name each time, so rotating a key still works. Sessions saved
 before backend settings were recorded use the built-in default provider's endpoint.
-Python starts a new environment when the previous run ends.
 
 `--fork` and `--fork-from ID` start a new saved session from an existing one,
 copying its history and transcript archive while leaving the parent untouched —
@@ -151,14 +149,12 @@ mai "investigate the failure" --timeout 20m
 Failed requests return an error. Mai does not automatically replay a failed
 request or tool call.
 
-Each Python cell has a separate 10-minute wall-clock limit. Change it with
-`--cell-timeout`; `--timeout` controls model requests.
 
 ## Non-interactive runs
 
 Use `--no-input` in scripts and other non-interactive environments. If a
 command requires approval, Mai rejects it instead of opening a terminal prompt.
-This option does not sandbox Bash or Python.
+This option does not sandbox Bash.
 
 ```sh
 mai "review this package" --jsonl --no-input > run.jsonl

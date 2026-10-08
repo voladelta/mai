@@ -605,7 +605,7 @@ func TestMainHelpDocumentsPersistenceOptions(t *testing.T) {
 	if code := Main([]string{"--unknown", "--help"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
-	for _, text := range []string{"--model", "-m", "--effort", "--provider", "--persist", "--last", "--max-turns", "--timeout", "--cell-timeout", "--no-input", "Documentation and support", "Enclave cyberouter/deepseek-v4.1-flash"} {
+	for _, text := range []string{"--model", "-m", "--effort", "--provider", "--persist", "--last", "--max-turns", "--timeout", "--no-input", "Documentation and support", "Enclave cyberouter/deepseek-v4.1-flash"} {
 		if !strings.Contains(stdout.String(), text) {
 			t.Fatalf("help is missing %q:\n%s", text, stdout.String())
 		}
@@ -1017,5 +1017,34 @@ func TestForkTaskStartedReportsProvenance(t *testing.T) {
 	if started == nil || started["parent_id"] != parent.session.ID ||
 		started["forked_at_turn"] != float64(len(parent.session.History)) {
 		t.Fatalf("task.started = %v", started)
+	}
+}
+
+func TestMainNudgesOnceAfterReplyWithoutTextOrToolCall(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeTestDefaultProviderConfig(t)
+	for _, replies := range []int{1, 2} {
+		requests, nudges := 0, 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requests++
+			body, _ := io.ReadAll(r.Body)
+			nudges = strings.Count(string(body), emptyReplyNudge)
+			if requests <= replies {
+				deepseekTestResponse(w, `[{"type":"reasoning","id":"r","encrypted_content":"opaque","summary":[]}]`)
+				return
+			}
+			deepseekTestResponse(w, `[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]}]`)
+		}))
+		t.Setenv("MAI_BASE_URL", server.URL)
+		var stdout, stderr bytes.Buffer
+		code := Main([]string{"question", "-s", "--no-input"}, &stdout, &stderr)
+		server.Close()
+		if replies == 1 && (code != 0 || !strings.Contains(stdout.String(), "answer") || requests != 2 || nudges != 1) {
+			t.Fatalf("one empty reply: code=%d requests=%d nudges=%d stdout=%q stderr=%q", code, requests, nudges, stdout.String(), stderr.String())
+		}
+		// A second empty reply ends the task rather than looping.
+		if replies == 2 && (requests != 2 || strings.Contains(stdout.String(), "answer")) {
+			t.Fatalf("two empty replies: code=%d requests=%d stdout=%q", code, requests, stdout.String())
+		}
 	}
 }

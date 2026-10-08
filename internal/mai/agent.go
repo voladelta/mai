@@ -15,8 +15,6 @@ import (
 
 const defaultMaxTurns = 64
 
-const defaultCellTimeout = 10 * time.Minute
-
 const (
 	autoCompactPercent = 80
 )
@@ -35,8 +33,7 @@ type agent struct {
 	skillsError    error
 	skipSkills     bool
 	requestTimeout time.Duration
-	cellTimeout    time.Duration
-	python         pythonKernel
+	lua            *luaKernel
 	events         io.Writer
 	modelTurns     int
 	filesOnce      sync.Once
@@ -57,7 +54,6 @@ func newAgent(stdout, stderr io.Writer, sessionPath string, requestTimeout time.
 	a := &agent{
 		stdout: stdout, modelOutput: stdout, stderr: stderr, sessionPath: sessionPath,
 		requestTimeout: requestTimeout,
-		cellTimeout:    defaultCellTimeout,
 		maxTurns:       defaultMaxTurns,
 	}
 	if inputAllowed {
@@ -85,7 +81,6 @@ func (a *agent) run(ctx context.Context, sess *session, userPrompt string) error
 }
 
 func (a *agent) close() {
-	a.python.close()
 	if a.captures != "" {
 		_ = os.RemoveAll(a.captures)
 	}
@@ -134,6 +129,7 @@ func (a *agent) runLoop(ctx context.Context, sess *session, userPrompt string) (
 		}
 		sess.ContextTokens = estimateHistoryTokens(history) + estimateInstructionTokens(instructions)
 	}
+	nudged := false
 	for turn := 0; a.maxTurns == -1 || turn < a.maxTurns; turn++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -146,10 +142,39 @@ func (a *agent) runLoop(ctx context.Context, sess *session, userPrompt string) (
 			return nil, err
 		}
 		if len(terminalItems) > 0 {
+			// A reply with neither text nor a tool call (reasoning only) is not an
+			// answer. Ask once instead of ending the task silently.
+			if !nudged && !hasVisibleAnswer(terminalItems) {
+				nudged = true
+				message, err := json.Marshal(map[string]any{
+					"role": "developer", "content": []map[string]string{{"type": "input_text", "text": emptyReplyNudge}},
+				})
+				if err != nil {
+					return nil, err
+				}
+				sess.appendEstimatedHistory(message)
+				if a.sessionPath != "" {
+					if err := saveJSON(a.sessionPath, sess); err != nil {
+						return nil, fmt.Errorf("save nudge: %w", err)
+					}
+				}
+				continue
+			}
 			return terminalItems, nil
 		}
 	}
 	return nil, fmt.Errorf("agent stopped after %d model turns", a.maxTurns)
+}
+
+const emptyReplyNudge = "Your last response had no text and no tool call. Continue the task with a tool call, or give your final answer now."
+
+func hasVisibleAnswer(items []json.RawMessage) bool {
+	for _, raw := range items {
+		if entry, visible, err := visibleTranscriptEntry(raw); err == nil && visible && entry.Kind == "assistant" {
+			return true
+		}
+	}
+	return false
 }
 
 func hasDeveloperText(history []json.RawMessage, text string) bool {
@@ -331,15 +356,6 @@ func (a *agent) executeCalls(ctx context.Context, sess *session, calls []functio
 			return fmt.Errorf("encode tool output: %w", err)
 		}
 		sess.appendEstimatedHistory(item)
-		if call.Name == "python" {
-			kept := sess.PythonActivities[:0]
-			for _, activity := range sess.PythonActivities {
-				if activity.OuterCallID != call.CallID {
-					kept = append(kept, activity)
-				}
-			}
-			sess.PythonActivities = kept
-		}
 		if a.sessionPath != "" {
 			if err := saveJSON(a.sessionPath, sess); err != nil {
 				return fmt.Errorf("save tool output: %w", err)
@@ -401,8 +417,8 @@ func (a *agent) executeTool(ctx context.Context, sess *session, call functionCal
 		return a.executeViewImage(sess, call.Arguments)
 	case "bash":
 		return a.executeBash(ctx, sess, call.Arguments)
-	case "python":
-		return a.executePython(ctx, sess, call.Arguments, call.CallID)
+	case "lua":
+		return a.executeLua(ctx, sess, call.Arguments, call.CallID)
 	case "read", "write", "edit":
 		return a.executeFileTool(ctx, sess, call.Name, call.Arguments)
 	default:

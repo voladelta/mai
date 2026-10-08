@@ -229,7 +229,7 @@ func TestFileToolsReadWindowsCapsAndEmptyFiles(t *testing.T) {
 		t.Fatal("byte cap not applied", result)
 	}
 	requireFileOK(t, fileCall(t, a, sess, "read", map[string]any{"file_path": "file", "limit": 1}))
-	// Structured (Python) reads stay lenient past the end; the model-facing text errors.
+	// Structured (Lua) reads stay lenient past the end; the model-facing text errors.
 	past := fileCall(t, a, sess, "read", map[string]any{"file_path": "file", "offset": 2001})
 	requireFileOK(t, past)
 	if past["content"] != "" {

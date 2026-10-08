@@ -313,7 +313,7 @@ func compactionNotice(report *compactionReport) json.RawMessage {
 		}
 		fmt.Fprintf(&text, " Tool calls by name: %s.", strings.Join(counts, ", "))
 	}
-	text.WriteString(" Originals remain retrievable with await mai.history(query) in the python tool.")
+	text.WriteString(" Originals remain retrievable with mai.history(query) in the lua tool.")
 	if len(report.CallIDs) != 0 {
 		ids := report.CallIDs
 		omitted := 0

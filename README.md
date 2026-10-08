@@ -33,16 +33,16 @@ change the code, then save the conversation when you need to return to it.
 
 | Capability | What it gives you | Try it |
 | --- | --- | --- |
-| Repository work | Bash, guarded file reads/writes/edits, and local image inspection. | `mai "fix the empty-input crash and run tests"` |
+| Repository work | Bash, guarded file reads/writes/edits, local image inspection, and a persistent Lua tool for data shaping (CSV, JSON, logs). | `mai "fix the empty-input crash and run tests"` |
 | Saved tasks | Resume the original directory, provider settings, model, and conversation. | `mai "continue the fix" --last` |
 | Model selection | The provider's configured model at high effort by default; override either for one run. | `mai "review this refactor" --effort max` |
 | Provider selection | Route the task to a different endpoint and credential. | `mai "quick review" --provider openrouter --model deepseek/deepseek-v4-pro` |
-| Searchable history | Recall original visible text after compaction. | [Python history search](docs/tools.md#persistent-python) |
+| Searchable history | Recall original visible text after compaction. | [Lua history search](docs/tools.md#persistent-lua) |
 | Repository skills | Load project instructions before global skills, with explicit skill selection. | `mai 'Use $my-skill to review this package'` |
 | Script output | Stream task, model, and tool events as JSON Lines. | `mai "review this package" --jsonl --no-input > run.jsonl` |
 
-The Go runtime uses only the standard library. Python is optional and starts
-only when the model calls its tool.
+The Go runtime has one third-party dependency, the embedded
+[go-lua](https://github.com/Shopify/go-lua) Lua interpreter (MIT) behind the `lua` tool.
 
 ## Quick start
 
@@ -87,9 +87,8 @@ a particular saved task at a time.
   Enclave provider uses `ENCLAVE_API_KEY`.
 - **Git** for repository-root discovery. Without it, the working directory is
   the repository boundary.
-- **Python 3.9 or later**, optional, for persistent Python cells.
 
-No Node runtime, SDK, or third-party Go dependency is required.
+No Node runtime, SDK, or external interpreter is required.
 
 ### Install from a checkout
 
@@ -211,12 +210,11 @@ overrides it for one run. Checkpoints use the selected provider and its model. `
 | `MAI_CONTEXT_WINDOW` | Input context budget, from 32,768 to 1,000,000 tokens. | `1000000` |
 | `MAI_DEPTH` | Nesting depth of this run; Mai sets it for the subprocesses it launches. | `0` |
 | `MAI_MAX_DEPTH` | Maximum permitted `MAI_DEPTH`; deeper nested runs refuse to start. | `2` |
-| `MAI_PYTHON` | Executable for the optional persistent Python tool. | `python3` |
 
-For example, lower the context budget and give each Python cell five minutes:
+For example, lower the context budget:
 
 ```sh
-MAI_CONTEXT_WINDOW=65536 mai "investigate the failure" --cell-timeout 5m
+MAI_CONTEXT_WINDOW=65536 mai "investigate the failure"
 ```
 
 The API credential is read from the environment and is not copied into saved
@@ -228,11 +226,12 @@ access and can access that environment.
 Mai follows four principles:
 
 - **Keep the runtime small.** A Go binary owns the model loop, tools, and local
-  state; optional Python supports exploration.
+  state; an embedded Lua interpreter supports scripted exploration.
 - **Save only when asked.** A normal run leaves no saved conversation.
   `--persist` and `--last` use project-local state.
 - **Keep original evidence accessible.** Compaction archives the original
-  visible history; history search still reads the original text.
+  visible history to a transcript file; `mai.history` still reads the original
+  text.
 - **Make recovery explicit.** Failed requests and interrupted tool calls are
   never replayed automatically.
 
@@ -243,7 +242,7 @@ Prompt + CLI options + provider config
 Go agent loop <----> Selected provider's Responses API (streaming)
          |
          +--> Bash / file reads and edits / skills / images
-         +--> Optional persistent Python --> Go tool bridge
+         +--> Persistent Lua cells --> Go tool bridge
          +--> Nested `mai` subprocesses via Bash (depth-limited)
          |
          +--> Terminal text or JSONL events
@@ -263,7 +262,7 @@ summaries, so useful details may still need retrieval.
 
 ## Limits and safety
 
-Bash and Python are **not sandboxed**. File tools enforce repository
+Bash is **not sandboxed**, and `lua` cells reach the same OS access through `mai.bash`. File tools enforce repository
 boundaries, and Mai asks for approval for recognizable `rm` commands with
 external or unresolved targets. That check covers `rm` only; other commands
 can overwrite or delete data. `--no-input` rejects approval requests.
@@ -272,8 +271,6 @@ can overwrite or delete data. `--no-input` rejects approval requests.
   there is no runtime capability check.
 - Portable compaction currently handles text histories. Older image-bearing
   records may require a new task or text-only history.
-- Python variables last for one run.
-  `--last` restores conversation history, not that runtime environment.
 - There is no mid-turn steering or automatic retry of failed work.
 - Saved tasks must use the supported state format; incompatible older files
   require a new task.
@@ -293,7 +290,6 @@ See [Tools and skills](docs/tools.md#safety) for execution boundaries and
 | `no saved task in this project` | Start with `--persist`, then resume from the same project. |
 | `session ... is already running` | Wait for the process using that task to exit, or start a separate task. |
 | `agent stopped after 64 model turns` | Resume a persisted task with a larger `--max-turns` value or `-1`. |
-| `Python is unavailable` | Install Python 3.9+ on `PATH`, or set `MAI_PYTHON`. |
 | `input_image` errors from a provider | Switch to a model that accepts inline images, or keep the history text-only. |
 | `Responses request failed (network or timeout)` | Check connectivity and the selected provider's endpoint; raise `--timeout` if needed. |
 
@@ -317,16 +313,6 @@ Git. Keep the session JSON and transcript archive together when backing up a tas
 override either for the resumed run. `--last --provider NAME` can switch
 providers if the previous one runs out of credits; it adopts the new provider's
 configured model.
-
-### Do I need Python?
-
-Only for the persistent Python tool. Bash, file tools, skills, and image tools
-work through Go. Mai does not install Python packages.
-
-### Do Python variables survive compaction or restart?
-
-They survive compaction within a run. Exiting Mai, including before `--last`,
-ends the Python environment.
 
 ### Can I use Mai in scripts?
 

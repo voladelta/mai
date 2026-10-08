@@ -132,7 +132,7 @@ func TestLiveDeepSeekTools(t *testing.T) {
 1. Use bash to read verification.txt and retrieve the token. Skills are disabled.
 2. Use view_image on swatch.png to identify its solid color. Do not infer the color from image bytes or another tool.
 3. Use bash to read numbers.txt.
-4. Use python to assign probe_total to the sum of those numbers and print it. In a separate python tool call, print probe_total + 1 without reassigning probe_total. Also await mai.bash("printf BRIDGE_OK") and print its stdout in that second cell.
+4. Use bash to print the sum of those numbers.
 5. Use write directly to create result.txt containing exactly three lines: the token, the lowercase color name, and the total before incrementing. End every line with a newline. Then use edit directly to increment only the total line. Use read directly to verify the resulting file.
 6. Use bash to read result.txt and verify it against your tool observations.
 Your entire final response must be the single token TOOLS_OK if verified. Do not include a summary, explanation, bullets, or any other text.`
@@ -153,9 +153,6 @@ Your entire final response must be the single token TOOLS_OK if verified. Do not
 		t.Fatal(err)
 	}
 	counts := map[string]int{}
-	pythonResults := 0
-	pythonGeneration := 0
-	bridge := false
 	answered := false
 	answerText := ""
 	for _, raw := range sess.History {
@@ -179,12 +176,8 @@ Your entire final response must be the single token TOOLS_OK if verified. Do not
 				continue
 			}
 			var result struct {
-				OK          *bool                   `json:"ok"`
-				Stdout      string                  `json:"stdout"`
-				Generation  int                     `json:"generation"`
-				Fresh       bool                    `json:"fresh"`
-				Activities  []pythonActivitySummary `json:"activities"`
-				Description string                  `json:"description"`
+				OK          *bool  `json:"ok"`
+				Description string `json:"description"`
 			}
 			// Image results are typed content; other tools return JSON.
 			if json.Unmarshal([]byte(output), &result) == nil && result.OK != nil {
@@ -193,24 +186,6 @@ Your entire final response must be the single token TOOLS_OK if verified. Do not
 				}
 				if !*result.OK {
 					t.Errorf("tool %s failed: %s", item.CallID, output)
-				}
-				if result.Generation > 0 {
-					pythonResults++
-					if pythonResults == 1 {
-						pythonGeneration = result.Generation
-						if strings.TrimSpace(result.Stdout) != "42" {
-							t.Fatalf("initial Python sum: %q", result.Stdout)
-						}
-					}
-					if pythonResults == 2 {
-						if result.Fresh || result.Generation != pythonGeneration {
-							t.Fatal("Python state did not persist between cells")
-						}
-						for _, activity := range result.Activities {
-							bridge = bridge || (activity.Name == "bash" && activity.Status == "completed" && strings.Contains(activity.Result, "BRIDGE_OK"))
-						}
-						bridge = bridge && strings.Contains(result.Stdout, "BRIDGE_OK") && strings.Contains(result.Stdout, "43")
-					}
 				}
 			}
 		}
@@ -223,7 +198,7 @@ Your entire final response must be the single token TOOLS_OK if verified. Do not
 			answerText = entry.Text
 		}
 	}
-	for _, name := range []string{"bash", "read", "write", "edit", "python", "view_image"} {
+	for _, name := range []string{"bash", "read", "write", "edit", "view_image"} {
 		if counts[name] == 0 {
 			t.Errorf("missing real %s call", name)
 		}
@@ -231,7 +206,7 @@ Your entire final response must be the single token TOOLS_OK if verified. Do not
 	got, err := os.ReadFile(filepath.Join(sess.CWD, "result.txt"))
 	want := token + "\nblue\n43\n"
 	t.Logf("FLASH_TOOLS provider=%s model=%s counts=%s turns=%d duration_ms=%d", sess.Provider, provider.Model, fmt.Sprint(counts), a.modelTurns, time.Since(started).Milliseconds())
-	if err != nil || string(got) != want || pythonResults != 2 || !bridge || !answered {
-		t.Fatalf("tool effects: file=%q err=%v python_results=%d bridge=%v answered=%v answer=%q", got, err, pythonResults, bridge, answered, answerText)
+	if err != nil || string(got) != want || !answered {
+		t.Fatalf("tool effects: file=%q err=%v answered=%v answer=%q", got, err, answered, answerText)
 	}
 }

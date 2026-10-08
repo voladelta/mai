@@ -281,8 +281,8 @@ func toolDefinitions() []map[string]any {
 			},
 		},
 		{
-			"type": "function", "name": "python",
-			"description": "Execute a Python cell in a persistent namespace, or reset it. Returns the last expression, bounded stdout/stderr, generation, fresh and state_lost flags. Use exactly one of code or reset:true. State does not survive Mai exit or resume.",
+			"type": "function", "name": "lua",
+			"description": "Run a Lua 5.2 cell in a state that persists across calls in this run, or reset it. Globals, functions and tables remain (top-level local declarations are kept too). The cell's return values are shown as result (JSON); print and io.write go to stdout (bounded). Libraries: string, table, math, bit32, os.time/date/clock, read-only io.open/io.lines/io.popen, json.decode/encode, csv.decode(text, header?)/encode, and mai: mai.bash(cmd, timeout_ms?), mai.read(path, offset?, limit?), mai.read_text(path) returning raw repository text as a string, mai.history(query, limit?, start?) to search visible task history including before compaction, mai.write(path, content), mai.edit(path, old, new, replace_all?); these return tables with ok. Use exactly one of code or reset:true. State does not survive Mai exit or resume. Cells time out after 2 minutes.",
 			"parameters": map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{

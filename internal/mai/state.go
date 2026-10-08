@@ -29,24 +29,23 @@ type sessionBackend struct {
 }
 
 type session struct {
-	Version          int               `json:"version"`
-	ID               string            `json:"id"`
-	ParentID         string            `json:"parent_id,omitempty"`
-	ForkedAtTurn     int               `json:"forked_at_turn,omitempty"`
-	CWD              string            `json:"cwd"`
-	RepoRoot         string            `json:"repo_root"`
-	Provider         string            `json:"provider,omitempty"`
-	Backend          *sessionBackend   `json:"backend,omitempty"`
-	Model            string            `json:"model"`
-	Effort           string            `json:"effort"`
-	ReasoningStart   int               `json:"reasoning_start,omitempty"`
-	ContextTokens    int64             `json:"context_tokens,omitempty"`
-	History          []json.RawMessage `json:"history"`
-	Transcript       []transcriptEntry `json:"transcript,omitempty"`
-	TranscriptSkip   int               `json:"transcript_skip,omitempty"`
-	TranscriptEnd    int64             `json:"transcript_end,omitempty"`
-	PythonActivities []pythonActivity  `json:"python_activities,omitempty"`
-	transcriptPath   string
+	Version        int               `json:"version"`
+	ID             string            `json:"id"`
+	ParentID       string            `json:"parent_id,omitempty"`
+	ForkedAtTurn   int               `json:"forked_at_turn,omitempty"`
+	CWD            string            `json:"cwd"`
+	RepoRoot       string            `json:"repo_root"`
+	Provider       string            `json:"provider,omitempty"`
+	Backend        *sessionBackend   `json:"backend,omitempty"`
+	Model          string            `json:"model"`
+	Effort         string            `json:"effort"`
+	ReasoningStart int               `json:"reasoning_start,omitempty"`
+	ContextTokens  int64             `json:"context_tokens,omitempty"`
+	History        []json.RawMessage `json:"history"`
+	Transcript     []transcriptEntry `json:"transcript,omitempty"`
+	TranscriptSkip int               `json:"transcript_skip,omitempty"`
+	TranscriptEnd  int64             `json:"transcript_end,omitempty"`
+	transcriptPath string
 }
 
 type sessionPaths struct {
@@ -287,12 +286,6 @@ func saveJSON(path string, value any) error {
 }
 
 func repairInterruptedToolCalls(sess *session) error {
-	for i := range sess.PythonActivities {
-		if sess.PythonActivities[i].Status == "pending" {
-			sess.PythonActivities[i].Status = "unknown"
-		}
-	}
-
 	pending := make(map[string]functionCall)
 	var order []string
 	for _, raw := range sess.History {
@@ -327,19 +320,6 @@ func repairInterruptedToolCalls(sess *session) error {
 			"error":       "the previous mai process stopped before this tool call output was saved; the tool outcome is unknown",
 			"instruction": interruptedToolInstruction(call.Name),
 		}
-		var activities []pythonActivity
-		for _, activity := range sess.PythonActivities {
-			if activity.OuterCallID == callID {
-				activities = append(activities, activity)
-			}
-		}
-		if len(activities) > 0 {
-			summaries, omitted := summarizePythonActivities(activities)
-			recovery["activities"] = summaries
-			if omitted > 0 {
-				recovery["activities_omitted"] = omitted
-			}
-		}
 		recoveryJSON, err := json.Marshal(recovery)
 		if err != nil {
 			return err
@@ -354,15 +334,6 @@ func repairInterruptedToolCalls(sess *session) error {
 		}
 		sess.appendEstimatedHistory(output)
 	}
-	// Recovered calls now contain their activity summaries in the outer
-	// output. Persist that transfer atomically without retaining old journals.
-	kept := sess.PythonActivities[:0]
-	for _, activity := range sess.PythonActivities {
-		if _, exists := pending[activity.OuterCallID]; !exists {
-			kept = append(kept, activity)
-		}
-	}
-	sess.PythonActivities = kept
 	return nil
 }
 
@@ -443,6 +414,8 @@ func interruptedToolInstruction(name string) string {
 	switch name {
 	case "write", "edit":
 		return "The file mutation has an unknown outcome. Read the target file and reconcile the intended change before retrying; do not automatically replay the mutation."
+	case "lua":
+		return "Nested bash, write, and edit calls may have run. Inspect their effects before retrying; do not replay the cell automatically."
 	case "bash":
 		return "Inspect the command effects. Do not repeat a command that can have non-idempotent effects without user confirmation."
 	default:

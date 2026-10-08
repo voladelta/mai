@@ -50,8 +50,7 @@ Reasoning effort is sent at the request's top level; `--last` keeps its saved
 value. DeepSeek caching is automatic and depends on matching prefixes and cache
 lifetime. Mai does not send server-side conversation IDs or cache keys.
 
-Model tool calls run in sequence. Python cells can await host tools, whose
-operations also run in sequence. Mid-turn steering is not enabled.
+Model tool calls run in sequence. Mid-turn steering is not enabled.
 
 Mai tracks the active context size reported by the provider. The default budget is
 1,000,000 tokens; `MAI_CONTEXT_WINDOW` can lower it.

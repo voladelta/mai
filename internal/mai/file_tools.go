@@ -302,7 +302,7 @@ func renderFileText(name string, result map[string]any) string {
 	switch name {
 	case "read":
 		total, offset, last := result["total_lines"].(int), result["offset"].(int), result["last_line"].(int)
-		// Python callers keep the lenient empty result; the model gets an error.
+		// Script callers keep the lenient empty result; the model gets an error.
 		if offset > total && !(total == 0 && offset == 1) {
 			return fmt.Sprintf("Error: offset %d is out of range for %q (%d lines)", offset, path, total)
 		}
@@ -399,7 +399,7 @@ func (a *agent) executeFileTool(ctx context.Context, sess *session, name, argume
 	return textToolOutput(renderFileText(name, a.runFileTool(ctx, sess, name, arguments)))
 }
 
-// runFileTool returns the structured result. Python host calls consume it
+// runFileTool returns the structured result. Lua host calls consume it
 // directly; the model sees renderFileText.
 func (a *agent) runFileTool(ctx context.Context, sess *session, name, arguments string) map[string]any {
 	request, err := parseFileRequest(name, arguments)
@@ -515,6 +515,41 @@ func (a *agent) runFileTool(ctx context.Context, sess *session, name, arguments 
 		operation = "create"
 	}
 	return map[string]any{"ok": true, "path": path, "operation": operation, "replace_all": request.replaceAll}
+}
+
+// readRawFile returns a repository file's UTF-8 text unmodified, with the same
+// boundary, symlink, size, and text checks as read. The whole file is returned,
+// so it counts as an observation for write and edit, which still refuse a file
+// that changed after this read.
+func (a *agent) readRawFile(ctx context.Context, sess *session, requested string) map[string]any {
+	if err := ctx.Err(); err != nil {
+		return fileToolFailure("read", requested, err)
+	}
+	repo, err := canonicalPath(sess.RepoRoot)
+	if err != nil {
+		return fileToolFailure("read", requested, err)
+	}
+	path, err := secureFilePath(repo, requested)
+	if err != nil {
+		return fileToolFailure("read", requested, fsError("FS_INVALID_PATH", err.Error()))
+	}
+	root, err := os.OpenRoot(repo)
+	if err != nil {
+		return fileToolFailure("read", requested, err)
+	}
+	defer root.Close()
+	fmt.Fprintf(a.stderr, "→ read_text: %s\n", oneLine(path, 180))
+	f := a.fileTools()
+	key := filepath.Join(repo, path)
+	unlock := f.lock(key)
+	defer unlock()
+	data, version, err := readFileSnapshot(root, path)
+	if err != nil {
+		f.forget(sess, key)
+		return fileToolFailure("read", requested, err)
+	}
+	f.observe(sess, key, version)
+	return map[string]any{"ok": true, "path": path, "text": string(data)}
 }
 
 func fileToolFailure(name, path string, err error) map[string]any {

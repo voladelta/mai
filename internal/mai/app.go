@@ -43,7 +43,6 @@ Options:
   --effort VALUE         Select reasoning effort: l, h or max (default: h).
   --max-turns COUNT      Set the model-turn limit (default: 64; -1: unlimited).
   --timeout DURATION     Set the per-request first-byte/idle timeout (default: 10m).
-  --cell-timeout DURATION      Set the wall-clock limit for each Python cell (default: 10m).
   --no-input             Do not ask for interactive approval.
   -s, --skip-skills      Skip skill discovery for this run.
   --jsonl                 Write task, model, and tool events as JSON Lines.
@@ -219,7 +218,6 @@ func runTask(opts options, stdout, stderr io.Writer) int {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	runner.cellTimeout = opts.cellTimeout
 	runner.maxTurns = opts.maxTurns
 	if opts.jsonl {
 		runner.events = stdout
@@ -382,7 +380,6 @@ func startForkedSession(cfg taskConfig, opts options) (*activeTask, error) {
 	child.ID = childID
 	child.ParentID = parentID
 	child.ForkedAtTurn = len(parent.History)
-	child.PythonActivities = nil // kernel state belongs to the parent's process
 	child.History = append([]json.RawMessage(nil), parent.History...)
 	child.Transcript = append([]transcriptEntry(nil), parent.Transcript...)
 	if child.Backend != nil {
